@@ -1,0 +1,26 @@
+[package]
+name = "demo"
+description = "Demo composition root: the only crate that picks concrete implementations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+api = { workspace = true, features = ["jwt-auth"] }
+domain.workspace = true
+persistence.workspace = true
+service.workspace = true
+stripe.workspace = true
+axum.workspace = true
+dotenvy.workspace = true
+secrecy.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

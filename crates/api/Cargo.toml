@@ -1,0 +1,30 @@
+[package]
+name = "api"
+description = "Axum router factory, wire DTOs and the error-to-HTTP mapping. Exposes a Router, never a binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+jwt-auth = ["dep:jsonwebtoken"]
+
+[dependencies]
+domain.workspace = true
+service.workspace = true
+axum.workspace = true
+jsonwebtoken = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true
