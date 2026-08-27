@@ -14,4 +14,10 @@ pub enum DomainError {
     /// The requested entity does not exist.
     #[error("not found")]
     NotFound,
+
+    /// A persistence-layer operation failed. The message is opaque by
+    /// design: `domain` must not depend on `sqlx` or any adapter's error
+    /// type (S1), so adapters map their errors to this variant's `String`.
+    #[error("repository error: {0}")]
+    Repository(String),
 }
