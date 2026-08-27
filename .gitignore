@@ -3,3 +3,5 @@
 node_modules/
 frontend/dist/
 docs/init-spec.md
+docs/plan/
+docs/spec/
