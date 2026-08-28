@@ -3,9 +3,11 @@
 mod customer;
 mod error;
 mod money;
+mod plan;
 mod tenant;
 
 pub use customer::{Customer, CustomerId, CustomerRepository};
 pub use error::DomainError;
 pub use money::{Currency, Money};
+pub use plan::{Plan, PlanId, PlanRepository};
 pub use tenant::TenantId;
