@@ -1,11 +1,11 @@
 CREATE TABLE IF NOT EXISTS billing.plans (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,
-    stripe_price_id TEXT,
-    stripe_product_id TEXT,
-    name TEXT,
-    amount_minor BIGINT,
-    currency CHAR(3),
+    stripe_price_id TEXT NOT NULL,
+    stripe_product_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    amount_minor BIGINT NOT NULL,
+    currency CHAR(3) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at TIMESTAMPTZ
 );
