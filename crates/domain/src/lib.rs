@@ -2,6 +2,7 @@
 
 mod customer;
 mod error;
+mod invoice;
 mod money;
 mod plan;
 mod subscription;
@@ -9,6 +10,7 @@ mod tenant;
 
 pub use customer::{Customer, CustomerId, CustomerRepository};
 pub use error::DomainError;
+pub use invoice::{Invoice, InvoiceId, InvoiceRepository, InvoiceStatus};
 pub use money::{Currency, Money};
 pub use plan::{Plan, PlanId, PlanRepository};
 pub use subscription::{Subscription, SubscriptionId, SubscriptionRepository, SubscriptionStatus};
