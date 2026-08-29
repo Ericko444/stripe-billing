@@ -20,4 +20,16 @@ pub enum DomainError {
     /// type (S1), so adapters map their errors to this variant's `String`.
     #[error("repository error: {0}")]
     Repository(String),
+
+    /// A `BillingProvider` operation failed. The message is opaque for the
+    /// same reason as `Repository`: `domain` must not depend on the Stripe
+    /// client's error type (S1), so `stripe-adapter` maps its errors to this
+    /// variant's `String`.
+    #[error("provider error: {0}")]
+    Provider(String),
+
+    /// A write conflicted with an existing record — for example, two
+    /// concurrent attempts to reserve the same idempotency ledger row.
+    #[error("conflict")]
+    Conflict,
 }
