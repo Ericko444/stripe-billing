@@ -7,6 +7,7 @@ mod invoice_repository;
 mod payment_method_repository;
 mod plan_repository;
 mod subscription_repository;
+mod webhook_event_repository;
 
 pub use customer_repository::PgCustomerRepository;
 pub use error::RepositoryError;
@@ -14,6 +15,7 @@ pub use invoice_repository::PgInvoiceRepository;
 pub use payment_method_repository::PgPaymentMethodRepository;
 pub use plan_repository::PgPlanRepository;
 pub use subscription_repository::PgSubscriptionRepository;
+pub use webhook_event_repository::PgWebhookEventRepository;
 
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
