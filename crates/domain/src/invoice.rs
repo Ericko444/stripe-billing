@@ -132,7 +132,11 @@ mod tests {
 
     #[test]
     fn status_round_trips_through_str() {
-        for status in [InvoiceStatus::Open, InvoiceStatus::Paid, InvoiceStatus::Failed] {
+        for status in [
+            InvoiceStatus::Open,
+            InvoiceStatus::Paid,
+            InvoiceStatus::Failed,
+        ] {
             assert_eq!(InvoiceStatus::try_from(status.as_str()), Ok(status));
         }
     }
