@@ -13,7 +13,7 @@ publish = false
 domain = { path = "crates/domain" }
 service = { path = "crates/service" }
 persistence = { path = "crates/persistence" }
-stripe = { path = "crates/stripe" }
+stripe-adapter = { path = "crates/stripe-adapter" }
 api = { path = "crates/api" }
 
 async-trait = "0.1.92"
@@ -29,7 +29,9 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "tls-rustls",
     "uuid",
     "time",
+    "json",
     "migrate",
+    "derive",
 ] }
 thiserror = "2.0.20"
 time = { version = "0.3.55", features = ["serde"] }

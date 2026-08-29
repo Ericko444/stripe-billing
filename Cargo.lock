@@ -479,7 +479,7 @@ dependencies = [
  "secrecy",
  "service",
  "sqlx",
- "stripe",
+ "stripe-adapter",
  "thiserror",
  "tokio",
  "tracing",
@@ -543,6 +543,7 @@ name = "domain"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror",
  "time",
  "uuid",
@@ -1499,6 +1500,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "domain",
+ "serde_json",
  "sqlx",
  "testcontainers",
  "thiserror",
@@ -2292,7 +2294,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "stripe"
+name = "stripe-adapter"
 version = "0.1.0"
 dependencies = [
  "async-trait",

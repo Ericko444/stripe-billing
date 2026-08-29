@@ -33,13 +33,15 @@ Six crates under `crates/`, with **strictly inward** dependencies:
 
 ```
 demo ──> api ──> service ──> domain <── persistence
-  └────> stripe ─────────────────────────────┘
+  └────> stripe-adapter ─────────────────────┘
 ```
 
 - `domain` — models, value objects, ports (traits), error taxonomy. Declarative, no I/O.
 - `service` — use cases orchestrating the ports (§8.2). No I/O of its own.
 - `persistence` — sqlx adapters implementing the domain ports.
-- `stripe` — Stripe adapter, idempotency ledger, webhook verification/parsing.
+- `stripe-adapter` — Stripe adapter, idempotency ledger, webhook verification/parsing.
+  Named `stripe-adapter`, not `stripe`, because `async-stripe`'s lib name *is*
+  `stripe` — this keeps `stripe::` meaning the SDK inside the adapter.
 - `api` — Axum **router factory**, wire DTOs, error → HTTP mapping.
 - `demo` — the only crate that picks concrete implementations and owns a `main`.
 
