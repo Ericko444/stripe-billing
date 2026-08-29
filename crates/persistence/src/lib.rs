@@ -2,9 +2,11 @@
 
 mod customer_repository;
 mod error;
+mod plan_repository;
 
 pub use customer_repository::PgCustomerRepository;
 pub use error::RepositoryError;
+pub use plan_repository::PgPlanRepository;
 
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
