@@ -26,8 +26,9 @@ impl OutboundRequestId {
 ///
 /// Append-only ledger: no soft delete, no `list`. Unlike `WebhookEvent`,
 /// `tenant_id` is always known — an outbound call originates from a tenant
-/// context. The *reuse* logic that reads this back (and sets `completed_at`
-/// / `stripe_object_id`) is Phase 2's job; Phase 1 only records the attempt.
+/// context. `completed_at` and `stripe_object_id` are set once the call
+/// succeeds, by `mark_complete`; a row with `completed_at: None` is either
+/// in flight or abandoned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboundRequest {
     /// The request's id.
@@ -51,9 +52,9 @@ pub struct OutboundRequest {
 /// Port for persisting and looking up `OutboundRequest` records. Implemented
 /// by an adapter crate (`persistence`); no I/O here.
 ///
-/// Ledger-shaped: `create` plus a single lookup by idempotency key. No
-/// `list`, no `find` by internal id, no mark-complete — those belong to the
-/// Phase 2 reuse logic.
+/// Ledger-shaped: `create`, two lookups, and `mark_complete`. Still no
+/// `list`, no `find` by internal id — nothing here reads the ledger for
+/// display, only to decide whether an idempotency key can be reused.
 #[allow(async_fn_in_trait)]
 pub trait OutboundRequestRepository {
     /// Records an outbound attempt. Fails if `idempotency_key` is already
@@ -73,6 +74,32 @@ pub trait OutboundRequestRepository {
         &self,
         idempotency_key: &str,
     ) -> Result<Option<OutboundRequest>, DomainError>;
+
+    /// Finds the most recent recorded attempt for a tenant, operation and
+    /// input fingerprint. Returns `None` if none has been recorded. This is
+    /// the lookup the idempotency ledger's reuse logic drives: a retry of
+    /// the same logical operation with the same inputs finds its way back to
+    /// the original attempt's key through this method, not through
+    /// `find_by_idempotency_key` (the retry does not know the key).
+    async fn find_by_fingerprint(
+        &self,
+        tenant_id: TenantId,
+        operation: &str,
+        request_fingerprint: &str,
+    ) -> Result<Option<OutboundRequest>, DomainError>;
+
+    /// Marks a recorded attempt complete: sets `completed_at` and records
+    /// the Stripe object id the call produced. Scoped to `tenant_id` like
+    /// every other method, even though `id` alone already identifies the
+    /// row — an attempt to mark another tenant's row complete is a bug, and
+    /// this makes it one the query itself refuses rather than one that
+    /// merely goes unnoticed.
+    async fn mark_complete(
+        &self,
+        tenant_id: TenantId,
+        id: OutboundRequestId,
+        stripe_object_id: String,
+    ) -> Result<OutboundRequest, DomainError>;
 }
 
 #[cfg(test)]
