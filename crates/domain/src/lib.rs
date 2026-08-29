@@ -8,6 +8,7 @@ mod payment_method;
 mod plan;
 mod subscription;
 mod tenant;
+mod webhook_event;
 
 pub use customer::{Customer, CustomerId, CustomerRepository};
 pub use error::DomainError;
@@ -17,3 +18,4 @@ pub use payment_method::{PaymentMethod, PaymentMethodId, PaymentMethodRepository
 pub use plan::{Plan, PlanId, PlanRepository};
 pub use subscription::{Subscription, SubscriptionId, SubscriptionRepository, SubscriptionStatus};
 pub use tenant::TenantId;
+pub use webhook_event::{WebhookEvent, WebhookEventId, WebhookEventRepository};
