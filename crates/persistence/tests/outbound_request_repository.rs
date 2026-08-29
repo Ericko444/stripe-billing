@@ -62,6 +62,6 @@ async fn duplicate_idempotency_key_is_rejected() -> Result<(), Box<dyn Error>> {
         )
         .await;
 
-    assert!(matches!(second, Err(DomainError::Repository(_))));
+    assert!(matches!(second, Err(DomainError::Conflict)));
     Ok(())
 }

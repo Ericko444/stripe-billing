@@ -35,7 +35,10 @@ impl From<OutboundRequestRow> for OutboundRequest {
 }
 
 fn to_domain_error(err: RepositoryError) -> DomainError {
-    DomainError::Repository(err.to_string())
+    match err {
+        RepositoryError::UniqueViolation => DomainError::Conflict,
+        other => DomainError::Repository(other.to_string()),
+    }
 }
 
 /// Postgres-backed `OutboundRequestRepository`.
@@ -72,7 +75,7 @@ impl OutboundRequestRepository for PgOutboundRequestRepository {
         .bind(idempotency_key)
         .fetch_one(&self.pool)
         .await
-        .map_err(RepositoryError::from)
+        .map_err(RepositoryError::classify)
         .map_err(to_domain_error)?;
 
         Ok(row.into())
@@ -95,5 +98,54 @@ impl OutboundRequestRepository for PgOutboundRequestRepository {
         .map_err(to_domain_error)?;
 
         Ok(row.map(Into::into))
+    }
+
+    async fn find_by_fingerprint(
+        &self,
+        tenant_id: TenantId,
+        operation: &str,
+        request_fingerprint: &str,
+    ) -> Result<Option<OutboundRequest>, DomainError> {
+        let row = sqlx::query_as::<_, OutboundRequestRow>(
+            "SELECT id, tenant_id, operation, request_fingerprint, idempotency_key, \
+                    stripe_object_id, created_at, completed_at \
+             FROM billing.outbound_requests \
+             WHERE tenant_id = $1 AND operation = $2 AND request_fingerprint = $3 \
+             ORDER BY created_at DESC \
+             LIMIT 1",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(operation)
+        .bind(request_fingerprint)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        Ok(row.map(Into::into))
+    }
+
+    async fn mark_complete(
+        &self,
+        tenant_id: TenantId,
+        id: OutboundRequestId,
+        stripe_object_id: String,
+    ) -> Result<OutboundRequest, DomainError> {
+        let row = sqlx::query_as::<_, OutboundRequestRow>(
+            "UPDATE billing.outbound_requests \
+             SET completed_at = now(), stripe_object_id = $3 \
+             WHERE tenant_id = $1 AND id = $2 \
+             RETURNING id, tenant_id, operation, request_fingerprint, idempotency_key, \
+                       stripe_object_id, created_at, completed_at",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(id.as_uuid())
+        .bind(stripe_object_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        Ok(row.into())
     }
 }
