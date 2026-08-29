@@ -1,5 +1,6 @@
 //! Domain models, value objects, ports and error taxonomy. No I/O.
 
+mod billing_provider;
 mod customer;
 mod error;
 mod invoice;
@@ -11,6 +12,10 @@ mod subscription;
 mod tenant;
 mod webhook_event;
 
+pub use billing_provider::{
+    BillingProvider, CancellationTiming, CreateCustomerParams, CustomerSnapshot,
+    SubscriptionSnapshot, UpdateCustomerParams,
+};
 pub use customer::{Customer, CustomerId, CustomerRepository};
 pub use error::DomainError;
 pub use invoice::{Invoice, InvoiceId, InvoiceRepository, InvoiceStatus};
