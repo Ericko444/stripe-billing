@@ -13,7 +13,7 @@ publish = false
 domain = { path = "crates/domain" }
 service = { path = "crates/service" }
 persistence = { path = "crates/persistence" }
-stripe = { path = "crates/stripe" }
+stripe-adapter = { path = "crates/stripe-adapter" }
 api = { path = "crates/api" }
 
 async-trait = "0.1.92"

@@ -12,7 +12,7 @@ api = { workspace = true, features = ["jwt-auth"] }
 domain.workspace = true
 persistence.workspace = true
 service.workspace = true
-stripe.workspace = true
+stripe-adapter.workspace = true
 axum.workspace = true
 dotenvy.workspace = true
 secrecy.workspace = true

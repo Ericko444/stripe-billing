@@ -12,19 +12,19 @@ a host product would already have, the module consumes rather than provides.
 ```
 Cargo.toml            workspace manifest, shared deps in [workspace.dependencies]
 crates/
-  domain/     models, value objects, ports (traits), error taxonomy
-  service/    use cases orchestrating ports — no I/O of its own
-  persistence/ sqlx adapters
-  stripe/     Stripe adapter + webhook verification/parsing
-  api/        Axum router factory, DTOs, error → HTTP mapping
-  demo/       binary: composition root, config, demo-only auth
+  domain/          models, value objects, ports (traits), error taxonomy
+  service/         use cases orchestrating ports — no I/O of its own
+  persistence/     sqlx adapters
+  stripe-adapter/  Stripe adapter + webhook verification/parsing
+  api/             Axum router factory, DTOs, error → HTTP mapping
+  demo/            binary: composition root, config, demo-only auth
 frontend/             React + TypeScript + Vite (demo host)
 migrations/           numbered, idempotent SQL migrations
 ```
 
 **Dependency direction is strictly inward.** `domain` depends on nothing but
 serde/thiserror/uuid/time. `service` depends only on `domain`. `persistence` and
-`stripe` depend on `domain` and implement its traits. `api` depends on `service`
+`stripe-adapter` depend on `domain` and implement its traits. `api` depends on `service`
 and `domain`. `demo` depends on everything and is the only place where concrete
 implementations are chosen.
 

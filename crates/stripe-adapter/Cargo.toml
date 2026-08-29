@@ -1,5 +1,5 @@
 [package]
-name = "stripe"
+name = "stripe-adapter"
 description = "Stripe adapter: BillingProvider implementation, idempotency, webhook verification and parsing."
 version.workspace = true
 edition.workspace = true
