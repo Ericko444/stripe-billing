@@ -34,6 +34,9 @@ pub enum SubscriptionStatus {
     PastDue,
     /// Ended, whether by the tenant or after failed retries.
     Canceled,
+    /// Created but the first invoice hasn't been paid yet — Stripe's status
+    /// immediately after `create_subscription`.
+    Incomplete,
 }
 
 impl SubscriptionStatus {
@@ -43,6 +46,7 @@ impl SubscriptionStatus {
             SubscriptionStatus::Active => "active",
             SubscriptionStatus::PastDue => "past_due",
             SubscriptionStatus::Canceled => "canceled",
+            SubscriptionStatus::Incomplete => "incomplete",
         }
     }
 }
@@ -61,6 +65,7 @@ impl TryFrom<&str> for SubscriptionStatus {
             "active" => Ok(SubscriptionStatus::Active),
             "past_due" => Ok(SubscriptionStatus::PastDue),
             "canceled" => Ok(SubscriptionStatus::Canceled),
+            "incomplete" => Ok(SubscriptionStatus::Incomplete),
             other => Err(DomainError::Repository(format!(
                 "unknown subscription status: {other:?}"
             ))),
@@ -145,6 +150,7 @@ mod tests {
             SubscriptionStatus::Active,
             SubscriptionStatus::PastDue,
             SubscriptionStatus::Canceled,
+            SubscriptionStatus::Incomplete,
         ] {
             assert_eq!(SubscriptionStatus::try_from(status.as_str()), Ok(status));
         }
