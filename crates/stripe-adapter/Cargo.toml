@@ -27,6 +27,7 @@ uuid.workspace = true
 # production dependency graph, which stays strictly inward (init-spec.md §4).
 [dev-dependencies]
 persistence.workspace = true
+sqlx.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true
 wiremock.workspace = true
