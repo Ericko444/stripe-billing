@@ -4,12 +4,14 @@ mod currency_codec;
 mod customer_repository;
 mod error;
 mod invoice_repository;
+mod payment_method_repository;
 mod plan_repository;
 mod subscription_repository;
 
 pub use customer_repository::PgCustomerRepository;
 pub use error::RepositoryError;
 pub use invoice_repository::PgInvoiceRepository;
+pub use payment_method_repository::PgPaymentMethodRepository;
 pub use plan_repository::PgPlanRepository;
 pub use subscription_repository::PgSubscriptionRepository;
 
