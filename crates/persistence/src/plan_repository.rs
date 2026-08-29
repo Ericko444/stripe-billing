@@ -1,9 +1,10 @@
-use domain::{Currency, DomainError, Money, Plan, PlanId, PlanRepository, TenantId};
+use domain::{DomainError, Money, Plan, PlanId, PlanRepository, TenantId};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::RepositoryError;
+use crate::currency_codec::{currency_code, currency_from_code};
 
 #[derive(sqlx::FromRow)]
 struct PlanRow {
@@ -32,29 +33,6 @@ impl TryFrom<PlanRow> for Plan {
             created_at: row.created_at,
             deleted_at: row.deleted_at,
         })
-    }
-}
-
-/// Maps a `CHAR(3)` currency code to the domain `Currency`. First use of
-/// the `Currency` <-> `CHAR(3)` mapping; `Invoice` reuses these two helpers.
-/// An unrecognized code is a repository-level error, not a panic.
-fn currency_from_code(code: &str) -> Result<Currency, DomainError> {
-    match code {
-        "USD" => Ok(Currency::Usd),
-        "EUR" => Ok(Currency::Eur),
-        "GBP" => Ok(Currency::Gbp),
-        other => Err(DomainError::Repository(format!(
-            "unknown currency code: {other:?}"
-        ))),
-    }
-}
-
-/// Maps a domain `Currency` to its `CHAR(3)` code for storage.
-fn currency_code(currency: Currency) -> &'static str {
-    match currency {
-        Currency::Usd => "USD",
-        Currency::Eur => "EUR",
-        Currency::Gbp => "GBP",
     }
 }
 
