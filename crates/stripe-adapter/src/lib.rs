@@ -26,6 +26,7 @@ mod ledger;
 mod provider;
 mod subscriptions;
 mod webhook_error;
+mod webhook_signature;
 
 pub use client::build_client;
 pub use config::{StripeConfig, pinned_api_version};
@@ -34,3 +35,4 @@ pub use fingerprint::fingerprint;
 pub use ledger::{Ledger, Reservation};
 pub use provider::StripeBillingProvider;
 pub use webhook_error::WebhookError;
+pub use webhook_signature::DEFAULT_TOLERANCE;
