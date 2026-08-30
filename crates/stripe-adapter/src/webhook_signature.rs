@@ -19,11 +19,6 @@
 //! `accepts_when_only_one_of_two_v1_matches` pins this and should fail if
 //! someone "simplifies" `v1` from a `Vec` to a single value.
 
-// Until Task 9 wires `verify` into `webhook.rs`, this pure module has no
-// non-test caller and its internals are exercised only by the unit tests
-// below. Remove this once `StripeWebhookVerifier` calls `verify`.
-#![allow(dead_code)]
-
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use time::{Duration, OffsetDateTime};

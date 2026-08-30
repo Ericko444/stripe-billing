@@ -25,6 +25,7 @@ mod fingerprint;
 mod ledger;
 mod provider;
 mod subscriptions;
+mod webhook;
 mod webhook_error;
 mod webhook_signature;
 
@@ -34,5 +35,6 @@ pub use error::StripeError;
 pub use fingerprint::fingerprint;
 pub use ledger::{Ledger, Reservation};
 pub use provider::StripeBillingProvider;
+pub use webhook::StripeWebhookVerifier;
 pub use webhook_error::WebhookError;
 pub use webhook_signature::DEFAULT_TOLERANCE;
