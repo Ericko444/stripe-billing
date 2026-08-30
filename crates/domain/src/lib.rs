@@ -11,6 +11,7 @@ mod plan;
 mod subscription;
 mod tenant;
 mod webhook_event;
+mod webhook_verifier;
 
 pub use billing_provider::{
     BillingProvider, CancellationTiming, CreateCustomerParams, CustomerSnapshot,
@@ -26,3 +27,4 @@ pub use plan::{Plan, PlanId, PlanRepository};
 pub use subscription::{Subscription, SubscriptionId, SubscriptionRepository, SubscriptionStatus};
 pub use tenant::TenantId;
 pub use webhook_event::{WebhookEvent, WebhookEventId, WebhookEventRepository};
+pub use webhook_verifier::{VerifiedEvent, WebhookReceipt, WebhookVerifier};

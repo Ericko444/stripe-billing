@@ -32,7 +32,10 @@ impl From<WebhookEventRow> for WebhookEvent {
 }
 
 fn to_domain_error(err: RepositoryError) -> DomainError {
-    DomainError::Repository(err.to_string())
+    match err {
+        RepositoryError::UniqueViolation => DomainError::Conflict,
+        other => DomainError::Repository(other.to_string()),
+    }
 }
 
 /// Postgres-backed `WebhookEventRepository`.
@@ -69,7 +72,7 @@ impl WebhookEventRepository for PgWebhookEventRepository {
         .bind(payload)
         .fetch_one(&self.pool)
         .await
-        .map_err(RepositoryError::from)
+        .map_err(RepositoryError::classify)
         .map_err(to_domain_error)?;
 
         Ok(row.into())

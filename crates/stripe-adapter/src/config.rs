@@ -1,6 +1,7 @@
 use core::fmt;
 
 use secrecy::SecretString;
+use time::Duration;
 
 /// Configuration needed to construct a Stripe client.
 ///
@@ -45,6 +46,42 @@ pub fn pinned_api_version() -> &'static str {
     stripe_client_core::VERSION.as_str()
 }
 
+/// Configuration the webhook verifier needs: the endpoint's signing secret
+/// and the replay-window tolerance.
+///
+/// Deliberately separate from [`StripeConfig`]. The verifier needs the
+/// signing secret and has no use for the API key or the base URL; bundling
+/// them would mean the verifier holds a credential it never uses -- the kind
+/// of thing that becomes an accidental log line later.
+///
+/// `signing_secret` is a `secrecy::SecretString`, which already redacts on
+/// `Debug`. The manual `Debug` impl below is the same belt-and-braces as
+/// `StripeConfig`'s: it guards against a future plain, unwrapped `String`
+/// field getting a `#[derive(Debug)]` that prints it.
+///
+/// `tolerance` is a field rather than a constant because hand-rolling the
+/// verifier made the replay window configurable; [`DEFAULT_TOLERANCE`] is
+/// the value to use when there is no reason to deviate.
+///
+/// [`DEFAULT_TOLERANCE`]: crate::DEFAULT_TOLERANCE
+pub struct WebhookConfig {
+    /// The endpoint's Stripe webhook signing secret (`whsec_...`).
+    pub signing_secret: SecretString,
+    /// How far the signature header's timestamp may be from now before a
+    /// delivery is rejected as a replay. Use `crate::DEFAULT_TOLERANCE`
+    /// unless a specific deployment needs otherwise.
+    pub tolerance: Duration,
+}
+
+impl fmt::Debug for WebhookConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebhookConfig")
+            .field("signing_secret", &"[redacted]")
+            .field("tolerance", &self.tolerance)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,5 +103,19 @@ mod tests {
         // A version bump in Cargo.toml (Cargo.lock, really) should make this
         // fail loudly rather than let the pin silently drift.
         assert_eq!(pinned_api_version(), "2026-07-29.dahlia");
+    }
+
+    #[test]
+    fn webhook_debug_does_not_contain_the_signing_secret() {
+        let config = WebhookConfig {
+            signing_secret: SecretString::from(
+                "whsec_should_never_appear_in_debug_output".to_string(),
+            ),
+            tolerance: crate::DEFAULT_TOLERANCE,
+        };
+
+        let rendered = format!("{config:?}");
+
+        assert!(!rendered.contains("whsec_should_never_appear_in_debug_output"));
     }
 }

@@ -6,11 +6,11 @@
 use std::error::Error;
 
 use domain::OutboundRequestId;
-use persistence::PgOutboundRequestRepository;
+use persistence::{PgOutboundRequestRepository, PgWebhookEventRepository};
 use secrecy::SecretString;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use stripe_adapter::StripeConfig;
+use stripe_adapter::{DEFAULT_TOLERANCE, StripeConfig, WebhookConfig};
 use testcontainers::core::wait::LogWaitStrategy;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
@@ -45,8 +45,20 @@ pub struct TestEnv {
     /// every outbound call a client built from this reaches the mock, never
     /// the real Stripe API.
     pub stripe_config: StripeConfig,
+    /// A repository over the same disposable Postgres, for assembling a
+    /// `StripeWebhookVerifier` and for direct row-count assertions against
+    /// `billing.webhook_events`.
+    pub webhook_repo: PgWebhookEventRepository,
+    /// A `WebhookConfig` whose signing secret is [`WEBHOOK_SIGNING_SECRET`]
+    /// -- sign test payloads with that same constant via
+    /// `stripe_adapter::test_support`. Tolerance is `DEFAULT_TOLERANCE`.
+    pub webhook_config: WebhookConfig,
     _container: ContainerAsync<GenericImage>,
 }
+
+/// The signing secret every webhook integration test shares: the harness's
+/// `WebhookConfig` holds it, and tests sign their fixtures with it.
+pub const WEBHOOK_SIGNING_SECRET: &str = "whsec_integration_test_secret";
 
 /// Starts a fresh, disposable Postgres container with migrations applied
 /// and a fresh `wiremock` server, and returns everything needed to build a
@@ -75,11 +87,19 @@ pub async fn setup() -> Result<TestEnv, Box<dyn Error>> {
         base_url: Some(mock_server.uri()),
     };
 
+    let webhook_repo = PgWebhookEventRepository::new(pool.clone());
+    let webhook_config = WebhookConfig {
+        signing_secret: SecretString::from(WEBHOOK_SIGNING_SECRET.to_string()),
+        tolerance: DEFAULT_TOLERANCE,
+    };
+
     Ok(TestEnv {
         repo,
         pool,
         mock_server,
         stripe_config,
+        webhook_repo,
+        webhook_config,
         _container: container,
     })
 }

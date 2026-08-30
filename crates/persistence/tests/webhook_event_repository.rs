@@ -83,6 +83,10 @@ async fn duplicate_stripe_event_id_is_rejected() -> Result<(), Box<dyn Error>> {
         )
         .await;
 
-    assert!(matches!(second, Err(DomainError::Repository(_))));
+    // `create` opts into `RepositoryError::classify`, so a duplicate
+    // `stripe_event_id` (SQLSTATE 23505) surfaces as the sharper
+    // `Conflict`, not the opaque `Repository`. Phase 3's dedup reads this
+    // exact variant as the "already delivered" signal.
+    assert!(matches!(second, Err(DomainError::Conflict)));
     Ok(())
 }

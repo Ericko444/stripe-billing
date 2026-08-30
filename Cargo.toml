@@ -36,6 +36,13 @@ async-stripe-core = { version = "=1.0.0-rc.8", features = ["customer"] }
 async-trait = "0.1.92"
 axum = "0.8.9"
 dotenvy = "0.15.7"
+# Webhook signature verification (Phase 3). `hmac::Mac::verify_slice` is the
+# constant-time comparison; `hex` decodes the `v1` signatures from the header.
+# No cryptography is implemented here -- `Hmac<Sha256>` over `sha2` does the
+# work. `hmac` is pinned to 0.13 to share `digest` 0.11 with the pinned
+# `sha2` 0.11; 0.12 tracks `digest` 0.10 and will not accept this `Sha256`.
+hex = "0.4"
+hmac = "0.13"
 jsonwebtoken = "11.0.0"
 secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -32,4 +32,12 @@ pub enum DomainError {
     /// concurrent attempts to reserve the same idempotency ledger row.
     #[error("conflict")]
     Conflict,
+
+    /// A webhook signature could not be verified. Carries **no** payload by
+    /// design: *why* verification failed (bad signature vs. expired
+    /// timestamp vs. malformed header) is a probe oracle for anyone hitting
+    /// a public, unauthenticated endpoint. The rich reason stays in the
+    /// adapter's `WebhookError` and is logged server-side.
+    #[error("webhook verification failed")]
+    WebhookVerification,
 }

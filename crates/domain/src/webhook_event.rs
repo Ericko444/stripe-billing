@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -41,8 +43,9 @@ pub struct WebhookEvent {
     pub payload: Value,
     /// When the event was received and stored.
     pub created_at: OffsetDateTime,
-    /// When the event finished processing, if it has. The dedup *decision*
-    /// that sets this is Phase 3's job.
+    /// When the event finished processing, if it has. Phase 3 records events
+    /// with this NULL and dedups on `stripe_event_id` alone; setting it once
+    /// downstream processing completes is Phase 4's job (`init-spec.md` §10.2).
     pub processed_at: Option<OffsetDateTime>,
 }
 
@@ -50,26 +53,33 @@ pub struct WebhookEvent {
 /// an adapter crate (`persistence`); no I/O here.
 ///
 /// Ledger-shaped: `create` plus a single lookup by Stripe's event id (the
-/// dedup anchor). No `list`, no `find` by internal id — nothing in Phase 1
-/// needs them.
-#[allow(async_fn_in_trait)]
+/// dedup anchor). No `list`, no `find` by internal id — nothing needs them.
+///
+/// Like `OutboundRequestRepository`, this port's methods are written as
+/// `fn … -> impl Future<Output = …> + Send` rather than bare `async fn`.
+/// `stripe-adapter`'s `StripeWebhookVerifier<R>` implements the
+/// `#[async_trait]` `WebhookVerifier` port by awaiting these methods;
+/// `#[async_trait]` boxes its futures as `Send`, so the futures it awaits
+/// must be `Send` too — which a bare `async fn` in a trait does not promise
+/// for a generic `R`. Implementors may still write `async fn` in the `impl`
+/// block; the bound is checked there.
 pub trait WebhookEventRepository {
     /// Stores a received event. Fails if `stripe_event_id` is already present
     /// (the global unique index) — surfaced as a `DomainError`, not a panic.
-    async fn create(
+    fn create(
         &self,
         tenant_id: Option<TenantId>,
         stripe_event_id: String,
         event_type: String,
         payload: Value,
-    ) -> Result<WebhookEvent, DomainError>;
+    ) -> impl Future<Output = Result<WebhookEvent, DomainError>> + Send;
 
     /// Finds a stored event by Stripe's event id. Returns `None` if none has
     /// been stored under that id.
-    async fn find_by_stripe_event_id(
+    fn find_by_stripe_event_id(
         &self,
         stripe_event_id: &str,
-    ) -> Result<Option<WebhookEvent>, DomainError>;
+    ) -> impl Future<Output = Result<Option<WebhookEvent>, DomainError>> + Send;
 }
 
 #[cfg(test)]
