@@ -27,10 +27,10 @@ use crate::webhook_error::WebhookError;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Stripe's recommended replay window (5 minutes). A parameter to [`verify`]
-/// and a field on `WebhookConfig`, not a value hardcoded in the verifier the
-/// way the rejected SDK's was — hand-rolling made the tolerance
-/// configurable.
+/// Stripe's recommended replay window (5 minutes). A parameter to `verify`
+/// and a field on [`WebhookConfig`](crate::WebhookConfig), not a value
+/// hardcoded in the verifier the way the rejected SDK's was — hand-rolling
+/// made the tolerance configurable.
 pub const DEFAULT_TOLERANCE: Duration = Duration::minutes(5);
 
 /// The parsed `Stripe-Signature` header: the `t` timestamp and *every* `v1`

@@ -1,13 +1,21 @@
-//! Stripe adapter: the `BillingProvider` implementation and its idempotency
-//! ledger.
+//! Stripe adapter: the outbound `BillingProvider` path and the inbound
+//! webhook path, with everything each needs.
 //!
-//! This crate owns everything that talks to Stripe for customer and
-//! subscription writes: client construction with a base-URL override
-//! ([`build_client`]), the [`StripeError`] taxonomy and its flattening to
-//! `domain::DomainError`, the request [`fingerprint`], the reserve/complete
-//! state machine ([`Ledger`]), and [`StripeBillingProvider`], which wires
-//! them together behind `domain::BillingProvider`. Webhook verification and
-//! parsing is Phase 3 and lives elsewhere.
+//! **Outbound** — customer and subscription writes to Stripe: client
+//! construction with a base-URL override ([`build_client`]), the
+//! [`StripeError`] taxonomy and its flattening to `domain::DomainError`, the
+//! request [`fingerprint`], the reserve/complete state machine ([`Ledger`]),
+//! and [`StripeBillingProvider`], which wires them together behind
+//! `domain::BillingProvider`.
+//!
+//! **Inbound** — verified, deduplicated webhook receipt behind
+//! `domain::WebhookVerifier`: hand-rolled signature verification
+//! (`webhook_signature`, accepting *any* matching `v1` so an endpoint-secret
+//! rotation never rejects a valid delivery), the [`WebhookError`] taxonomy
+//! (which flattens to *nothing* — see its docs), [`WebhookConfig`], and
+//! [`StripeWebhookVerifier`], which joins verification to the
+//! `billing.webhook_events` dedup ledger. It writes only that ledger, never
+//! a mirror table.
 //!
 //! **The one hard rule for every mutating call:** send it with
 //! `stripe::RequestStrategy::Idempotent(key)` and nothing else, where `key`
@@ -16,6 +24,13 @@
 //! `RequestStrategy::Retry` and `RequestStrategy::ExponentialBackoff` each
 //! mint a fresh uuid per attempt, which is exactly the non-idempotency this
 //! crate exists to prevent — none of them are used here.
+//!
+//! **The two hard rules for every webhook receipt:** *verify before parse* —
+//! nothing deserializes the body until the signature has passed — and
+//! *record before returning `Fresh`* — the caller is never told to process
+//! an event that is not yet in the ledger. Both are pinned by
+//! `tests/webhooks.rs`, the second by a zero-rows assertion on every
+//! rejection path.
 
 mod client;
 mod config;

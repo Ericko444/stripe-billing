@@ -3,7 +3,7 @@
 //! `#[doc(hidden)]` and kept out of the crate's real surface: this exists so
 //! `webhook_signature`'s unit tests and the `tests/` integration tests can
 //! share one signing implementation rather than duplicating it. It is the
-//! inverse of [`crate::webhook_signature`]'s `verify`, and doubles as a
+//! inverse of what `webhook_signature::verify` checks, and doubles as a
 //! check that the signing scheme is understood.
 
 use hmac::{Hmac, KeyInit, Mac};
