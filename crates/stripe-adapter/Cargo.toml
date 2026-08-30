@@ -14,7 +14,10 @@ async-stripe-billing.workspace = true
 async-stripe-client-core.workspace = true
 async-stripe-core.workspace = true
 async-trait.workspace = true
+hex.workspace = true
+hmac.workspace = true
 secrecy.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
@@ -25,7 +28,6 @@ uuid.workspace = true
 # production dependency graph, which stays strictly inward (init-spec.md §4).
 [dev-dependencies]
 persistence.workspace = true
-serde_json.workspace = true
 sqlx.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true
