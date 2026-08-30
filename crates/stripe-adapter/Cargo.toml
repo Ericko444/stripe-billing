@@ -13,6 +13,7 @@ async-stripe.workspace = true
 async-stripe-billing.workspace = true
 async-stripe-client-core.workspace = true
 async-stripe-core.workspace = true
+async-trait.workspace = true
 secrecy.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

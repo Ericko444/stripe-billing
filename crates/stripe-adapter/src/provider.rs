@@ -1,5 +1,6 @@
+use async_trait::async_trait;
 use domain::{
-    CancellationTiming, CreateCustomerParams, CustomerSnapshot, DomainError,
+    BillingProvider, CancellationTiming, CreateCustomerParams, CustomerSnapshot, DomainError,
     OutboundRequestRepository, SubscriptionSnapshot, TenantId, UpdateCustomerParams,
 };
 
@@ -11,23 +12,18 @@ use crate::{StripeConfig, StripeError, build_client, customers, subscriptions};
 /// `Ledger<R>` *before* the call, then send it with
 /// `RequestStrategy::Idempotent`.
 ///
-/// Generic over `R` for the same reason `Ledger<R>` is: native `async fn`
-/// in `OutboundRequestRepository` is not dyn-compatible, and this type's
-/// ledger is held by value, not behind a trait object.
+/// Generic over `R` for the same reason `Ledger<R>` is: the repository
+/// ports use `impl Future`-returning methods, not `dyn`, and this type's
+/// ledger is held by value.
 ///
-/// All five methods exist as inherent `async fn`s with exactly the
-/// `BillingProvider` signatures. The blanket
-/// `#[async_trait] impl<R> BillingProvider for StripeBillingProvider<R>` is
-/// **not** written here: `#[async_trait]` requires every awaited future to
-/// be `Send`, and `OutboundRequestRepository`'s methods are native
-/// `async fn` under `#[allow(async_fn_in_trait)]`, which gives no `Send`
-/// guarantee for a generic `R`. Wiring the trait impl therefore needs the
-/// repository port to promise `Send` futures (return-position
-/// `impl Future + Send`, or `trait_variant`) -- a Phase 1 signature change
-/// the Phase 2 spec says to raise before making. Until then a host wanting
-/// a `dyn BillingProvider` wraps the concrete type in a thin newtype in the
-/// crate that owns the concrete `R` (Phase 4's `demo`), where the future's
-/// `Send`-ness is provable.
+/// Every method exists twice with identical signatures: inherently (usable
+/// on the concrete type without importing the trait) and through the
+/// `#[async_trait] impl BillingProvider` below, which a host that wires a
+/// `dyn BillingProvider` at runtime needs. `#[async_trait]` boxes its
+/// futures as `Send`, which is why `R` carries `Send + Sync` there and why
+/// `OutboundRequestRepository`'s methods are declared `-> impl Future + Send`
+/// (see that port's own doc comment). The trait impl is pure delegation --
+/// one body per operation, in `customers.rs` / `subscriptions.rs`.
 pub struct StripeBillingProvider<R: OutboundRequestRepository> {
     client: stripe::Client,
     ledger: Ledger<R>,
@@ -125,5 +121,71 @@ impl<R: OutboundRequestRepository> StripeBillingProvider<R> {
             timing,
         )
         .await
+    }
+}
+
+/// The port impl a host wires behind `dyn BillingProvider`. Each method is a
+/// one-line delegation to the inherent method of the same name above; the
+/// real work lives in `customers.rs` and `subscriptions.rs`. `R: Send + Sync`
+/// because `#[async_trait]` boxes these futures as `Send`.
+#[async_trait]
+impl<R: OutboundRequestRepository + Send + Sync> BillingProvider for StripeBillingProvider<R> {
+    async fn create_customer(
+        &self,
+        tenant_id: TenantId,
+        params: CreateCustomerParams,
+    ) -> Result<CustomerSnapshot, DomainError> {
+        StripeBillingProvider::create_customer(self, tenant_id, params).await
+    }
+
+    async fn update_customer(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+        params: UpdateCustomerParams,
+    ) -> Result<CustomerSnapshot, DomainError> {
+        StripeBillingProvider::update_customer(self, tenant_id, stripe_customer_id, params).await
+    }
+
+    async fn create_subscription(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+        stripe_price_id: &str,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        StripeBillingProvider::create_subscription(
+            self,
+            tenant_id,
+            stripe_customer_id,
+            stripe_price_id,
+        )
+        .await
+    }
+
+    async fn change_plan(
+        &self,
+        tenant_id: TenantId,
+        stripe_subscription_id: &str,
+        stripe_subscription_item_id: &str,
+        new_stripe_price_id: &str,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        StripeBillingProvider::change_plan(
+            self,
+            tenant_id,
+            stripe_subscription_id,
+            stripe_subscription_item_id,
+            new_stripe_price_id,
+        )
+        .await
+    }
+
+    async fn cancel_subscription(
+        &self,
+        tenant_id: TenantId,
+        stripe_subscription_id: &str,
+        timing: CancellationTiming,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        StripeBillingProvider::cancel_subscription(self, tenant_id, stripe_subscription_id, timing)
+            .await
     }
 }
