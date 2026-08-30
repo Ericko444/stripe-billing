@@ -85,6 +85,7 @@ fn subscription_body_without_items(
         "created": 1_700_000_000,
         "currency": "usd",
         "customer": "cus_fixture",
+        "discounts": [],
         "invoice_settings": { "issuer": { "type": "self" } },
         "items": {
             "object": "list",
