@@ -159,18 +159,9 @@ fn check_replay_window(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Signs `payload` for `secret` at `timestamp` exactly as Stripe does:
-    /// hex HMAC-SHA256 over `"{timestamp}.{payload}"`. Multi-`v1` headers are
-    /// built by calling this with different secrets and joining the results
-    /// with `,v1=`.
-    fn sign(payload: &str, secret: &str, timestamp: i64) -> String {
-        let Ok(mut mac) = <HmacSha256 as KeyInit>::new_from_slice(secret.as_bytes()) else {
-            return String::new(); // unreachable: HMAC takes a key of any length
-        };
-        mac.update(format!("{timestamp}.{payload}").as_bytes());
-        hex::encode(mac.finalize().into_bytes())
-    }
+    // One signing implementation, shared with the `tests/` integration
+    // tests (Task 10) rather than duplicated here.
+    use crate::test_support::sign;
 
     /// A concrete `OffsetDateTime` `unix` seconds after the epoch, without a
     /// fallible `from_unix_timestamp` call in every test body.

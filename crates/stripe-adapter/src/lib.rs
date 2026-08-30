@@ -29,6 +29,11 @@ mod webhook;
 mod webhook_error;
 mod webhook_signature;
 
+/// Test-only signing helpers, shared between this crate's unit tests and its
+/// integration tests. Not part of the supported API.
+#[doc(hidden)]
+pub mod test_support;
+
 pub use client::build_client;
 pub use config::{StripeConfig, WebhookConfig, pinned_api_version};
 pub use error::StripeError;
