@@ -62,6 +62,21 @@ pub trait WebhookVerifier: Send + Sync {
     /// Takes the body as **bytes**, not `&str`: a non-UTF-8 body becomes a
     /// typed rejection, not a panic. Takes **no secret** — the
     /// implementation holds the signing secret, so `api` never handles one.
+    ///
+    /// # Host preconditions
+    ///
+    /// The route that calls this (a later phase's `api`) is responsible for
+    /// two things this port cannot check for itself:
+    ///
+    /// - **Pass the raw, untouched request body.** The signature is an HMAC
+    ///   over exactly the bytes Stripe sent, so any re-encoding,
+    ///   pretty-printing or key reordering between the socket and this call
+    ///   breaks verification (`init-spec.md` §10.1). Read the body as bytes
+    ///   and forward it unmodified.
+    /// - **Bound the body size before calling.** Nothing here caps the input
+    ///   it will HMAC. The limit belongs on the route (e.g. Axum's
+    ///   `DefaultBodyLimit`), because an implementation of this port never
+    ///   reads from the network.
     async fn verify_and_record(
         &self,
         payload: &[u8],
