@@ -1,10 +1,10 @@
 use domain::{
-    CreateCustomerParams, CustomerSnapshot, DomainError, OutboundRequestRepository, TenantId,
-    UpdateCustomerParams,
+    CancellationTiming, CreateCustomerParams, CustomerSnapshot, DomainError,
+    OutboundRequestRepository, SubscriptionSnapshot, TenantId, UpdateCustomerParams,
 };
 
 use crate::ledger::Ledger;
-use crate::{StripeConfig, StripeError, build_client, customers};
+use crate::{StripeConfig, StripeError, build_client, customers, subscriptions};
 
 /// Stripe-backed implementation of the pieces of `domain::BillingProvider`
 /// built so far.
@@ -61,6 +61,62 @@ impl<R: OutboundRequestRepository> StripeBillingProvider<R> {
             tenant_id,
             stripe_customer_id,
             params,
+        )
+        .await
+    }
+
+    /// Creates a subscription for a customer against a price. Same signature
+    /// as `BillingProvider::create_subscription`.
+    pub async fn create_subscription(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+        stripe_price_id: &str,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        subscriptions::create_subscription(
+            &self.client,
+            &self.ledger,
+            tenant_id,
+            stripe_customer_id,
+            stripe_price_id,
+        )
+        .await
+    }
+
+    /// Changes an existing subscription's plan by updating its stored
+    /// subscription item. Same signature as `BillingProvider::change_plan`.
+    pub async fn change_plan(
+        &self,
+        tenant_id: TenantId,
+        stripe_subscription_id: &str,
+        stripe_subscription_item_id: &str,
+        new_stripe_price_id: &str,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        subscriptions::change_plan(
+            &self.client,
+            &self.ledger,
+            tenant_id,
+            stripe_subscription_id,
+            stripe_subscription_item_id,
+            new_stripe_price_id,
+        )
+        .await
+    }
+
+    /// Cancels a subscription, at the period end or immediately. Same
+    /// signature as `BillingProvider::cancel_subscription`.
+    pub async fn cancel_subscription(
+        &self,
+        tenant_id: TenantId,
+        stripe_subscription_id: &str,
+        timing: CancellationTiming,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        subscriptions::cancel_subscription(
+            &self.client,
+            &self.ledger,
+            tenant_id,
+            stripe_subscription_id,
+            timing,
         )
         .await
     }
