@@ -24,7 +24,10 @@ async-stripe = { version = "=1.0.0-rc.8", default-features = false, features = [
     "rustls-tls-webpki-roots",
     "rustls-ring",
 ] }
-async-stripe-billing = "=1.0.0-rc.8"
+# Like async-stripe-core, the billing line opts in per resource -- no default
+# feature set. "subscription" brings the create/update/cancel request builders
+# Tasks 18-20 need; the SubscriptionItem response type is ungated.
+async-stripe-billing = { version = "=1.0.0-rc.8", features = ["subscription"] }
 async-stripe-client-core = "=1.0.0-rc.8"
 # async-stripe-core defines no default feature set at all -- each resource
 # (customer, subscription, ...) is opt-in. "customer" is what Task 15 needs;
