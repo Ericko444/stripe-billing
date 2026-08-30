@@ -1,8 +1,9 @@
 use domain::{
     CreateCustomerParams, CustomerSnapshot, DomainError, OutboundRequestRepository, TenantId,
+    UpdateCustomerParams,
 };
 use stripe::{IdempotencyKey, RequestStrategy, StripeRequest};
-use stripe_core::customer::CreateCustomer;
+use stripe_core::customer::{CreateCustomer, UpdateCustomer};
 
 use crate::ledger::Ledger;
 use crate::{StripeError, fingerprint};
@@ -67,6 +68,65 @@ pub async fn create_customer<R: OutboundRequestRepository>(
         .map_err(DomainError::from)?;
 
     // Not reached if the call above returned an error -- `?` exits first.
+    ledger
+        .complete(tenant_id, &reservation, customer.id.to_string())
+        .await?;
+
+    Ok(CustomerSnapshot {
+        stripe_customer_id: customer.id.to_string(),
+    })
+}
+
+/// `BillingProvider::update_customer`'s real implementation. Same shape as
+/// `create_customer`: fingerprint, reserve a key, call Stripe with it, mark
+/// the reservation complete, return a snapshot.
+///
+/// Only the fields present in `params` are sent -- a `None` leaves that
+/// attribute untouched on Stripe's side, matching Stripe's own partial-update
+/// semantics (`UpdateCustomerParams`'s doc comment in `domain`).
+pub async fn update_customer<R: OutboundRequestRepository>(
+    client: &stripe::Client,
+    ledger: &Ledger<R>,
+    tenant_id: TenantId,
+    stripe_customer_id: &str,
+    params: UpdateCustomerParams,
+) -> Result<CustomerSnapshot, DomainError> {
+    // `stripe_customer_id` is in the fingerprint because it varies the
+    // request (it's the path), and the operation name "update_customer" is
+    // in it because that's what keeps an update from ever colliding with a
+    // create for the same customer -- both feed the fingerprint, so the two
+    // land on separate ledger rows and separate idempotency keys.
+    let email_field = encode_optional(params.email.as_deref());
+    let name_field = encode_optional(params.name.as_deref());
+    let request_fingerprint = fingerprint(
+        "update_customer",
+        &[stripe_customer_id, &email_field, &name_field],
+    );
+
+    let reservation = ledger
+        .reserve(tenant_id, "update_customer", &request_fingerprint)
+        .await?;
+
+    let key = IdempotencyKey::new(&reservation.idempotency_key)
+        .map_err(|err| StripeError::Config(err.to_string()))
+        .map_err(DomainError::from)?;
+
+    let mut request = UpdateCustomer::new(stripe_customer_id);
+    if let Some(email) = &params.email {
+        request = request.email(email.clone());
+    }
+    if let Some(name) = &params.name {
+        request = request.name(name.clone());
+    }
+
+    let customer = request
+        .customize()
+        .request_strategy(RequestStrategy::Idempotent(key))
+        .send(client)
+        .await
+        .map_err(StripeError::from)
+        .map_err(DomainError::from)?;
+
     ledger
         .complete(tenant_id, &reservation, customer.id.to_string())
         .await?;

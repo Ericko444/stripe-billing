@@ -1,5 +1,6 @@
 use domain::{
     CreateCustomerParams, CustomerSnapshot, DomainError, OutboundRequestRepository, TenantId,
+    UpdateCustomerParams,
 };
 
 use crate::ledger::Ledger;
@@ -44,5 +45,23 @@ impl<R: OutboundRequestRepository> StripeBillingProvider<R> {
         params: CreateCustomerParams,
     ) -> Result<CustomerSnapshot, DomainError> {
         customers::create_customer(&self.client, &self.ledger, tenant_id, params).await
+    }
+
+    /// Updates an existing Stripe customer. Same signature as
+    /// `BillingProvider::update_customer`.
+    pub async fn update_customer(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+        params: UpdateCustomerParams,
+    ) -> Result<CustomerSnapshot, DomainError> {
+        customers::update_customer(
+            &self.client,
+            &self.ledger,
+            tenant_id,
+            stripe_customer_id,
+            params,
+        )
+        .await
     }
 }

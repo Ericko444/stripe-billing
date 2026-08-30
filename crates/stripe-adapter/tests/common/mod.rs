@@ -1,3 +1,8 @@
+// Each file under `tests/` compiles this module into its own binary, and no
+// single binary uses every helper here (only the cases-D/E tests call
+// `backdate`, for instance). That is not dead code -- it's shared setup.
+#![allow(dead_code)]
+
 use std::error::Error;
 
 use domain::OutboundRequestId;
