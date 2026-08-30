@@ -6,22 +6,28 @@ use domain::{
 use crate::ledger::Ledger;
 use crate::{StripeConfig, StripeError, build_client, customers, subscriptions};
 
-/// Stripe-backed implementation of the pieces of `domain::BillingProvider`
-/// built so far.
+/// Stripe-backed implementation of `domain::BillingProvider`: fingerprint
+/// every mutating call, reserve and persist an idempotency key through
+/// `Ledger<R>` *before* the call, then send it with
+/// `RequestStrategy::Idempotent`.
 ///
 /// Generic over `R` for the same reason `Ledger<R>` is: native `async fn`
 /// in `OutboundRequestRepository` is not dyn-compatible, and this type's
 /// ledger is held by value, not behind a trait object.
 ///
-/// **Not yet `impl domain::BillingProvider`.** That trait's five methods
-/// are declared as a unit (`domain::billing_provider.rs`), but this crate
-/// builds them one at a time (Tasks 15, 17-20). Implementing the trait now
-/// would mean stubbing the other four with `unimplemented!()` -- a bare
-/// panic on a path nothing yet prevents from being called, which is
-/// exactly what S6 forbids on any nominal path. The inherent
-/// `create_customer` below has the same signature the trait method will
-/// have; wiring `impl BillingProvider for StripeBillingProvider<R>` is a
-/// mechanical step once all five exist.
+/// All five methods exist as inherent `async fn`s with exactly the
+/// `BillingProvider` signatures. The blanket
+/// `#[async_trait] impl<R> BillingProvider for StripeBillingProvider<R>` is
+/// **not** written here: `#[async_trait]` requires every awaited future to
+/// be `Send`, and `OutboundRequestRepository`'s methods are native
+/// `async fn` under `#[allow(async_fn_in_trait)]`, which gives no `Send`
+/// guarantee for a generic `R`. Wiring the trait impl therefore needs the
+/// repository port to promise `Send` futures (return-position
+/// `impl Future + Send`, or `trait_variant`) -- a Phase 1 signature change
+/// the Phase 2 spec says to raise before making. Until then a host wanting
+/// a `dyn BillingProvider` wraps the concrete type in a thin newtype in the
+/// crate that owns the concrete `R` (Phase 4's `demo`), where the future's
+/// `Send`-ness is provable.
 pub struct StripeBillingProvider<R: OutboundRequestRepository> {
     client: stripe::Client,
     ledger: Ledger<R>,
