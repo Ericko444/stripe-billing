@@ -1,17 +1,24 @@
 use async_trait::async_trait;
 use domain::{
-    BillingEventSink, CustomerRepository, DomainError, SubscriptionRepository, VerifiedEvent,
-    WebhookEventRepository,
+    BillingEvent, BillingEventSink, CustomerRepository, DomainError, SubscriptionRepository,
+    VerifiedEvent, WebhookEventRepository,
 };
 
 use crate::subscription_updated;
 
 /// The outcome of processing one verified webhook event (`init-spec.md`
 /// §10.2, spec decision 3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Applied` carries the [`BillingEvent`] the mirror write produced, rather
+/// than being a bare unit variant: the same reasoning as
+/// `WebhookReceipt::Fresh` carrying a `VerifiedEvent` while `Duplicate`
+/// carries nothing. It is the state that has something to hand the sink, so
+/// it carries that something -- `handle` cannot call the sink with the
+/// wrong event, or forget to, because there is nowhere else to get one.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventOutcome {
-    /// The mirror was updated and the sink notified.
-    Applied,
+    /// The mirror was updated; this is what was notified to the sink.
+    Applied(BillingEvent),
     /// Verified and recorded, deliberately not applied.
     NotApplied(NotAppliedReason),
 }
@@ -59,16 +66,10 @@ pub trait WebhookHandler: Send + Sync {
 /// monomorphises the real wiring `demo` picks, and nothing is boxed on the
 /// hot path. Implements the object-safe [`WebhookHandler`] below so a later
 /// phase's `AppState` can hold it as `Arc<dyn WebhookHandler>` instead.
-///
-/// `sink` becomes live once the next task wires in the mirror-write-then-
-/// sink ordering (decision 4); until then it carries `#[allow(dead_code)]`,
-/// the same idiom `assert_dyn_compatible` functions elsewhere in this
-/// workspace use for a deliberately-for-now-unused item.
 pub struct WebhookProcessor<C, S, W, K> {
     customers: C,
     subscriptions: S,
     webhook_events: W,
-    #[allow(dead_code)]
     sink: K,
 }
 
@@ -102,10 +103,27 @@ where
             _ => EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
         };
 
+        // The sink is a side effect: it runs after the mirror is a fact
+        // (the match above already committed the write), and its failure
+        // does not undo the mirror (§8.3). It is never called for a
+        // NotApplied outcome -- there is nothing to notify the host about.
+        if let EventOutcome::Applied(ref billing_event) = outcome
+            && let Err(err) = self.sink.handle(billing_event.clone()).await
+        {
+            tracing::warn!(
+                error = %err,
+                stripe_event_id = %event.stripe_event_id,
+                "billing event sink failed; mirror retained, processed_at left NULL"
+            );
+            // processed_at stays NULL: processing did not finish, and that
+            // is exactly what lets a later recovery sweep over processed_at
+            // IS NULL find this event again (decision 5).
+            return Ok(outcome);
+        }
+
         // Nothing further will ever happen to a NotApplied event -- of any
         // reason, including UnhandledType -- so it is marked processed even
-        // though nothing was applied (decision 5). The Applied + sink case
-        // is wired in by the next task; for now Applied is unreachable.
+        // though nothing was applied (decision 5).
         self.webhook_events.mark_processed(event.id).await?;
         Ok(outcome)
     }
@@ -113,9 +131,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use domain::{WebhookEvent, WebhookEventId};
-    use serde_json::json;
-    use time::OffsetDateTime;
+    use domain::{
+        Customer, CustomerId, Subscription, SubscriptionId, TenantId, WebhookEvent, WebhookEventId,
+    };
+    use serde_json::{Value, json};
+    use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
     use super::*;
@@ -198,5 +218,153 @@ mod tests {
             processor.webhook_events.processed_at(event.id),
             Some(Some(_))
         ));
+    }
+
+    /// Builds a `customer.subscription.updated` payload with the shape
+    /// `subscription_updated::read_subscription` expects, for a given
+    /// Stripe customer and subscription id.
+    fn subscription_updated_payload(
+        stripe_customer_id: &str,
+        stripe_subscription_id: &str,
+    ) -> Value {
+        let now = OffsetDateTime::now_utc();
+        json!({
+            "id": stripe_subscription_id,
+            "type": "customer.subscription.updated",
+            "data": {
+                "object": {
+                    "id": stripe_subscription_id,
+                    "customer": stripe_customer_id,
+                    "status": "active",
+                    "cancel_at_period_end": false,
+                    "items": {
+                        "data": [
+                            {
+                                "id": "si_test",
+                                "current_period_start": now.unix_timestamp(),
+                                "current_period_end": (now + Duration::days(30)).unix_timestamp(),
+                            }
+                        ]
+                    }
+                }
+            }
+        })
+    }
+
+    /// Seeds a customer and a matching subscription mirror row on
+    /// `processor`, and returns the tenant/subscription ids plus a
+    /// `VerifiedEvent` that will apply cleanly against them.
+    fn seeded_applied_event(
+        processor: &TestProcessor,
+    ) -> (TenantId, SubscriptionId, VerifiedEvent) {
+        let tenant_id = TenantId::new(Uuid::new_v4());
+        let customer = Customer {
+            id: CustomerId::new(Uuid::new_v4()),
+            tenant_id,
+            stripe_customer_id: Some("cus_applied".to_string()),
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        };
+        processor.customers.seed(customer.clone());
+
+        let now = OffsetDateTime::now_utc();
+        let subscription = Subscription {
+            id: SubscriptionId::new(Uuid::new_v4()),
+            tenant_id,
+            customer_id: customer.id,
+            plan_id: domain::PlanId::new(Uuid::new_v4()),
+            stripe_subscription_id: "sub_applied".to_string(),
+            stripe_subscription_item_id: "si_original".to_string(),
+            status: domain::SubscriptionStatus::Incomplete,
+            current_period_start: now,
+            current_period_end: now + Duration::days(30),
+            cancel_at_period_end: false,
+            last_event_created_at: None,
+            created_at: now,
+            deleted_at: None,
+        };
+        processor.subscriptions.seed(subscription.clone());
+
+        let payload = subscription_updated_payload("cus_applied", "sub_applied");
+        let event = VerifiedEvent {
+            id: WebhookEventId::new(Uuid::new_v4()),
+            stripe_event_id: "evt_applied".to_string(),
+            event_type: "customer.subscription.updated".to_string(),
+            created: OffsetDateTime::now_utc(),
+            payload,
+        };
+        processor.webhook_events.seed(WebhookEvent {
+            id: event.id,
+            tenant_id: Some(tenant_id),
+            stripe_event_id: event.stripe_event_id.clone(),
+            event_type: event.event_type.clone(),
+            payload: event.payload.clone(),
+            created_at: event.created,
+            processed_at: None,
+        });
+
+        (tenant_id, subscription.id, event)
+    }
+
+    #[tokio::test]
+    async fn applied_event_notifies_the_sink_exactly_once_and_marks_processed() {
+        let processor = processor();
+        let (_, _, event) = seeded_applied_event(&processor);
+
+        let outcome = processor.handle(event.clone()).await;
+
+        assert!(matches!(outcome, Ok(EventOutcome::Applied(_))));
+        assert_eq!(processor.sink.received().len(), 1);
+        assert!(matches!(
+            processor.webhook_events.processed_at(event.id),
+            Some(Some(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn sink_is_not_called_for_a_not_applied_outcome() {
+        let processor = processor();
+        let event = verified_event("some.future.event.type");
+        processor.webhook_events.seed(WebhookEvent {
+            id: event.id,
+            tenant_id: None,
+            stripe_event_id: event.stripe_event_id.clone(),
+            event_type: event.event_type.clone(),
+            payload: event.payload.clone(),
+            created_at: event.created,
+            processed_at: None,
+        });
+
+        let _ = processor.handle(event).await;
+
+        assert_eq!(processor.sink.received().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn failing_sink_leaves_the_mirror_written_and_processed_at_null() {
+        let processor = TestProcessor::new(
+            InMemoryCustomers::default(),
+            InMemorySubscriptions::default(),
+            InMemoryWebhookEvents::default(),
+            InMemorySink::failing(),
+        );
+        let (tenant_id, subscription_id, event) = seeded_applied_event(&processor);
+
+        let outcome = processor.handle(event.clone()).await;
+
+        assert!(matches!(outcome, Ok(EventOutcome::Applied(_))));
+        // The mirror write already committed before the sink was ever
+        // called -- it is retained regardless of the sink's outcome (§8.3).
+        let found = processor
+            .subscriptions
+            .find(tenant_id, subscription_id)
+            .await;
+        assert!(matches!(
+            found,
+            Ok(Some(ref s)) if s.status == domain::SubscriptionStatus::Active
+        ));
+        // processing did not finish, so processed_at stays NULL -- this is
+        // what makes a later recovery sweep able to find it (decision 5).
+        assert_eq!(processor.webhook_events.processed_at(event.id), Some(None));
     }
 }

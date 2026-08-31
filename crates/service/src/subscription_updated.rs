@@ -1,6 +1,6 @@
 use domain::{
-    CustomerRepository, DomainError, EventApplication, SubscriptionRepository, SubscriptionStatus,
-    VerifiedEvent,
+    BillingEvent, CustomerRepository, DomainError, EventApplication, SubscriptionId,
+    SubscriptionRepository, SubscriptionStatus, TenantId, VerifiedEvent,
 };
 use serde_json::Value;
 use time::OffsetDateTime;
@@ -63,9 +63,47 @@ where
         .await?;
 
     Ok(match application {
-        EventApplication::Applied => EventOutcome::Applied,
+        EventApplication::Applied => EventOutcome::Applied(billing_event_for(
+            customer.tenant_id,
+            subscription.id,
+            fields.status,
+        )),
         EventApplication::Stale => EventOutcome::NotApplied(NotAppliedReason::Stale),
     })
+}
+
+/// Maps the subscription's new status to the [`BillingEvent`] this handler
+/// emits (§8.3's translation from a Stripe event into a host-facing typed
+/// notification). Not spec-mandated -- the spec fixes `BillingEvent`'s
+/// shape and the ordering around calling the sink, not which event each
+/// status produces -- so the mapping is deliberately the smallest one that
+/// covers the three variants `service` currently defines: `Active` becomes
+/// `SubscriptionActivated` (a new subscriber, or a recovery from
+/// `past_due`/`incomplete`); `Canceled` becomes `SubscriptionCanceled`;
+/// everything else (a period rollover, a `cancel_at_period_end` flip with
+/// no status change, `PastDue`, `Incomplete`) falls to the catch-all
+/// `SubscriptionUpdated`.
+fn billing_event_for(
+    tenant_id: TenantId,
+    subscription_id: SubscriptionId,
+    status: SubscriptionStatus,
+) -> BillingEvent {
+    match status {
+        SubscriptionStatus::Active => BillingEvent::SubscriptionActivated {
+            tenant_id,
+            subscription_id,
+        },
+        SubscriptionStatus::Canceled => BillingEvent::SubscriptionCanceled {
+            tenant_id,
+            subscription_id,
+        },
+        SubscriptionStatus::PastDue | SubscriptionStatus::Incomplete => {
+            BillingEvent::SubscriptionUpdated {
+                tenant_id,
+                subscription_id,
+            }
+        }
+    }
 }
 
 /// The fields this handler needs off a `customer.subscription.updated`
@@ -267,7 +305,13 @@ mod tests {
 
         let outcome = apply(&customers, &subscriptions, &event).await;
 
-        assert_eq!(outcome, Ok(EventOutcome::Applied));
+        assert_eq!(
+            outcome,
+            Ok(EventOutcome::Applied(BillingEvent::SubscriptionActivated {
+                tenant_id,
+                subscription_id,
+            }))
+        );
         let found = subscriptions.find(tenant_id, subscription_id).await;
         assert!(matches!(
             found,
@@ -293,7 +337,13 @@ mod tests {
         );
         let newer_event = verified_event(newer_payload, newer);
         let first = apply(&customers, &subscriptions, &newer_event).await;
-        assert_eq!(first, Ok(EventOutcome::Applied));
+        assert_eq!(
+            first,
+            Ok(EventOutcome::Applied(BillingEvent::SubscriptionActivated {
+                tenant_id,
+                subscription_id,
+            }))
+        );
 
         let older = newer - Duration::minutes(5);
         let older_payload = event_payload(

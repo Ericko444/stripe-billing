@@ -260,13 +260,26 @@ impl WebhookEventRepository for InMemoryWebhookEvents {
     }
 }
 
-/// Records every [`BillingEvent`] it receives. `fail` and the methods to
-/// configure/inspect it land with Task 10, which is the first to need a
-/// sink that does either.
+/// Records every [`BillingEvent`] it receives, and can be configured to fail
+/// every call (the "a failing sink leaves the mirror written and
+/// `processed_at` NULL" scenario).
 #[derive(Default)]
 pub(crate) struct InMemorySink {
     events: Mutex<Vec<BillingEvent>>,
     fail: bool,
+}
+
+impl InMemorySink {
+    pub(crate) fn failing() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+            fail: true,
+        }
+    }
+
+    pub(crate) fn received(&self) -> Vec<BillingEvent> {
+        lock(&self.events).clone()
+    }
 }
 
 #[async_trait]
