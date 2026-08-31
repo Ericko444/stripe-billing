@@ -1,6 +1,6 @@
 use domain::{
-    CustomerId, DomainError, PlanId, Subscription, SubscriptionId, SubscriptionRepository,
-    SubscriptionStatus, TenantId,
+    CustomerId, DomainError, EventApplication, PlanId, Subscription, SubscriptionId,
+    SubscriptionRepository, SubscriptionStatus, TenantId,
 };
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -141,5 +141,69 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .map_err(to_domain_error)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
+    }
+
+    async fn find_by_stripe_subscription_id(
+        &self,
+        tenant_id: TenantId,
+        stripe_subscription_id: &str,
+    ) -> Result<Option<Subscription>, DomainError> {
+        let row = sqlx::query_as::<_, SubscriptionRow>(
+            "SELECT id, tenant_id, customer_id, plan_id, stripe_subscription_id, \
+                    stripe_subscription_item_id, status, current_period_start, \
+                    current_period_end, cancel_at_period_end, last_event_created_at, \
+                    created_at, deleted_at \
+             FROM billing.subscriptions \
+             WHERE tenant_id = $1 AND stripe_subscription_id = $2 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(stripe_subscription_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        row.map(TryInto::try_into).transpose()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn apply_event(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        status: SubscriptionStatus,
+        current_period_start: OffsetDateTime,
+        current_period_end: OffsetDateTime,
+        cancel_at_period_end: bool,
+        event_created_at: OffsetDateTime,
+    ) -> Result<EventApplication, DomainError> {
+        // The ordering predicate is part of the statement, not a read-then-
+        // compare in Rust -- see the port's rustdoc for why. rows_affected()
+        // is the stale signal, reported by Postgres rather than concluded by
+        // us.
+        let result = sqlx::query(
+            "UPDATE billing.subscriptions \
+                SET status = $3, current_period_start = $4, current_period_end = $5, \
+                    cancel_at_period_end = $6, last_event_created_at = $7 \
+              WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL \
+                AND (last_event_created_at IS NULL OR last_event_created_at <= $7)",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(id.as_uuid())
+        .bind(status.as_str())
+        .bind(current_period_start)
+        .bind(current_period_end)
+        .bind(cancel_at_period_end)
+        .bind(event_created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        if result.rows_affected() == 0 {
+            Ok(EventApplication::Stale)
+        } else {
+            Ok(EventApplication::Applied)
+        }
     }
 }

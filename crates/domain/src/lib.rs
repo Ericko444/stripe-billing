@@ -26,7 +26,9 @@ pub use money::{Currency, Money};
 pub use outbound_request::{OutboundRequest, OutboundRequestId, OutboundRequestRepository};
 pub use payment_method::{PaymentMethod, PaymentMethodId, PaymentMethodRepository};
 pub use plan::{Plan, PlanId, PlanRepository};
-pub use subscription::{Subscription, SubscriptionId, SubscriptionRepository, SubscriptionStatus};
+pub use subscription::{
+    EventApplication, Subscription, SubscriptionId, SubscriptionRepository, SubscriptionStatus,
+};
 pub use tenant::TenantId;
 pub use webhook_event::{WebhookEvent, WebhookEventId, WebhookEventRepository};
 pub use webhook_verifier::{VerifiedEvent, WebhookReceipt, WebhookVerifier};

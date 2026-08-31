@@ -74,6 +74,20 @@ impl TryFrom<&str> for SubscriptionStatus {
     }
 }
 
+/// Whether [`SubscriptionRepository::apply_event`]'s ordering guard admitted
+/// the write (`init-spec.md` §10.2). A named two-state value rather than a
+/// bare `bool`, so a call site cannot silently invert it -- the same
+/// reasoning behind `CancellationTiming`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum EventApplication {
+    /// The row was updated and `last_event_created_at` advanced.
+    Applied,
+    /// The guard rejected the write: a newer event has already been applied
+    /// to this row. The row is unchanged.
+    Stale,
+}
+
 /// A tenant's subscription to a `Plan`, mirroring a Stripe subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subscription {
@@ -151,6 +165,55 @@ pub trait SubscriptionRepository {
         &self,
         tenant_id: TenantId,
     ) -> impl Future<Output = Result<Vec<Subscription>, DomainError>> + Send;
+
+    /// Finds a subscription by its Stripe id, scoped to the tenant. Returns
+    /// `None` if it does not exist, has been soft-deleted, or belongs to a
+    /// different tenant. Tenant-scoped, unlike
+    /// [`CustomerRepository::find_by_stripe_customer_id`](crate::CustomerRepository::find_by_stripe_customer_id):
+    /// a later phase's webhook path always has a `Customer` -- and therefore
+    /// a `TenantId` -- in hand by the time it needs this lookup, so this is
+    /// not the tenant-establishing exception that one is.
+    fn find_by_stripe_subscription_id(
+        &self,
+        tenant_id: TenantId,
+        stripe_subscription_id: &str,
+    ) -> impl Future<Output = Result<Option<Subscription>, DomainError>> + Send;
+
+    /// Applies a webhook event's effect to a subscription row, guarded by
+    /// `init-spec.md` §10.2's ordering rule: the write is admitted when
+    /// `event_created_at` is greater than or equal to the row's current
+    /// `last_event_created_at` (or that column is `NULL`), and rejected --
+    /// recorded as [`EventApplication::Stale`], row unchanged -- otherwise.
+    ///
+    /// **The guard is enforced in the `UPDATE`'s `WHERE` clause, not by a
+    /// read-then-compare in Rust.** Two concurrent deliveries processed in
+    /// Rust could both read the same stale `last_event_created_at`, both
+    /// decide they are newer, and the older of the two could win the race to
+    /// write last. Putting the predicate in the statement means Postgres
+    /// resolves it atomically, and `rows_affected() == 0` *is* the stale
+    /// signal.
+    ///
+    /// Writes `status`, `current_period_start`, `current_period_end`,
+    /// `cancel_at_period_end` and `last_event_created_at` together, in one
+    /// statement -- never `plan_id`, which this method does not accept.
+    ///
+    /// **Precondition:** the row identified by `(tenant_id, id)` exists and
+    /// is not soft-deleted. Callers reach this method after already having
+    /// looked the row up (e.g. via `find_by_stripe_subscription_id`), so a
+    /// zero-rows result is read as "a newer event already applied" rather
+    /// than "no such row" -- this method cannot tell the two apart, and does
+    /// not need to for its one caller.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_event(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        status: SubscriptionStatus,
+        current_period_start: OffsetDateTime,
+        current_period_end: OffsetDateTime,
+        cancel_at_period_end: bool,
+        event_created_at: OffsetDateTime,
+    ) -> impl Future<Output = Result<EventApplication, DomainError>> + Send;
 }
 
 #[cfg(test)]
