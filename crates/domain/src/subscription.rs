@@ -1,4 +1,5 @@
 use core::fmt;
+use std::future::Future;
 
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -112,12 +113,20 @@ pub struct Subscription {
 
 /// Port for persisting and querying `Subscription` records. Implemented by an
 /// adapter crate (`persistence`); no I/O here.
-#[allow(async_fn_in_trait)]
+///
+/// Written as `fn … -> impl Future<Output = …> + Send` rather than bare
+/// `async fn`, matching `OutboundRequestRepository` and
+/// `WebhookEventRepository`: a later phase's `WebhookProcessor<C, S, W, K>`
+/// goes behind `#[async_trait]` to implement the object-safe
+/// `WebhookHandler` port, which boxes its futures as `Send`, so every future
+/// it awaits -- including these -- must be `Send` too. A bare `async fn` in a
+/// trait does not promise that for a generic `S`. Implementors may still
+/// write `async fn` in the `impl` block; the bound is checked there.
 pub trait SubscriptionRepository {
     /// Creates a new subscription for the given tenant. `cancel_at_period_end`
     /// starts `false`; nothing in Phase 1 sets it.
     #[allow(clippy::too_many_arguments)]
-    async fn create(
+    fn create(
         &self,
         tenant_id: TenantId,
         customer_id: CustomerId,
@@ -127,18 +136,21 @@ pub trait SubscriptionRepository {
         status: SubscriptionStatus,
         current_period_start: OffsetDateTime,
         current_period_end: OffsetDateTime,
-    ) -> Result<Subscription, DomainError>;
+    ) -> impl Future<Output = Result<Subscription, DomainError>> + Send;
 
     /// Finds a subscription by id, scoped to the tenant. Returns `None` if it
     /// does not exist or has been soft-deleted.
-    async fn find(
+    fn find(
         &self,
         tenant_id: TenantId,
         id: SubscriptionId,
-    ) -> Result<Option<Subscription>, DomainError>;
+    ) -> impl Future<Output = Result<Option<Subscription>, DomainError>> + Send;
 
     /// Lists all subscriptions for the given tenant, excluding soft-deleted ones.
-    async fn list(&self, tenant_id: TenantId) -> Result<Vec<Subscription>, DomainError>;
+    fn list(
+        &self,
+        tenant_id: TenantId,
+    ) -> impl Future<Output = Result<Vec<Subscription>, DomainError>> + Send;
 }
 
 #[cfg(test)]

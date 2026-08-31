@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -38,28 +40,37 @@ pub struct Customer {
 /// Port for persisting and querying `Customer` records. Implemented by an
 /// adapter crate (`persistence`); no I/O here.
 ///
-/// Uses native `async fn` rather than `async-trait` so `domain` doesn't need
-/// that dependency; this trait is meant to be used generically
-/// (`fn new<R: CustomerRepository>(repo: R)`), not as `dyn CustomerRepository`.
-#[allow(async_fn_in_trait)]
+/// This trait is meant to be used generically (`fn new<R: CustomerRepository>
+/// (repo: R)`), never as `dyn CustomerRepository`. Its methods are still
+/// written as `fn … -> impl Future<Output = …> + Send` rather than bare
+/// `async fn`, matching `OutboundRequestRepository` and
+/// `WebhookEventRepository`: a later phase's `WebhookProcessor<C, S, W, K>`
+/// goes behind `#[async_trait]` to implement the object-safe
+/// `WebhookHandler` port, which boxes its futures as `Send`, so every future
+/// it awaits -- including these -- must be `Send` too. A bare `async fn` in a
+/// trait does not promise that for a generic `C`. Implementors may still
+/// write `async fn` in the `impl` block; the bound is checked there.
 pub trait CustomerRepository {
     /// Creates a new customer for the given tenant.
-    async fn create(
+    fn create(
         &self,
         tenant_id: TenantId,
         stripe_customer_id: Option<String>,
-    ) -> Result<Customer, DomainError>;
+    ) -> impl Future<Output = Result<Customer, DomainError>> + Send;
 
     /// Finds a customer by id, scoped to the tenant. Returns `None` if the
     /// customer does not exist or has been soft-deleted.
-    async fn find(
+    fn find(
         &self,
         tenant_id: TenantId,
         id: CustomerId,
-    ) -> Result<Option<Customer>, DomainError>;
+    ) -> impl Future<Output = Result<Option<Customer>, DomainError>> + Send;
 
     /// Lists all customers for the given tenant, excluding soft-deleted ones.
-    async fn list(&self, tenant_id: TenantId) -> Result<Vec<Customer>, DomainError>;
+    fn list(
+        &self,
+        tenant_id: TenantId,
+    ) -> impl Future<Output = Result<Vec<Customer>, DomainError>> + Send;
 }
 
 #[cfg(test)]
