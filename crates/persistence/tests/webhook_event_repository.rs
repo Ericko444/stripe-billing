@@ -90,3 +90,52 @@ async fn duplicate_stripe_event_id_is_rejected() -> Result<(), Box<dyn Error>> {
     assert!(matches!(second, Err(DomainError::Conflict)));
     Ok(())
 }
+
+#[tokio::test]
+async fn mark_processed_sets_processed_at() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgWebhookEventRepository::new(db.pool.clone());
+
+    let created = repo
+        .create(
+            None,
+            "evt_mark_processed".to_string(),
+            "customer.subscription.updated".to_string(),
+            json!({}),
+        )
+        .await?;
+    assert_eq!(created.processed_at, None);
+
+    repo.mark_processed(created.id).await?;
+
+    let found = repo.find_by_stripe_event_id("evt_mark_processed").await?;
+    assert!(found.is_some_and(|event| event.processed_at.is_some()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn mark_processed_twice_is_harmless() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgWebhookEventRepository::new(db.pool.clone());
+
+    let created = repo
+        .create(
+            None,
+            "evt_mark_processed_twice".to_string(),
+            "customer.subscription.updated".to_string(),
+            json!({}),
+        )
+        .await?;
+
+    repo.mark_processed(created.id).await?;
+    // A second call is not an error and does not need the row to still be
+    // in some particular state -- decision 5's "still processed even for a
+    // declined event" path calls this unconditionally.
+    repo.mark_processed(created.id).await?;
+
+    let found = repo
+        .find_by_stripe_event_id("evt_mark_processed_twice")
+        .await?;
+    assert!(found.is_some_and(|event| event.processed_at.is_some()));
+    Ok(())
+}
