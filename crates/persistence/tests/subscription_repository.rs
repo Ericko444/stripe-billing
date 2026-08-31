@@ -11,6 +11,17 @@ use sqlx::PgPool;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+/// `now_utc()` truncated to microsecond precision, matching what
+/// `TIMESTAMPTZ` actually stores. Using the raw nanosecond-precision value in
+/// an equality assertion against a row that has round-tripped through
+/// Postgres fails on the sub-microsecond digits alone -- this is what the
+/// value going *in* has to look like for that comparison to be meaningful.
+fn now_micros() -> OffsetDateTime {
+    let nanos = OffsetDateTime::now_utc().unix_timestamp_nanos();
+    let micros = (nanos / 1_000) * 1_000;
+    OffsetDateTime::from_unix_timestamp_nanos(micros).unwrap_or_else(|_| OffsetDateTime::now_utc())
+}
+
 /// Inserts a customer and a plan for `tenant` and returns their ids, so a
 /// subscription's FKs point at real rows.
 async fn seed(pool: &PgPool, tenant: TenantId) -> Result<(CustomerId, PlanId), Box<dyn Error>> {
@@ -184,7 +195,7 @@ async fn apply_event_updates_the_row_and_advances_the_ordering_column() -> Resul
     let created =
         create_subscription(&repo, tenant, customer_id, plan_id, "sub_apply_event").await?;
 
-    let event_created_at = OffsetDateTime::now_utc();
+    let event_created_at = now_micros();
     let new_period_start = event_created_at;
     let new_period_end = event_created_at + Duration::days(30);
 
@@ -223,7 +234,7 @@ async fn apply_event_with_an_older_timestamp_is_stale_and_leaves_the_row_unchang
     let (customer_id, plan_id) = seed(&db.pool, tenant).await?;
     let created = create_subscription(&repo, tenant, customer_id, plan_id, "sub_stale").await?;
 
-    let newer_created_at = OffsetDateTime::now_utc();
+    let newer_created_at = now_micros();
     let newer_period_start = newer_created_at;
     let newer_period_end = newer_created_at + Duration::days(30);
     let first_outcome = repo
@@ -277,7 +288,7 @@ async fn apply_event_with_an_equal_timestamp_applies() -> Result<(), Box<dyn Err
     // Stripe's `created` has second granularity, so two genuine events can
     // legitimately share one -- equality must apply, not be treated as
     // stale, or the second of the two would be silently dropped.
-    let shared_created_at = OffsetDateTime::now_utc();
+    let shared_created_at = now_micros();
     let first_outcome = repo
         .apply_event(
             tenant,
