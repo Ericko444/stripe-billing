@@ -63,6 +63,7 @@ async fn create_then_find() -> Result<(), Box<dyn Error>> {
     assert_eq!(found, Some(created.clone()));
     assert_eq!(created.status, SubscriptionStatus::Active);
     assert!(!created.cancel_at_period_end);
+    assert_eq!(created.last_event_created_at, None);
     Ok(())
 }
 

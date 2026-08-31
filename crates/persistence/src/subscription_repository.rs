@@ -20,6 +20,7 @@ struct SubscriptionRow {
     current_period_start: OffsetDateTime,
     current_period_end: OffsetDateTime,
     cancel_at_period_end: bool,
+    last_event_created_at: Option<OffsetDateTime>,
     created_at: OffsetDateTime,
     deleted_at: Option<OffsetDateTime>,
 }
@@ -39,6 +40,7 @@ impl TryFrom<SubscriptionRow> for Subscription {
             current_period_start: row.current_period_start,
             current_period_end: row.current_period_end,
             cancel_at_period_end: row.cancel_at_period_end,
+            last_event_created_at: row.last_event_created_at,
             created_at: row.created_at,
             deleted_at: row.deleted_at,
         })
@@ -81,7 +83,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
              RETURNING id, tenant_id, customer_id, plan_id, stripe_subscription_id, \
                        stripe_subscription_item_id, status, current_period_start, \
-                       current_period_end, cancel_at_period_end, created_at, deleted_at",
+                       current_period_end, cancel_at_period_end, last_event_created_at, created_at, deleted_at",
         )
         .bind(Uuid::new_v4())
         .bind(tenant_id.as_uuid())
@@ -108,7 +110,8 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         let row = sqlx::query_as::<_, SubscriptionRow>(
             "SELECT id, tenant_id, customer_id, plan_id, stripe_subscription_id, \
                     stripe_subscription_item_id, status, current_period_start, \
-                    current_period_end, cancel_at_period_end, created_at, deleted_at \
+                    current_period_end, cancel_at_period_end, last_event_created_at, \
+                    created_at, deleted_at \
              FROM billing.subscriptions \
              WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL",
         )
@@ -126,7 +129,8 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         let rows = sqlx::query_as::<_, SubscriptionRow>(
             "SELECT id, tenant_id, customer_id, plan_id, stripe_subscription_id, \
                     stripe_subscription_item_id, status, current_period_start, \
-                    current_period_end, cancel_at_period_end, created_at, deleted_at \
+                    current_period_end, cancel_at_period_end, last_event_created_at, \
+                    created_at, deleted_at \
              FROM billing.subscriptions \
              WHERE tenant_id = $1 AND deleted_at IS NULL",
         )

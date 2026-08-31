@@ -96,6 +96,14 @@ pub struct Subscription {
     pub current_period_end: OffsetDateTime,
     /// Whether the subscription is set to end at the period boundary.
     pub cancel_at_period_end: bool,
+    /// Stripe's `created` timestamp of the last webhook event applied to this
+    /// row (`init-spec.md` §10.2). `None` means no event has been applied
+    /// yet -- true of every row created before webhook processing existed.
+    /// A later event is applied only when its `created` is `None`-relative
+    /// (always applies) or greater than or equal to this value; an older
+    /// event is recorded but not applied, which is what stops an
+    /// out-of-order redelivery from regressing the row.
+    pub last_event_created_at: Option<OffsetDateTime>,
     /// When the subscription was created.
     pub created_at: OffsetDateTime,
     /// When the subscription was soft-deleted, if at all.
