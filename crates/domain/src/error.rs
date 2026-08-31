@@ -40,4 +40,21 @@ pub enum DomainError {
     /// adapter's `WebhookError` and is logged server-side.
     #[error("webhook verification failed")]
     WebhookVerification,
+
+    /// A webhook event's body did not have the shape a handler expected --
+    /// for example a missing field or a subscription with no items --
+    /// despite having already passed signature verification.
+    ///
+    /// Distinct from `WebhookVerification`: the signature is not in
+    /// question here, and mapping this to that variant would tell the
+    /// caller "forged or stale signature, do not retry" for a failure that
+    /// is really ours (a field this code expects moved, or Stripe's account
+    /// API version does not match this handler's assumption). It surfaces
+    /// as a 500 at the route, which is the correct signal to retry --
+    /// `init-spec.md` §5.5's error-model layering, extended to the one
+    /// payload-shape failure mode webhook processing introduces. Carries a
+    /// message for server-side logs, same reasoning as `Repository` and
+    /// `Provider`.
+    #[error("malformed webhook event: {0}")]
+    MalformedEvent(String),
 }

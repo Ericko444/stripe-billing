@@ -30,6 +30,12 @@ pub(crate) struct InMemoryCustomers {
     rows: Mutex<Vec<Customer>>,
 }
 
+impl InMemoryCustomers {
+    pub(crate) fn seed(&self, customer: Customer) {
+        lock(&self.rows).push(customer);
+    }
+}
+
 impl CustomerRepository for InMemoryCustomers {
     async fn create(
         &self,
@@ -83,6 +89,12 @@ impl CustomerRepository for InMemoryCustomers {
 #[derive(Default)]
 pub(crate) struct InMemorySubscriptions {
     rows: Mutex<Vec<Subscription>>,
+}
+
+impl InMemorySubscriptions {
+    pub(crate) fn seed(&self, subscription: Subscription) {
+        lock(&self.rows).push(subscription);
+    }
 }
 
 impl SubscriptionRepository for InMemorySubscriptions {

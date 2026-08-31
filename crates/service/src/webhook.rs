@@ -4,6 +4,8 @@ use domain::{
     WebhookEventRepository,
 };
 
+use crate::subscription_updated;
+
 /// The outcome of processing one verified webhook event (`init-spec.md`
 /// §10.2, spec decision 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,17 +60,15 @@ pub trait WebhookHandler: Send + Sync {
 /// hot path. Implements the object-safe [`WebhookHandler`] below so a later
 /// phase's `AppState` can hold it as `Arc<dyn WebhookHandler>` instead.
 ///
-/// No event type has a handler yet -- every event currently takes the
-/// `UnhandledType` path. `customers`, `subscriptions` and `sink` become live
-/// as the first event handler (`subscription_updated`) and the sink wiring
-/// land; until then they carry `#[allow(dead_code)]`, the same idiom
-/// `assert_dyn_compatible` functions elsewhere in this workspace use for a
-/// deliberately-for-now-unused item.
-#[allow(dead_code)]
+/// `sink` becomes live once the next task wires in the mirror-write-then-
+/// sink ordering (decision 4); until then it carries `#[allow(dead_code)]`,
+/// the same idiom `assert_dyn_compatible` functions elsewhere in this
+/// workspace use for a deliberately-for-now-unused item.
 pub struct WebhookProcessor<C, S, W, K> {
     customers: C,
     subscriptions: S,
     webhook_events: W,
+    #[allow(dead_code)]
     sink: K,
 }
 
@@ -93,14 +93,19 @@ where
     K: BillingEventSink,
 {
     async fn handle(&self, event: VerifiedEvent) -> Result<EventOutcome, DomainError> {
-        // No handler for any event type yet -- a later task adds the first
-        // arm. An unrecognised type is acknowledged, never rejected (§10.4).
-        let outcome = EventOutcome::NotApplied(NotAppliedReason::UnhandledType);
+        // No match on anything but the type string. An unrecognised type is
+        // acknowledged, never rejected (§10.4).
+        let outcome = match event.event_type.as_str() {
+            "customer.subscription.updated" => {
+                subscription_updated::apply(&self.customers, &self.subscriptions, &event).await?
+            }
+            _ => EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
+        };
 
-        // Nothing further will ever happen to an event with no handler, so
-        // it is marked processed even though nothing was applied (decision
-        // 5) -- the alternative gives a future recovery sweep permanent
-        // false work.
+        // Nothing further will ever happen to a NotApplied event -- of any
+        // reason, including UnhandledType -- so it is marked processed even
+        // though nothing was applied (decision 5). The Applied + sink case
+        // is wired in by the next task; for now Applied is unreachable.
         self.webhook_events.mark_processed(event.id).await?;
         Ok(outcome)
     }
