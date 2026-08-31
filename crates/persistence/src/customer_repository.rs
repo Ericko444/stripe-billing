@@ -98,4 +98,22 @@ impl CustomerRepository for PgCustomerRepository {
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
+
+    async fn find_by_stripe_customer_id(
+        &self,
+        stripe_customer_id: &str,
+    ) -> Result<Option<Customer>, DomainError> {
+        let row = sqlx::query_as::<_, CustomerRow>(
+            "SELECT id, tenant_id, stripe_customer_id, created_at, deleted_at \
+             FROM billing.customers \
+             WHERE stripe_customer_id = $1 AND deleted_at IS NULL",
+        )
+        .bind(stripe_customer_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        Ok(row.map(Into::into))
+    }
 }

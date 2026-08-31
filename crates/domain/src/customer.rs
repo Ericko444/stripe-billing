@@ -71,6 +71,27 @@ pub trait CustomerRepository {
         &self,
         tenant_id: TenantId,
     ) -> impl Future<Output = Result<Vec<Customer>, DomainError>> + Send;
+
+    /// Resolves the customer -- and therefore the tenant -- that owns a
+    /// Stripe customer id.
+    ///
+    /// **The one method on a tenant-scoped entity's repository that does not
+    /// take a `TenantId`.** (`WebhookEventRepository`'s methods take none
+    /// either, but the webhook ledger is not a tenant-scoped entity to begin
+    /// with, which is why none of its methods do.) This one is deliberately
+    /// the exception: a later phase's webhook path (`init-spec.md` §10.3)
+    /// has no token and no tenant context -- the Stripe signature is the
+    /// authentication -- so this is the function that *produces* a tenant,
+    /// not one more call site that must already have one.
+    ///
+    /// Returns the whole `Customer` rather than a bare `TenantId` so the
+    /// caller receives the tenant *attached to the row it was derived from*,
+    /// with no opportunity to pair it with a different customer. Excludes
+    /// soft-deleted rows, like every other read on this trait.
+    fn find_by_stripe_customer_id(
+        &self,
+        stripe_customer_id: &str,
+    ) -> impl Future<Output = Result<Option<Customer>, DomainError>> + Send;
 }
 
 #[cfg(test)]
