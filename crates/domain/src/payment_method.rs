@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -48,10 +50,16 @@ pub struct PaymentMethod {
 
 /// Port for persisting and querying `PaymentMethod` records. Implemented by an
 /// adapter crate (`persistence`); no I/O here.
-#[allow(async_fn_in_trait)]
+///
+/// Written as `fn … -> impl Future<Output = …> + Send` rather than bare
+/// `async fn`, matching `SubscriptionRepository` and `InvoiceRepository`: the
+/// webhook path's `WebhookProcessor` goes behind `#[async_trait]` to
+/// implement the object-safe `WebhookHandler` port, which boxes its futures
+/// as `Send`, so every future it awaits must be `Send` too. Implementors may
+/// still write `async fn` in the `impl` block; the bound is checked there.
 pub trait PaymentMethodRepository {
     /// Creates a new payment method for the given tenant.
-    async fn create(
+    fn create(
         &self,
         tenant_id: TenantId,
         customer_id: CustomerId,
@@ -59,18 +67,21 @@ pub trait PaymentMethodRepository {
         brand: String,
         last4: String,
         is_default: bool,
-    ) -> Result<PaymentMethod, DomainError>;
+    ) -> impl Future<Output = Result<PaymentMethod, DomainError>> + Send;
 
     /// Finds a payment method by id, scoped to the tenant. Returns `None` if
     /// it does not exist or has been soft-deleted.
-    async fn find(
+    fn find(
         &self,
         tenant_id: TenantId,
         id: PaymentMethodId,
-    ) -> Result<Option<PaymentMethod>, DomainError>;
+    ) -> impl Future<Output = Result<Option<PaymentMethod>, DomainError>> + Send;
 
     /// Lists all payment methods for the given tenant, excluding soft-deleted ones.
-    async fn list(&self, tenant_id: TenantId) -> Result<Vec<PaymentMethod>, DomainError>;
+    fn list(
+        &self,
+        tenant_id: TenantId,
+    ) -> impl Future<Output = Result<Vec<PaymentMethod>, DomainError>> + Send;
 }
 
 #[cfg(test)]
