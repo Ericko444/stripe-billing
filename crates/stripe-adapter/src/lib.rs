@@ -39,6 +39,7 @@ mod error;
 mod fingerprint;
 mod ledger;
 mod provider;
+mod setup_intents;
 mod subscriptions;
 mod webhook;
 mod webhook_error;

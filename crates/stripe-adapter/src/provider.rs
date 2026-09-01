@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use domain::{
     BillingProvider, CancellationTiming, CreateCustomerParams, CustomerSnapshot, DomainError,
-    OutboundRequestRepository, SubscriptionSnapshot, TenantId, UpdateCustomerParams,
+    OutboundRequestRepository, SetupIntentSnapshot, SubscriptionSnapshot, TenantId,
+    UpdateCustomerParams,
 };
 
 use crate::ledger::Ledger;
-use crate::{StripeConfig, StripeError, build_client, customers, subscriptions};
+use crate::{StripeConfig, StripeError, build_client, customers, setup_intents, subscriptions};
 
 /// Stripe-backed implementation of `domain::BillingProvider`: fingerprint
 /// every mutating call, reserve and persist an idempotency key through
@@ -122,6 +123,22 @@ impl<R: OutboundRequestRepository> StripeBillingProvider<R> {
         )
         .await
     }
+
+    /// Creates a SetupIntent for an existing Stripe customer. Same signature
+    /// as `BillingProvider::create_setup_intent`.
+    pub async fn create_setup_intent(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        setup_intents::create_setup_intent(
+            &self.client,
+            &self.ledger,
+            tenant_id,
+            stripe_customer_id,
+        )
+        .await
+    }
 }
 
 /// The port impl a host wires behind `dyn BillingProvider`. Each method is a
@@ -187,5 +204,13 @@ impl<R: OutboundRequestRepository + Send + Sync> BillingProvider for StripeBilli
     ) -> Result<SubscriptionSnapshot, DomainError> {
         StripeBillingProvider::cancel_subscription(self, tenant_id, stripe_subscription_id, timing)
             .await
+    }
+
+    async fn create_setup_intent(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        StripeBillingProvider::create_setup_intent(self, tenant_id, stripe_customer_id).await
     }
 }
