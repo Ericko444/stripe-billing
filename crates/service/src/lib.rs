@@ -7,6 +7,7 @@
 //! a `WebhookEvent` is marked processed only once both that write and the
 //! sink call have succeeded (`init-spec.md` §10.2, §8.3).
 
+mod checkout_session;
 mod invoice_events;
 mod payment_method_events;
 mod subscription_lifecycle;

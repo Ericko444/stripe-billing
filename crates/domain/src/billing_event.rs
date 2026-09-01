@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::{InvoiceId, PaymentMethodId, SubscriptionId, TenantId};
+use crate::{CustomerId, InvoiceId, PaymentMethodId, SubscriptionId, TenantId};
 
 /// A typed notification handed to the host after a webhook event has been
 /// mirrored (`init-spec.md` §8.3).
@@ -81,6 +81,17 @@ pub enum BillingEvent {
         tenant_id: TenantId,
         /// The (now soft-deleted) local payment-method mirror row.
         payment_method_id: PaymentMethodId,
+    },
+    /// A Checkout session completed and linked a Stripe customer to a tenant
+    /// for the first time (`checkout.session.completed`, the bootstrap
+    /// exception -- `init-spec.md` §10.3). The subscription mirror itself
+    /// arrives via the `customer.subscription.created` that Stripe sends
+    /// alongside.
+    CheckoutCompleted {
+        /// The tenant the Checkout session was for.
+        tenant_id: TenantId,
+        /// The newly-linked local customer mirror row.
+        customer_id: CustomerId,
     },
 }
 

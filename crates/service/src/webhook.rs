@@ -4,7 +4,7 @@ use domain::{
     PaymentMethodRepository, SubscriptionRepository, VerifiedEvent, WebhookEventRepository,
 };
 
-use crate::{invoice_events, payment_method_events, subscription_lifecycle};
+use crate::{checkout_session, invoice_events, payment_method_events, subscription_lifecycle};
 
 /// The outcome of processing one verified webhook event (`init-spec.md`
 /// §10.2, spec decision 3).
@@ -170,6 +170,9 @@ where
             // Recognised, but the SetupIntent carries nothing to mirror --
             // the card details arrive via `payment_method.attached`.
             "setup_intent.succeeded" => EventOutcome::NotApplied(NotAppliedReason::Acknowledged),
+            "checkout.session.completed" => {
+                checkout_session::apply(&self.customers, &event).await?
+            }
             _ => EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
         };
 
