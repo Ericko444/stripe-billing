@@ -1,6 +1,6 @@
 //! Axum router factory, wire DTOs and the error-to-HTTP mapping.
 //!
-//! Two rules this crate carries:
+//! Three rules this crate carries:
 //!
 //! - **Exposes a `Router`, never a binary and never a `main`** -- a host
 //!   that already owns `tokio::main` and its own config loading mounts this
@@ -10,6 +10,12 @@
 //!   extractor consuming and re-encoding the body breaks verification
 //!   irrecoverably (§10.1). `Bytes` is the last extractor so `HeaderMap` is
 //!   available first.
+//! - **DTOs are `api`-owned; domain types are never `Serialize`.** Every
+//!   response body is a type in `dto.rs` with a hand-written `From` impl. The
+//!   moment a domain struct is serializable, adding a field to it becomes a
+//!   wire-breaking change made by someone not thinking about the wire (§9).
+//!   Money is `{amount_minor, currency}` -- never a float, never a
+//!   preformatted string (S5); timestamps are RFC 3339 UTC.
 //!
 //! # Two factories, on purpose
 //!
@@ -21,10 +27,20 @@
 //! from ever becoming a precondition of the webhook route. A host serves one,
 //! the other, or both merged.
 //!
+//! # Wiring a host (read this before Phase 4c / a real deployment)
+//!
+//! The contract a host implements is [`TenantExtractor`]: an Axum
+//! `FromRequestParts` extractor that **rejects with [`ApiError`]** and
+//! converts `Into<`[`TenantId`](domain::TenantId)`>`. Pinning the rejection
+//! type is what keeps every error out of the router in
+//! `application/problem+json`. Forgetting to supply a `T` is a compile
+//! error, not a runtime 500. [`billing_router`]'s own rustdoc carries a
+//! complete, compiling example of the ~15 lines a middleware-based host
+//! writes.
+//!
 //! See `error.rs` for the RFC 9457 mapping (where information leaks are
-//! prevented), `extract.rs` for the `T` bound, `dto.rs` for the wire types
-//! (domain types are never `Serialize`), and `state.rs` for what a host
-//! constructs before mounting.
+//! prevented), `extract.rs` for the `T` bound, `dto.rs` for the wire types,
+//! and `state.rs` for what a host constructs before mounting.
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -93,15 +109,15 @@ pub fn webhook_router(state: AppState) -> Router {
 /// # Adapting a middleware-based host ("Option A")
 ///
 /// A host whose auth layer already put the tenant in the request extensions
-/// writes a newtype and names it as `T`:
+/// writes a newtype and names it as `T`. This compiles as written:
 ///
-/// ```ignore
-/// use api::{ApiError, AppState};
+/// ```
+/// use api::{ApiError, AppState, billing_router};
 /// use axum::extract::FromRequestParts;
 /// use axum::http::request::Parts;
 /// use domain::{DomainError, TenantId};
 ///
-/// /// The host's adapter: pull the `TenantId` its middleware inserted.
+/// // The host's adapter: pull the `TenantId` its middleware inserted.
 /// struct HostTenant(TenantId);
 ///
 /// impl FromRequestParts<AppState> for HostTenant {
@@ -122,12 +138,16 @@ pub fn webhook_router(state: AppState) -> Router {
 /// }
 ///
 /// impl From<HostTenant> for TenantId {
-///     fn from(t: HostTenant) -> Self {
-///         t.0
+///     fn from(tenant: HostTenant) -> Self {
+///         tenant.0
 ///     }
 /// }
 ///
-/// let app = billing_router::<HostTenant>(state);
+/// // The host then mounts the router with its own type as `T`:
+/// fn mount(state: AppState) -> axum::Router {
+///     billing_router::<HostTenant>(state)
+/// }
+/// # let _ = mount;
 /// ```
 pub fn billing_router<T>(state: AppState) -> Router
 where
