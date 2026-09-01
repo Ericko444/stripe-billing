@@ -530,3 +530,16 @@ pub fn app_state_writes(writes: Arc<dyn Writes>) -> AppState {
         checkout_urls(),
     )
 }
+
+/// `AppState` with **both** a real read stub and a real write stub -- the
+/// whole-surface tenancy suite drives read and write routes through one
+/// state.
+pub fn app_state_full(reads: StubReads, writes: Arc<dyn Writes>) -> AppState {
+    AppState::new(
+        Arc::new(UnusedVerifier),
+        Arc::new(UnusedHandler),
+        Arc::new(reads),
+        writes,
+        checkout_urls(),
+    )
+}
