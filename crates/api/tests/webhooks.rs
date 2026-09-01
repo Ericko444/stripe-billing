@@ -14,9 +14,11 @@ use api::{AppState, webhook_router};
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use domain::{DomainError, VerifiedEvent, WebhookEventId, WebhookReceipt, WebhookVerifier};
+use domain::{
+    DomainError, Plan, TenantId, VerifiedEvent, WebhookEventId, WebhookReceipt, WebhookVerifier,
+};
 use serde_json::json;
-use service::{EventOutcome, NotAppliedReason, WebhookHandler};
+use service::{EventOutcome, NotAppliedReason, Reads, WebhookHandler};
 use time::OffsetDateTime;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -100,8 +102,24 @@ fn verified_event() -> VerifiedEvent {
     }
 }
 
+/// `AppState` now carries a read service for the tenant-scoped routes. The
+/// webhook route never touches it, so these tests wire a stub that would
+/// return nothing if it were ever called -- the point being that it is not.
+struct NoReads;
+
+#[async_trait]
+impl Reads for NoReads {
+    async fn list_plans(&self, _tenant: TenantId) -> Result<Vec<Plan>, DomainError> {
+        Ok(Vec::new())
+    }
+}
+
 fn app_state(verifier: Arc<StubVerifier>, outcome: EventOutcome) -> AppState {
-    AppState::new(verifier, Arc::new(StubHandler { outcome }))
+    AppState::new(
+        verifier,
+        Arc::new(StubHandler { outcome }),
+        Arc::new(NoReads),
+    )
 }
 
 #[tokio::test]

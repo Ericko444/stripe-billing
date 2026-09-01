@@ -22,18 +22,21 @@
 //! the other, or both merged.
 //!
 //! See `error.rs` for the RFC 9457 mapping (where information leaks are
-//! prevented), `extract.rs` for the `T` bound, and `state.rs` for what a
-//! host constructs before mounting.
+//! prevented), `extract.rs` for the `T` bound, `dto.rs` for the wire types
+//! (domain types are never `Serialize`), and `state.rs` for what a host
+//! constructs before mounting.
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::post;
+use axum::routing::{get, post};
 
+mod dto;
 mod error;
 mod extract;
 mod routes;
 mod state;
 
+pub use dto::{MoneyDto, PlanDto};
 pub use error::ApiError;
 pub use extract::TenantExtractor;
 pub use state::AppState;
@@ -128,11 +131,9 @@ pub fn billing_router<T>(state: AppState) -> Router
 where
     T: TenantExtractor,
 {
-    // No tenant-scoped route is mounted yet -- the five read routes arrive in
-    // Phase B onward, each `get(handler::<T>)`, which is where `T` is
-    // instantiated. Until then the bound stands on its own so the seam
-    // (a generic signature, `webhook_router` split off) can be reviewed and
-    // tested before any route complicates the diff.
-    let _ = std::marker::PhantomData::<T>;
-    Router::new().with_state(state)
+    // Each route names `T` as its tenant extractor. That is the only place a
+    // `TenantId` enters a handler -- never a path, query, header or body.
+    Router::new()
+        .route("/plans", get(routes::plans::list_plans::<T>))
+        .with_state(state)
 }

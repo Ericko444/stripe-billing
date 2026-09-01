@@ -24,7 +24,7 @@ use persistence::{
     PgSubscriptionRepository, PgWebhookEventRepository, run_migrations,
 };
 use secrecy::SecretString;
-use service::{WebhookHandler, WebhookProcessor};
+use service::{ReadService, Reads, WebhookHandler, WebhookProcessor};
 use sqlx::postgres::PgPoolOptions;
 use stripe_adapter::{DEFAULT_TOLERANCE, StripeWebhookVerifier, WebhookConfig};
 use thiserror::Error;
@@ -130,10 +130,20 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         LoggingSink,
     ));
 
-    // The tenant-scoped `billing_router` is not wired here until the demo
+    // The read service the tenant-scoped routes will use. Wired now, from a
+    // second set of repository handles (a `PgPool` clone is cheap), so
+    // `AppState` is complete even though only the webhook route is mounted.
+    let reads: Arc<dyn Reads> = Arc::new(ReadService::new(
+        PgPlanRepository::new(pool.clone()),
+        PgSubscriptionRepository::new(pool.clone()),
+        PgInvoiceRepository::new(pool.clone()),
+        PgPaymentMethodRepository::new(pool.clone()),
+    ));
+
+    // The tenant-scoped `billing_router` is not mounted here until the demo
     // gains `POST /demo/token` and the `jwt-auth` feature (Phase 4d); for now
     // the composition root serves only the webhook route it already had.
-    let router = webhook_router(AppState::new(verifier, handler));
+    let router = webhook_router(AppState::new(verifier, handler, reads));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = TcpListener::bind(addr).await?;
