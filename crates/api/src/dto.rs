@@ -11,7 +11,7 @@
 //! exactly), never a pre-formatted `"€19.99"` (which forces every consumer
 //! to parse a locale back out). Timestamps are RFC 3339 UTC strings.
 
-use domain::{Currency, Money, Plan, Subscription};
+use domain::{Currency, Money, PaymentMethod, Plan, Subscription};
 use serde::Serialize;
 use time::{OffsetDateTime, UtcOffset};
 
@@ -91,6 +91,37 @@ impl From<Subscription> for SubscriptionDto {
             current_period_end: rfc3339_utc(subscription.current_period_end),
             cancel_at_period_end: subscription.cancel_at_period_end,
             created_at: rfc3339_utc(subscription.created_at),
+        }
+    }
+}
+
+/// A stored card on the wire. Display metadata only -- `brand`, `last4`,
+/// `is_default`, plus id and creation time. No card number, no expiry, no
+/// token: §7.4 keeps card data in Stripe and the mirror table never held
+/// anything else, so this DTO's job is to not undo that by joining in
+/// something richer later.
+#[derive(Debug, Serialize)]
+pub struct PaymentMethodDto {
+    /// The local payment method id, hyphenated uuid.
+    pub id: String,
+    /// The card brand, e.g. `visa`.
+    pub brand: String,
+    /// The last four digits of the card.
+    pub last4: String,
+    /// Whether this is the customer's default payment method.
+    pub is_default: bool,
+    /// When the payment method was created, RFC 3339 UTC.
+    pub created_at: String,
+}
+
+impl From<PaymentMethod> for PaymentMethodDto {
+    fn from(payment_method: PaymentMethod) -> Self {
+        Self {
+            id: payment_method.id.as_uuid().to_string(),
+            brand: payment_method.brand,
+            last4: payment_method.last4,
+            is_default: payment_method.is_default,
+            created_at: rfc3339_utc(payment_method.created_at),
         }
     }
 }

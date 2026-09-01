@@ -36,7 +36,7 @@ mod extract;
 mod routes;
 mod state;
 
-pub use dto::{MoneyDto, PlanDto, SubscriptionDto};
+pub use dto::{MoneyDto, PaymentMethodDto, PlanDto, SubscriptionDto};
 pub use error::ApiError;
 pub use extract::TenantExtractor;
 pub use state::AppState;
@@ -138,6 +138,10 @@ where
         .route(
             "/subscription",
             get(routes::subscription::get_subscription::<T>),
+        )
+        .route(
+            "/payment-methods",
+            get(routes::payment_methods::list_payment_methods::<T>),
         )
         .with_state(state)
 }

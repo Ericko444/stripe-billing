@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use domain::{
-    DomainError, Plan, Subscription, SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt,
-    WebhookVerifier,
+    DomainError, PaymentMethod, Plan, Subscription, SubscriptionStatus, TenantId, VerifiedEvent,
+    WebhookReceipt, WebhookVerifier,
 };
 use service::{EventOutcome, Reads, WebhookHandler};
 use uuid::Uuid;
@@ -51,6 +51,7 @@ impl From<HeaderTenant> for TenantId {
 pub struct StubReads {
     pub plans: Vec<Plan>,
     pub subscriptions: Vec<Subscription>,
+    pub payment_methods: Vec<PaymentMethod>,
 }
 
 #[async_trait]
@@ -74,6 +75,18 @@ impl Reads for StubReads {
             .filter(|s| s.tenant_id == tenant && s.status != SubscriptionStatus::Canceled)
             .max_by_key(|s| s.created_at)
             .cloned())
+    }
+
+    async fn list_payment_methods(
+        &self,
+        tenant: TenantId,
+    ) -> Result<Vec<PaymentMethod>, DomainError> {
+        Ok(self
+            .payment_methods
+            .iter()
+            .filter(|pm| pm.tenant_id == tenant && pm.deleted_at.is_none())
+            .cloned()
+            .collect())
     }
 }
 

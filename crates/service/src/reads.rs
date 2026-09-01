@@ -8,8 +8,8 @@
 
 use async_trait::async_trait;
 use domain::{
-    DomainError, InvoiceRepository, PaymentMethodRepository, Plan, PlanRepository, Subscription,
-    SubscriptionRepository, SubscriptionStatus, TenantId,
+    DomainError, InvoiceRepository, PaymentMethod, PaymentMethodRepository, Plan, PlanRepository,
+    Subscription, SubscriptionRepository, SubscriptionStatus, TenantId,
 };
 
 /// Object-safe façade over the read use cases.
@@ -41,6 +41,14 @@ pub trait Reads: Send + Sync {
         &self,
         tenant: TenantId,
     ) -> Result<Option<Subscription>, DomainError>;
+
+    /// Every payment method for the tenant, soft-deleted rows excluded (the
+    /// repository already does the exclusion). Display metadata only -- the
+    /// mirror table never held card data (§7.4).
+    async fn list_payment_methods(
+        &self,
+        tenant: TenantId,
+    ) -> Result<Vec<PaymentMethod>, DomainError>;
 }
 
 /// Holds the four read repositories a host wires in.
@@ -54,11 +62,9 @@ pub trait Reads: Send + Sync {
 pub struct ReadService<L, S, I, M> {
     plans: L,
     subscriptions: S,
-    // Wired now, read by later slices: payment methods (Task 4), invoices
-    // (Tasks 7-8).
+    // Wired now, read by later slices: invoices (Tasks 7-8).
     #[allow(dead_code)]
     invoices: I,
-    #[allow(dead_code)]
     payment_methods: M,
 }
 
@@ -95,13 +101,22 @@ where
         subscriptions.sort_by_key(|s| s.created_at);
         Ok(subscriptions.pop())
     }
+
+    async fn list_payment_methods(
+        &self,
+        tenant: TenantId,
+    ) -> Result<Vec<PaymentMethod>, DomainError> {
+        self.payment_methods.list(tenant).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::error::Error;
 
-    use domain::{Currency, CustomerId, Money, Plan, PlanId, SubscriptionId};
+    use domain::{
+        Currency, CustomerId, Money, PaymentMethod, PaymentMethodId, Plan, PlanId, SubscriptionId,
+    };
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
@@ -110,19 +125,21 @@ mod tests {
         InMemoryInvoices, InMemoryPaymentMethods, InMemoryPlans, InMemorySubscriptions,
     };
 
+    type TestReads =
+        ReadService<InMemoryPlans, InMemorySubscriptions, InMemoryInvoices, InMemoryPaymentMethods>;
+
     /// Compiles only if `Reads` is dyn-compatible -- the property the
     /// `#[async_trait]` decision exists for.
     #[allow(dead_code)]
     fn assert_dyn_compatible(_reads: &dyn Reads) {}
 
-    fn service(
-        plans: InMemoryPlans,
-        subscriptions: InMemorySubscriptions,
-    ) -> ReadService<InMemoryPlans, InMemorySubscriptions, InMemoryInvoices, InMemoryPaymentMethods>
-    {
+    /// A `ReadService` over empty in-memory doubles. Seed what a test needs
+    /// through the field: `svc.plans.seed(..)`, `svc.subscriptions.seed(..)`
+    /// -- the fields are private but this module is where they live.
+    fn service() -> TestReads {
         ReadService::new(
-            plans,
-            subscriptions,
+            InMemoryPlans::default(),
+            InMemorySubscriptions::default(),
             InMemoryInvoices::default(),
             InMemoryPaymentMethods::default(),
         )
@@ -163,14 +180,29 @@ mod tests {
         }
     }
 
+    fn payment_method(tenant: TenantId, last4: &str, is_default: bool) -> PaymentMethod {
+        PaymentMethod {
+            id: PaymentMethodId::new(Uuid::new_v4()),
+            tenant_id: tenant,
+            customer_id: CustomerId::new(Uuid::new_v4()),
+            stripe_payment_method_id: format!("pm_{}", Uuid::new_v4()),
+            brand: "visa".to_string(),
+            last4: last4.to_string(),
+            is_default,
+            last_event_created_at: None,
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        }
+    }
+
     #[tokio::test]
     async fn list_plans_returns_the_tenants_plans() -> Result<(), Box<dyn Error>> {
         let tenant = TenantId::new(Uuid::new_v4());
-        let plans = InMemoryPlans::default();
-        plans.seed(plan(tenant, "starter"));
-        plans.seed(plan(tenant, "pro"));
+        let svc = service();
+        svc.plans.seed(plan(tenant, "starter"));
+        svc.plans.seed(plan(tenant, "pro"));
 
-        let names: Vec<_> = service(plans, InMemorySubscriptions::default())
+        let names: Vec<_> = svc
             .list_plans(tenant)
             .await?
             .into_iter()
@@ -185,13 +217,11 @@ mod tests {
     async fn list_plans_passes_the_tenant_through_unchanged() -> Result<(), Box<dyn Error>> {
         let wanted = TenantId::new(Uuid::new_v4());
         let other = TenantId::new(Uuid::new_v4());
-        let plans = InMemoryPlans::default();
-        plans.seed(plan(wanted, "mine"));
-        plans.seed(plan(other, "theirs"));
+        let svc = service();
+        svc.plans.seed(plan(wanted, "mine"));
+        svc.plans.seed(plan(other, "theirs"));
 
-        let got = service(plans, InMemorySubscriptions::default())
-            .list_plans(wanted)
-            .await?;
+        let got = svc.list_plans(wanted).await?;
 
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].tenant_id, wanted);
@@ -203,9 +233,7 @@ mod tests {
     -> Result<(), Box<dyn Error>> {
         let tenant = TenantId::new(Uuid::new_v4());
 
-        let got = service(InMemoryPlans::default(), InMemorySubscriptions::default())
-            .get_current_subscription(tenant)
-            .await?;
+        let got = service().get_current_subscription(tenant).await?;
 
         assert!(got.is_none());
         Ok(())
@@ -215,9 +243,9 @@ mod tests {
     async fn current_subscription_is_the_newest_non_canceled_one() -> Result<(), Box<dyn Error>> {
         let tenant = TenantId::new(Uuid::new_v4());
         let epoch = OffsetDateTime::UNIX_EPOCH;
-        let subscriptions = InMemorySubscriptions::default();
+        let svc = service();
         // Newest overall, but canceled -- must be skipped.
-        subscriptions.seed(subscription(
+        svc.subscriptions.seed(subscription(
             tenant,
             SubscriptionStatus::Canceled,
             epoch + Duration::days(10),
@@ -228,14 +256,14 @@ mod tests {
             epoch + Duration::days(5),
         );
         let newest_active_id = newest_active.id;
-        subscriptions.seed(newest_active);
-        subscriptions.seed(subscription(
+        svc.subscriptions.seed(newest_active);
+        svc.subscriptions.seed(subscription(
             tenant,
             SubscriptionStatus::PastDue,
             epoch + Duration::days(1),
         ));
 
-        let got = service(InMemoryPlans::default(), subscriptions)
+        let got = svc
             .get_current_subscription(tenant)
             .await?
             .ok_or("expected a current subscription")?;
@@ -248,18 +276,34 @@ mod tests {
     async fn current_subscription_is_tenant_scoped() -> Result<(), Box<dyn Error>> {
         let mine = TenantId::new(Uuid::new_v4());
         let theirs = TenantId::new(Uuid::new_v4());
-        let subscriptions = InMemorySubscriptions::default();
-        subscriptions.seed(subscription(
+        let svc = service();
+        svc.subscriptions.seed(subscription(
             theirs,
             SubscriptionStatus::Active,
             OffsetDateTime::UNIX_EPOCH,
         ));
 
-        let got = service(InMemoryPlans::default(), subscriptions)
-            .get_current_subscription(mine)
-            .await?;
+        let got = svc.get_current_subscription(mine).await?;
 
         assert!(got.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_payment_methods_returns_only_the_tenants_cards() -> Result<(), Box<dyn Error>> {
+        let mine = TenantId::new(Uuid::new_v4());
+        let theirs = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        svc.payment_methods.seed(payment_method(mine, "4242", true));
+        svc.payment_methods
+            .seed(payment_method(mine, "1881", false));
+        svc.payment_methods
+            .seed(payment_method(theirs, "0000", true));
+
+        let got = svc.list_payment_methods(mine).await?;
+
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|pm| pm.tenant_id == mine));
         Ok(())
     }
 }
