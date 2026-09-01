@@ -58,7 +58,7 @@ pub use dto::{
 };
 pub use error::ApiError;
 pub use extract::TenantExtractor;
-pub use state::AppState;
+pub use state::{AppState, CheckoutUrls};
 
 /// Bytes limit for the webhook body. Nothing in `WebhookVerifier` bounds the
 /// input it will HMAC -- Phase 3 documented that as a host precondition on

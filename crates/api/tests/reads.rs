@@ -335,6 +335,7 @@ async fn the_webhook_route_answers_with_no_tenant_context() -> Result<(), Box<dy
         Arc::new(UnusedHandler),
         Arc::new(StubReads::default()),
         Arc::new(UnusedWrites),
+        common::checkout_urls(),
     );
 
     // Through `webhook_router` -- the non-generic factory. No `x-tenant`

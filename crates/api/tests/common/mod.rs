@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use time::OffsetDateTime;
 
-use api::{ApiError, AppState};
+use api::{ApiError, AppState, CheckoutUrls};
 use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -450,6 +450,16 @@ impl<'a> MakeWriter<'a> for CapturedLogs {
     }
 }
 
+/// Fixed Checkout redirect URLs for the router tests -- `AppState` needs a
+/// [`CheckoutUrls`], and no test asserts on their value except the
+/// checkout-session route's own.
+pub fn checkout_urls() -> CheckoutUrls {
+    CheckoutUrls {
+        success: "https://test.example/checkout/ok".to_string(),
+        cancel: "https://test.example/checkout/cancelled".to_string(),
+    }
+}
+
 /// `AppState` wired for a tenant-scoped route test: real reads, inert webhook
 /// and write deps.
 pub fn app_state(reads: StubReads) -> AppState {
@@ -458,6 +468,7 @@ pub fn app_state(reads: StubReads) -> AppState {
         Arc::new(UnusedHandler),
         Arc::new(reads),
         Arc::new(UnusedWrites),
+        checkout_urls(),
     )
 }
 
@@ -469,5 +480,6 @@ pub fn app_state_writes(writes: Arc<dyn Writes>) -> AppState {
         Arc::new(UnusedHandler),
         Arc::new(StubReads::default()),
         writes,
+        checkout_urls(),
     )
 }

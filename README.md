@@ -53,7 +53,7 @@ running Docker daemon. Webhooks can be exercised locally with
 
 ### Running the demo
 
-`cargo run -p demo` reads and validates four environment variables at
+`cargo run -p demo` reads and validates six environment variables at
 startup (all required; a missing one exits non-zero with a message naming
 it):
 
@@ -62,6 +62,8 @@ it):
 | `DATABASE_URL` | Postgres connection string for the mirror and ledger tables |
 | `STRIPE_WEBHOOK_SIGNING_SECRET` | the `whsec_…` printed by `stripe listen`; wrapped in `SecretString` on read |
 | `STRIPE_SECRET_KEY` | the `sk_…` secret API key the write path's `BillingProvider` uses; wrapped in `SecretString` on read |
+| `CHECKOUT_SUCCESS_URL` | where Stripe returns the customer after a completed Checkout Session; host config, never a request field |
+| `CHECKOUT_CANCEL_URL` | where Stripe returns the customer if they abandon Checkout |
 | `PORT` | TCP port the `POST /webhooks/stripe` listener binds |
 
 `RUST_LOG` tunes tracing output. A `docs/walkthrough/phase-4a-webhook.md`

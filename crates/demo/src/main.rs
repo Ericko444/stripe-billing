@@ -24,7 +24,7 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use api::{AppState, webhook_router};
+use api::{AppState, CheckoutUrls, webhook_router};
 use async_trait::async_trait;
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use persistence::{
@@ -52,6 +52,11 @@ struct Config {
     /// The Stripe secret API key (`sk_...`) the write path's
     /// `BillingProvider` authenticates outbound calls with.
     stripe_secret_key: SecretString,
+    /// Where a Checkout Session returns the customer after success. Host
+    /// config, never a request field -- see [`CheckoutUrls`].
+    checkout_success_url: String,
+    /// Where a Checkout Session returns the customer if they abandon it.
+    checkout_cancel_url: String,
     /// TCP port the webhook listener binds.
     port: u16,
 }
@@ -70,7 +75,7 @@ enum ConfigError {
 
 impl Config {
     /// Assembles config from a lookup function (`std::env::var` in `main`, a
-    /// fixture map in tests). All four values are required: a missing one is
+    /// fixture map in tests). All six values are required: a missing one is
     /// a hard startup failure, not a defaulted value.
     fn from_env<F>(get: F) -> Result<Self, ConfigError>
     where
@@ -85,6 +90,8 @@ impl Config {
         let database_url = required("DATABASE_URL")?;
         let signing_secret = required("STRIPE_WEBHOOK_SIGNING_SECRET")?;
         let stripe_secret_key = required("STRIPE_SECRET_KEY")?;
+        let checkout_success_url = required("CHECKOUT_SUCCESS_URL")?;
+        let checkout_cancel_url = required("CHECKOUT_CANCEL_URL")?;
         let port_raw = required("PORT")?;
         let port = port_raw
             .parse::<u16>()
@@ -94,6 +101,8 @@ impl Config {
             database_url,
             signing_secret: SecretString::from(signing_secret),
             stripe_secret_key: SecretString::from(stripe_secret_key),
+            checkout_success_url,
+            checkout_cancel_url,
             port,
         })
     }
@@ -176,10 +185,23 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         PgPlanRepository::new(pool.clone()),
     ));
 
+    // The Checkout Session redirect URLs the write path needs. From config,
+    // never a request field.
+    let checkout_urls = CheckoutUrls {
+        success: config.checkout_success_url,
+        cancel: config.checkout_cancel_url,
+    };
+
     // The tenant-scoped `billing_router` is not mounted here until the demo
     // gains `POST /demo/token` and the `jwt-auth` feature (Phase 4d); for now
     // the composition root serves only the webhook route it already had.
-    let router = webhook_router(AppState::new(verifier, handler, reads, writes));
+    let router = webhook_router(AppState::new(
+        verifier,
+        handler,
+        reads,
+        writes,
+        checkout_urls,
+    ));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = TcpListener::bind(addr).await?;
@@ -233,14 +255,19 @@ mod tests {
         }
     }
 
+    /// Every required variable, in the order `from_env` checks them.
+    const FULL_ENV: &[(&str, &str)] = &[
+        ("DATABASE_URL", "postgres://localhost/billing"),
+        ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
+        ("STRIPE_SECRET_KEY", "sk_test_abc123"),
+        ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
+        ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
+        ("PORT", "8080"),
+    ];
+
     #[test]
     fn all_present_parses() {
-        let config = Config::from_env(getter(&[
-            ("DATABASE_URL", "postgres://localhost/billing"),
-            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
-            ("STRIPE_SECRET_KEY", "sk_test_abc123"),
-            ("PORT", "8080"),
-        ]));
+        let config = Config::from_env(getter(FULL_ENV));
 
         assert!(matches!(
             &config,
@@ -249,6 +276,8 @@ mod tests {
                     && c.port == 8080
                     && c.signing_secret.expose_secret() == "whsec_abc123"
                     && c.stripe_secret_key.expose_secret() == "sk_test_abc123"
+                    && c.checkout_success_url == "https://app.example/done"
+                    && c.checkout_cancel_url == "https://app.example/billing"
         ));
     }
 
@@ -290,11 +319,28 @@ mod tests {
     }
 
     #[test]
+    fn missing_checkout_success_url_is_named() {
+        let result = Config::from_env(getter(&[
+            ("DATABASE_URL", "postgres://localhost/billing"),
+            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
+            ("STRIPE_SECRET_KEY", "sk_test_abc123"),
+            ("PORT", "8080"),
+        ]));
+
+        assert!(matches!(
+            result,
+            Err(ConfigError::Missing("CHECKOUT_SUCCESS_URL"))
+        ));
+    }
+
+    #[test]
     fn missing_port_is_named() {
         let result = Config::from_env(getter(&[
             ("DATABASE_URL", "postgres://localhost/billing"),
             ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
             ("STRIPE_SECRET_KEY", "sk_test_abc123"),
+            ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
+            ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
         ]));
 
         assert!(matches!(result, Err(ConfigError::Missing("PORT"))));
@@ -317,6 +363,8 @@ mod tests {
             ("DATABASE_URL", "postgres://localhost/billing"),
             ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
             ("STRIPE_SECRET_KEY", "sk_test_abc123"),
+            ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
+            ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
             ("PORT", "not-a-number"),
         ]));
 
