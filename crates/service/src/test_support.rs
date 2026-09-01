@@ -10,13 +10,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use domain::{
-    BillingEvent, BillingEventSink, BillingProvider, CancellationTiming, CreateCustomerParams,
-    Customer, CustomerId, CustomerRepository, CustomerSnapshot, DomainError, EventApplication,
-    Invoice, InvoiceCursor, InvoiceId, InvoicePage, InvoiceRepository, InvoiceStatus, Money,
-    PaymentMethod, PaymentMethodId, PaymentMethodRepository, Plan, PlanId, PlanRepository,
-    SetupIntentSnapshot, SinkError, Subscription, SubscriptionId, SubscriptionRepository,
-    SubscriptionSnapshot, SubscriptionStatus, TenantId, UpdateCustomerParams, WebhookEvent,
-    WebhookEventId, WebhookEventRepository,
+    BillingEvent, BillingEventSink, BillingProvider, CancellationTiming, CheckoutSessionParams,
+    CheckoutSessionSnapshot, CreateCustomerParams, Customer, CustomerId, CustomerRepository,
+    CustomerSnapshot, DomainError, EventApplication, Invoice, InvoiceCursor, InvoiceId,
+    InvoicePage, InvoiceRepository, InvoiceStatus, Money, PaymentMethod, PaymentMethodId,
+    PaymentMethodRepository, Plan, PlanId, PlanRepository, SetupIntentSnapshot, SinkError,
+    Subscription, SubscriptionId, SubscriptionRepository, SubscriptionSnapshot, SubscriptionStatus,
+    TenantId, UpdateCustomerParams, WebhookEvent, WebhookEventId, WebhookEventRepository,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -922,5 +922,21 @@ impl BillingProvider for StubBillingProvider {
             ));
         }
         Ok(())
+    }
+
+    // Task 16 replaces this with a call-recording version; for now it only
+    // needs to satisfy the trait and hand back a deterministic snapshot.
+    async fn create_checkout_session(
+        &self,
+        _tenant_id: TenantId,
+        params: CheckoutSessionParams,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        Ok(CheckoutSessionSnapshot {
+            url: format!(
+                "https://checkout.stripe.com/c/pay/cs_stub_{}",
+                params.stripe_price_id
+            ),
+            stripe_session_id: "cs_stub".to_string(),
+        })
     }
 }

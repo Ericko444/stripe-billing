@@ -85,6 +85,42 @@ pub struct SetupIntentSnapshot {
     pub client_secret: String,
 }
 
+/// Inputs for creating a Stripe Checkout Session in `subscription` mode.
+///
+/// The two URLs are **not** caller-supplied -- the host sets them once when
+/// it constructs `api`'s `AppState` (`docs/spec/phase-4c-write-routes.md`
+/// Open Question 3 / Plan P4). A caller that could set `success_url` would
+/// have an open redirect in the one flow where the customer is most primed
+/// to trust the destination.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutSessionParams {
+    /// The Stripe customer the session subscribes.
+    pub stripe_customer_id: String,
+    /// The Stripe price the subscription is for.
+    pub stripe_price_id: String,
+    /// Where Stripe returns the customer after a completed checkout.
+    pub success_url: String,
+    /// Where Stripe returns the customer if they abandon checkout.
+    pub cancel_url: String,
+}
+
+/// What Stripe returned about a newly created Checkout Session, in domain
+/// terms.
+///
+/// Two fields. `url` is **browser-destined** -- it is the hosted checkout
+/// page the frontend redirects to -- and it travels in the API response
+/// body and **must never reach a log line** (`init-spec.md` §15's Never
+/// list; `docs/spec/phase-4c-write-routes.md` §9), the same rule as
+/// [`SetupIntentSnapshot`]'s `client_secret`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutSessionSnapshot {
+    /// The hosted Checkout page URL (`https://checkout.stripe.com/...`).
+    /// Never log this.
+    pub url: String,
+    /// The Stripe Checkout Session id (`cs_...`).
+    pub stripe_session_id: String,
+}
+
 /// Port for mutating Stripe's customer, subscription and payment-method
 /// state. Implemented by the `stripe-adapter` crate; no I/O here.
 ///
@@ -195,6 +231,20 @@ pub trait BillingProvider: Send + Sync {
         tenant_id: TenantId,
         stripe_payment_method_id: &str,
     ) -> Result<(), DomainError>;
+
+    /// Creates a Stripe Checkout Session in `subscription` mode for the
+    /// customer and price in `params`, and returns its hosted-page `url`.
+    ///
+    /// The caller (`service`) resolves the tenant to a `stripe_customer_id`
+    /// (via `ensure_customer`) and the local plan to a `stripe_price_id`
+    /// first; the two URLs come from host config, never the request. The
+    /// returned [`CheckoutSessionSnapshot`]'s `url` is browser-destined and
+    /// **must never be logged** -- see that type's docs.
+    async fn create_checkout_session(
+        &self,
+        tenant_id: TenantId,
+        params: CheckoutSessionParams,
+    ) -> Result<CheckoutSessionSnapshot, DomainError>;
 }
 
 #[cfg(test)]

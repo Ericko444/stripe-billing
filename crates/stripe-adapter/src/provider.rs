@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use domain::{
-    BillingProvider, CancellationTiming, CreateCustomerParams, CustomerSnapshot, DomainError,
-    OutboundRequestRepository, SetupIntentSnapshot, SubscriptionSnapshot, TenantId,
-    UpdateCustomerParams,
+    BillingProvider, CancellationTiming, CheckoutSessionParams, CheckoutSessionSnapshot,
+    CreateCustomerParams, CustomerSnapshot, DomainError, OutboundRequestRepository,
+    SetupIntentSnapshot, SubscriptionSnapshot, TenantId, UpdateCustomerParams,
 };
 
 use crate::ledger::Ledger;
 use crate::{
-    StripeConfig, StripeError, build_client, customers, payment_methods, setup_intents,
+    StripeConfig, StripeError, build_client, checkout, customers, payment_methods, setup_intents,
     subscriptions,
 };
 
@@ -176,6 +176,16 @@ impl<R: OutboundRequestRepository> StripeBillingProvider<R> {
         )
         .await
     }
+
+    /// Creates a `subscription`-mode Checkout Session. Same signature as
+    /// `BillingProvider::create_checkout_session`.
+    pub async fn create_checkout_session(
+        &self,
+        tenant_id: TenantId,
+        params: CheckoutSessionParams,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        checkout::create_checkout_session(&self.client, &self.ledger, tenant_id, params).await
+    }
 }
 
 /// The port impl a host wires behind `dyn BillingProvider`. Each method is a
@@ -273,5 +283,13 @@ impl<R: OutboundRequestRepository + Send + Sync> BillingProvider for StripeBilli
     ) -> Result<(), DomainError> {
         StripeBillingProvider::detach_payment_method(self, tenant_id, stripe_payment_method_id)
             .await
+    }
+
+    async fn create_checkout_session(
+        &self,
+        tenant_id: TenantId,
+        params: CheckoutSessionParams,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        StripeBillingProvider::create_checkout_session(self, tenant_id, params).await
     }
 }

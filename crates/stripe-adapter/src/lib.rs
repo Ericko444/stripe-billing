@@ -32,6 +32,7 @@
 //! `tests/webhooks.rs`, the second by a zero-rows assertion on every
 //! rejection path.
 
+mod checkout;
 mod client;
 mod config;
 mod customers;
