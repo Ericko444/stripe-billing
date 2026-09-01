@@ -36,7 +36,9 @@ mod extract;
 mod routes;
 mod state;
 
-pub use dto::{MoneyDto, PaymentMethodDto, PlanDto, SubscriptionDto};
+pub use dto::{
+    InvoiceDto, InvoicePageDto, MoneyDto, PageParams, PaymentMethodDto, PlanDto, SubscriptionDto,
+};
 pub use error::ApiError;
 pub use extract::TenantExtractor;
 pub use state::AppState;
@@ -143,5 +145,6 @@ where
             "/payment-methods",
             get(routes::payment_methods::list_payment_methods::<T>),
         )
+        .route("/invoices", get(routes::invoices::list_invoices::<T>))
         .with_state(state)
 }

@@ -59,6 +59,16 @@ impl IntoResponse for ApiError {
                 "Missing signature header",
                 "The Stripe-Signature header was not present on the request.",
             ),
+            // A client-supplied value that did not parse -- a pagination
+            // cursor, in practice. The caller's mistake, so 400, not the
+            // 500 the default arm would give it. `detail` stays coarse: the
+            // specific parse failure is in `MalformedRequest`'s string and
+            // goes to the log line below, not the response.
+            ApiError::Domain(DomainError::MalformedRequest(_)) => (
+                StatusCode::BAD_REQUEST,
+                "Malformed request",
+                "A parameter in the request could not be parsed.",
+            ),
             // Every other DomainError -- Repository, Provider, Conflict,
             // MalformedEvent, NotFound, and any variant a later phase adds
             // -- falls to 500. This is deliberately the default arm, not an

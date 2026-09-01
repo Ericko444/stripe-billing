@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use domain::{
-    DomainError, PaymentMethod, Plan, Subscription, SubscriptionStatus, TenantId, VerifiedEvent,
-    WebhookReceipt, WebhookVerifier,
+    DomainError, Invoice, InvoiceCursor, InvoicePage, PaymentMethod, Plan, Subscription,
+    SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
 use service::{EventOutcome, Reads, WebhookHandler};
 use uuid::Uuid;
@@ -52,6 +52,31 @@ pub struct StubReads {
     pub plans: Vec<Plan>,
     pub subscriptions: Vec<Subscription>,
     pub payment_methods: Vec<PaymentMethod>,
+    pub invoices: Vec<Invoice>,
+}
+
+/// The keyset page `list_page` would return: newest first, seek past
+/// `after`, `limit` rows, `next` only if a further row exists. Mirrors
+/// `persistence`'s query and `InMemoryInvoices` so the router tests exercise
+/// the same contract without a database.
+fn keyset_page(mut rows: Vec<Invoice>, after: Option<InvoiceCursor>, limit: u16) -> InvoicePage {
+    rows.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.as_uuid().cmp(&a.id.as_uuid()))
+    });
+    if let Some(cursor) = after {
+        rows.retain(|i| {
+            (i.created_at, i.id.as_uuid()) < (cursor.created_at(), cursor.id().as_uuid())
+        });
+    }
+    let has_more = rows.len() > usize::from(limit);
+    rows.truncate(usize::from(limit));
+    let next = has_more
+        .then(|| rows.last())
+        .flatten()
+        .map(|last| InvoiceCursor::new(last.created_at, last.id));
+    InvoicePage { items: rows, next }
 }
 
 #[async_trait]
@@ -87,6 +112,21 @@ impl Reads for StubReads {
             .filter(|pm| pm.tenant_id == tenant && pm.deleted_at.is_none())
             .cloned()
             .collect())
+    }
+
+    async fn list_invoices(
+        &self,
+        tenant: TenantId,
+        after: Option<InvoiceCursor>,
+        limit: u16,
+    ) -> Result<InvoicePage, DomainError> {
+        let mine = self
+            .invoices
+            .iter()
+            .filter(|i| i.tenant_id == tenant && i.deleted_at.is_none())
+            .cloned()
+            .collect();
+        Ok(keyset_page(mine, after, limit))
     }
 }
 

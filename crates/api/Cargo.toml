@@ -15,6 +15,10 @@ jwt-auth = ["dep:jsonwebtoken"]
 domain.workspace = true
 service.workspace = true
 axum.workspace = true
+# Opaque encoding for the invoice pagination cursor. `hex`, not `base64`:
+# it is already a workspace dependency (Phase 3's webhook signatures), and
+# the cursor only needs to be opaque, not compact.
+hex.workspace = true
 jsonwebtoken = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

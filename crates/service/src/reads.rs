@@ -8,8 +8,9 @@
 
 use async_trait::async_trait;
 use domain::{
-    DomainError, InvoiceRepository, PaymentMethod, PaymentMethodRepository, Plan, PlanRepository,
-    Subscription, SubscriptionRepository, SubscriptionStatus, TenantId,
+    DomainError, InvoiceCursor, InvoicePage, InvoiceRepository, PaymentMethod,
+    PaymentMethodRepository, Plan, PlanRepository, Subscription, SubscriptionRepository,
+    SubscriptionStatus, TenantId,
 };
 
 /// Object-safe façade over the read use cases.
@@ -49,21 +50,29 @@ pub trait Reads: Send + Sync {
         &self,
         tenant: TenantId,
     ) -> Result<Vec<PaymentMethod>, DomainError>;
+
+    /// One keyset-paginated page of the tenant's invoices, newest first.
+    /// `after` is the previous page's cursor; `limit` is already clamped by
+    /// the caller (`api`'s `PageParams`).
+    async fn list_invoices(
+        &self,
+        tenant: TenantId,
+        after: Option<InvoiceCursor>,
+        limit: u16,
+    ) -> Result<InvoicePage, DomainError>;
 }
 
 /// Holds the four read repositories a host wires in.
 ///
 /// Generic over each port, matching [`WebhookProcessor`]: `demo` monomorphises
 /// the concrete `persistence` types, and nothing is boxed on the read path.
-/// All four repositories are taken from the start, so `AppState` and every
-/// host's wiring stay fixed while the trait fills in over Tasks 4, 7 and 8.
+/// All four repositories were taken from the start, so `AppState` and every
+/// host's wiring stayed fixed as the trait filled in over Tasks 2-8.
 ///
 /// [`WebhookProcessor`]: crate::WebhookProcessor
 pub struct ReadService<L, S, I, M> {
     plans: L,
     subscriptions: S,
-    // Wired now, read by later slices: invoices (Tasks 7-8).
-    #[allow(dead_code)]
     invoices: I,
     payment_methods: M,
 }
@@ -108,6 +117,15 @@ where
     ) -> Result<Vec<PaymentMethod>, DomainError> {
         self.payment_methods.list(tenant).await
     }
+
+    async fn list_invoices(
+        &self,
+        tenant: TenantId,
+        after: Option<InvoiceCursor>,
+        limit: u16,
+    ) -> Result<InvoicePage, DomainError> {
+        self.invoices.list_page(tenant, after, limit).await
+    }
 }
 
 #[cfg(test)]
@@ -115,7 +133,8 @@ mod tests {
     use std::error::Error;
 
     use domain::{
-        Currency, CustomerId, Money, PaymentMethod, PaymentMethodId, Plan, PlanId, SubscriptionId,
+        Currency, CustomerId, Invoice, InvoiceId, InvoiceStatus, Money, PaymentMethod,
+        PaymentMethodId, Plan, PlanId, SubscriptionId,
     };
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
@@ -191,6 +210,21 @@ mod tests {
             is_default,
             last_event_created_at: None,
             created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        }
+    }
+
+    fn invoice(tenant: TenantId, created_at: OffsetDateTime) -> Invoice {
+        Invoice {
+            id: InvoiceId::new(Uuid::new_v4()),
+            tenant_id: tenant,
+            customer_id: CustomerId::new(Uuid::new_v4()),
+            subscription_id: None,
+            stripe_invoice_id: format!("in_{}", Uuid::new_v4()),
+            amount: Money::new(4200, Currency::Eur),
+            status: InvoiceStatus::Paid,
+            last_event_created_at: None,
+            created_at,
             deleted_at: None,
         }
     }
@@ -304,6 +338,49 @@ mod tests {
 
         assert_eq!(got.len(), 2);
         assert!(got.iter().all(|pm| pm.tenant_id == mine));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_invoices_passes_the_cursor_and_limit_through() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let epoch = OffsetDateTime::UNIX_EPOCH;
+        let svc = service();
+        for i in 0..5 {
+            svc.invoices
+                .seed(invoice(tenant, epoch + Duration::seconds(i)));
+        }
+
+        let first = svc.list_invoices(tenant, None, 2).await?;
+        assert_eq!(first.items.len(), 2);
+        let cursor = first.next.ok_or("a full page has a next cursor")?;
+
+        let second = svc.list_invoices(tenant, Some(cursor), 2).await?;
+        assert_eq!(second.items.len(), 2);
+        // No overlap: the cursor moved the window forward.
+        assert!(
+            second
+                .items
+                .iter()
+                .all(|s| !first.items.iter().any(|f| f.id == s.id))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_invoices_is_tenant_scoped() -> Result<(), Box<dyn Error>> {
+        let mine = TenantId::new(Uuid::new_v4());
+        let theirs = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        svc.invoices.seed(invoice(mine, OffsetDateTime::UNIX_EPOCH));
+        svc.invoices
+            .seed(invoice(theirs, OffsetDateTime::UNIX_EPOCH));
+
+        let page = svc.list_invoices(mine, None, 25).await?;
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].tenant_id, mine);
+        assert!(page.next.is_none());
         Ok(())
     }
 }

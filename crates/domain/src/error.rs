@@ -57,4 +57,12 @@ pub enum DomainError {
     /// `Provider`.
     #[error("malformed webhook event: {0}")]
     MalformedEvent(String),
+
+    /// A client-supplied value did not parse -- a pagination cursor, most
+    /// often. Distinct from `MalformedEvent`, which is named for webhook
+    /// payloads and maps to 500: this is the *caller's* mistake, not ours,
+    /// and surfaces as 400. Carries a message for server-side logs; the
+    /// response body stays coarse (`init-spec.md` §5.5).
+    #[error("malformed request: {0}")]
+    MalformedRequest(String),
 }
