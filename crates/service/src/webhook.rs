@@ -95,9 +95,16 @@ where
 {
     async fn handle(&self, event: VerifiedEvent) -> Result<EventOutcome, DomainError> {
         // No match on anything but the type string. An unrecognised type is
-        // acknowledged, never rejected (§10.4).
+        // acknowledged, never rejected (§10.4). The three subscription
+        // lifecycle events share one handler: their `data.object` is the same
+        // shape and the flow (resolve tenant, find mirror, apply through the
+        // ordering guard) is identical -- `created` confirms an existing row,
+        // `deleted` lands as a `canceled` status, and `billing_event_for`
+        // already maps each status to the right `BillingEvent`.
         let outcome = match event.event_type.as_str() {
-            "customer.subscription.updated" => {
+            "customer.subscription.created"
+            | "customer.subscription.updated"
+            | "customer.subscription.deleted" => {
                 subscription_lifecycle::apply(&self.customers, &self.subscriptions, &event).await?
             }
             _ => EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
@@ -220,22 +227,24 @@ mod tests {
         ));
     }
 
-    /// Builds a `customer.subscription.updated` payload with the shape
+    /// Builds a `customer.subscription.*` payload with the shape
     /// `subscription_lifecycle::read_subscription` expects, for a given
-    /// Stripe customer and subscription id.
-    fn subscription_updated_payload(
+    /// event type, Stripe customer/subscription id and status.
+    fn lifecycle_payload(
+        event_type: &str,
         stripe_customer_id: &str,
         stripe_subscription_id: &str,
+        status: &str,
     ) -> Value {
         let now = OffsetDateTime::now_utc();
         json!({
             "id": stripe_subscription_id,
-            "type": "customer.subscription.updated",
+            "type": event_type,
             "data": {
                 "object": {
                     "id": stripe_subscription_id,
                     "customer": stripe_customer_id,
-                    "status": "active",
+                    "status": status,
                     "cancel_at_period_end": false,
                     "items": {
                         "data": [
@@ -253,9 +262,13 @@ mod tests {
 
     /// Seeds a customer and a matching subscription mirror row on
     /// `processor`, and returns the tenant/subscription ids plus a
-    /// `VerifiedEvent` that will apply cleanly against them.
-    fn seeded_applied_event(
+    /// `VerifiedEvent` of `event_type` carrying `status` that will apply
+    /// cleanly against them. The seeded mirror starts `Incomplete` with no
+    /// prior event, so the returned event is always admitted by the guard.
+    fn seeded_lifecycle_event(
         processor: &TestProcessor,
+        event_type: &str,
+        status: &str,
     ) -> (TenantId, SubscriptionId, VerifiedEvent) {
         let tenant_id = TenantId::new(Uuid::new_v4());
         let customer = Customer {
@@ -285,11 +298,11 @@ mod tests {
         };
         processor.subscriptions.seed(subscription.clone());
 
-        let payload = subscription_updated_payload("cus_applied", "sub_applied");
+        let payload = lifecycle_payload(event_type, "cus_applied", "sub_applied", status);
         let event = VerifiedEvent {
             id: WebhookEventId::new(Uuid::new_v4()),
-            stripe_event_id: "evt_applied".to_string(),
-            event_type: "customer.subscription.updated".to_string(),
+            stripe_event_id: format!("evt_{}", Uuid::new_v4()),
+            event_type: event_type.to_string(),
             created: OffsetDateTime::now_utc(),
             payload,
         };
@@ -304,6 +317,27 @@ mod tests {
         });
 
         (tenant_id, subscription.id, event)
+    }
+
+    /// The `customer.subscription.updated` / `active` case the pre-Task-16
+    /// tests were written against.
+    fn seeded_applied_event(
+        processor: &TestProcessor,
+    ) -> (TenantId, SubscriptionId, VerifiedEvent) {
+        seeded_lifecycle_event(processor, "customer.subscription.updated", "active")
+    }
+
+    /// Builds a `VerifiedEvent` for the `cus_applied` / `sub_applied` pair
+    /// `seeded_lifecycle_event` seeds, with an explicit `created` so a test
+    /// can order two events against one already-seeded mirror.
+    fn lifecycle_event(event_type: &str, status: &str, created: OffsetDateTime) -> VerifiedEvent {
+        VerifiedEvent {
+            id: WebhookEventId::new(Uuid::new_v4()),
+            stripe_event_id: format!("evt_{}", Uuid::new_v4()),
+            event_type: event_type.to_string(),
+            created,
+            payload: lifecycle_payload(event_type, "cus_applied", "sub_applied", status),
+        }
     }
 
     #[tokio::test]
@@ -366,5 +400,150 @@ mod tests {
         // processing did not finish, so processed_at stays NULL -- this is
         // what makes a later recovery sweep able to find it (decision 5).
         assert_eq!(processor.webhook_events.processed_at(event.id), Some(None));
+    }
+
+    // --- Task 16: customer.subscription.created / .deleted ---
+
+    #[tokio::test]
+    async fn created_event_routes_through_and_applies() {
+        let processor = processor();
+        let (tenant_id, subscription_id, event) =
+            seeded_lifecycle_event(&processor, "customer.subscription.created", "active");
+
+        let outcome = processor.handle(event.clone()).await;
+
+        assert_eq!(
+            outcome,
+            Ok(EventOutcome::Applied(BillingEvent::SubscriptionActivated {
+                tenant_id,
+                subscription_id,
+            }))
+        );
+        assert_eq!(processor.sink.received().len(), 1);
+        assert!(matches!(
+            processor.webhook_events.processed_at(event.id),
+            Some(Some(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn deleted_event_applies_and_emits_subscription_canceled() {
+        let processor = processor();
+        let (tenant_id, subscription_id, event) =
+            seeded_lifecycle_event(&processor, "customer.subscription.deleted", "canceled");
+
+        let outcome = processor.handle(event).await;
+
+        assert_eq!(
+            outcome,
+            Ok(EventOutcome::Applied(BillingEvent::SubscriptionCanceled {
+                tenant_id,
+                subscription_id,
+            }))
+        );
+        let found = processor
+            .subscriptions
+            .find(tenant_id, subscription_id)
+            .await;
+        assert!(matches!(
+            found,
+            Ok(Some(ref s)) if s.status == domain::SubscriptionStatus::Canceled
+        ));
+    }
+
+    #[tokio::test]
+    async fn created_for_unknown_subscription_is_not_applied_and_creates_nothing() {
+        let processor = processor();
+        let tenant_id = TenantId::new(Uuid::new_v4());
+        processor.customers.seed(Customer {
+            id: CustomerId::new(Uuid::new_v4()),
+            tenant_id,
+            stripe_customer_id: Some("cus_lonely".to_string()),
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        });
+        let event = VerifiedEvent {
+            id: WebhookEventId::new(Uuid::new_v4()),
+            stripe_event_id: format!("evt_{}", Uuid::new_v4()),
+            event_type: "customer.subscription.created".to_string(),
+            created: OffsetDateTime::now_utc(),
+            payload: lifecycle_payload(
+                "customer.subscription.created",
+                "cus_lonely",
+                "sub_never_mirrored",
+                "active",
+            ),
+        };
+
+        let outcome = processor.handle(event).await;
+
+        assert_eq!(
+            outcome,
+            Ok(EventOutcome::NotApplied(
+                NotAppliedReason::UnknownSubscription
+            ))
+        );
+        // Never a bootstrap: no row was inserted for the unknown id.
+        let listed = processor.subscriptions.list(tenant_id).await;
+        assert!(matches!(listed, Ok(ref rows) if rows.is_empty()));
+        assert_eq!(processor.sink.received().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn deleted_for_unknown_customer_is_not_applied() {
+        let processor = processor();
+        let event = VerifiedEvent {
+            id: WebhookEventId::new(Uuid::new_v4()),
+            stripe_event_id: format!("evt_{}", Uuid::new_v4()),
+            event_type: "customer.subscription.deleted".to_string(),
+            created: OffsetDateTime::now_utc(),
+            payload: lifecycle_payload(
+                "customer.subscription.deleted",
+                "cus_unknown",
+                "sub_unknown",
+                "canceled",
+            ),
+        };
+
+        let outcome = processor.handle(event).await;
+
+        assert_eq!(
+            outcome,
+            Ok(EventOutcome::NotApplied(NotAppliedReason::UnknownCustomer))
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_deleted_cannot_cancel_a_row_a_newer_update_reactivated() {
+        let processor = processor();
+        let (tenant_id, subscription_id, newer_update) =
+            seeded_lifecycle_event(&processor, "customer.subscription.updated", "active");
+
+        let applied = processor.handle(newer_update.clone()).await;
+        assert!(matches!(applied, Ok(EventOutcome::Applied(_))));
+
+        // A `deleted` that Stripe created *before* the update above -- e.g. a
+        // delayed redelivery. The guard must reject it on `created`, not
+        // status.
+        let stale_delete = lifecycle_event(
+            "customer.subscription.deleted",
+            "canceled",
+            newer_update.created - Duration::minutes(5),
+        );
+
+        let outcome = processor.handle(stale_delete).await;
+
+        assert_eq!(
+            outcome,
+            Ok(EventOutcome::NotApplied(NotAppliedReason::Stale))
+        );
+        let found = processor
+            .subscriptions
+            .find(tenant_id, subscription_id)
+            .await;
+        assert!(matches!(
+            found,
+            Ok(Some(ref s)) if s.status == domain::SubscriptionStatus::Active
+        ));
     }
 }

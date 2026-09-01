@@ -7,9 +7,19 @@ use time::OffsetDateTime;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
 
-/// Applies a `customer.subscription.updated` event: resolves the tenant from
-/// the Stripe customer id (§10.3), locates the local subscription mirror by
-/// its Stripe id, and applies the event through the ordering guard (§10.2).
+/// Applies a `customer.subscription.{created,updated,deleted}` event:
+/// resolves the tenant from the Stripe customer id (§10.3), locates the
+/// local subscription mirror by its Stripe id, and applies the event through
+/// the ordering guard (§10.2).
+///
+/// One handler for all three because their `data.object` is the same shape
+/// and the flow is identical. `created` confirms an already-mirrored row --
+/// it never *creates* one, because a create needs a `plan_id` that only the
+/// price mapping (a later task) can supply, so an unknown subscription is
+/// `NotApplied(UnknownSubscription)`, not a bootstrap. `deleted` arrives as a
+/// `canceled` status and lands like any other status change; the ordering
+/// guard still applies, so a stale `deleted` cannot cancel a row a newer
+/// `updated` already reactivated.
 ///
 /// Tenant resolution reads `data.object.customer` -- Stripe's *own*
 /// identifier for the object -- and looks it up in the database via
@@ -18,9 +28,9 @@ use crate::webhook::{EventOutcome, NotAppliedReason};
 /// *our* tenancy, only about Stripe's own objects, and this module never
 /// treats it as authority for anything else.
 ///
-/// `plan_id` is never touched -- a plan change from this event type is out
-/// of scope for this slice (spec Open Question 1); only status, both period
-/// bounds and `cancel_at_period_end` are applied.
+/// `plan_id` is never touched -- a plan change is out of scope for this
+/// slice (spec Open Question 1); only status, both period bounds and
+/// `cancel_at_period_end` are applied.
 pub async fn apply<C, S>(
     customers: &C,
     subscriptions: &S,
