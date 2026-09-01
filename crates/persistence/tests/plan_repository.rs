@@ -1,3 +1,5 @@
+//! Integration tests for `plan_repository`, against a disposable Postgres.
+
 mod common;
 
 use std::error::Error;

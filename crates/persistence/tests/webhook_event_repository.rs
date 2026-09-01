@@ -1,3 +1,5 @@
+//! Integration tests for `webhook_event_repository`, against a disposable Postgres.
+
 mod common;
 
 use std::error::Error;

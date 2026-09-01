@@ -1,3 +1,6 @@
+//! Router-level tests for `POST /webhooks/stripe`, driving the router
+//! with `tower::ServiceExt::oneshot` (no bound port).
+
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 

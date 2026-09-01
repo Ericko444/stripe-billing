@@ -1,3 +1,5 @@
+//! Integration tests for `invoice_repository`, against a disposable Postgres.
+
 mod common;
 
 use std::error::Error;
