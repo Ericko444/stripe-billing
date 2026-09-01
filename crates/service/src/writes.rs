@@ -129,6 +129,25 @@ pub trait Writes: Send + Sync {
         tenant: TenantId,
         payment_method_id: PaymentMethodId,
     ) -> Result<PaymentMethod, DomainError>;
+
+    /// Removes `payment_method_id` -- detached at Stripe, then soft-deleted
+    /// locally.
+    ///
+    /// Ownership is checked first: an unknown or another tenant's id is
+    /// [`DomainError::NotFound`] with **no outbound call**.
+    ///
+    /// **§7.4 ordering: Stripe first, mirror second.** The detach runs
+    /// before [`PaymentMethodRepository::detach_event`] sets `deleted_at`,
+    /// so a failed detach leaves the row present -- never a mirror that
+    /// claims the card is gone while Stripe still has it attached and
+    /// billable. If a `payment_method.detached` webhook already soft-deleted
+    /// the row, `detach_event` reports it stale; that is **not** an error
+    /// here -- the card is gone either way.
+    async fn remove_payment_method(
+        &self,
+        tenant: TenantId,
+        payment_method_id: PaymentMethodId,
+    ) -> Result<(), DomainError>;
 }
 
 /// Applies a direct (non-webhook) [`SubscriptionSnapshot`] through
@@ -375,6 +394,40 @@ where
             .find(tenant, payment_method_id)
             .await?
             .ok_or(DomainError::NotFound)
+    }
+
+    async fn remove_payment_method(
+        &self,
+        tenant: TenantId,
+        payment_method_id: PaymentMethodId,
+    ) -> Result<(), DomainError> {
+        let payment_method = self
+            .payment_methods
+            .find(tenant, payment_method_id)
+            .await?
+            .ok_or(DomainError::NotFound)?;
+
+        // §7.4: Stripe first. `?` returns before `detach_event`, so a failed
+        // detach leaves the row present rather than a mirror that lies about
+        // the card being gone.
+        self.provider
+            .detach_payment_method(tenant, &payment_method.stripe_payment_method_id)
+            .await?;
+
+        // Then the mirror. `Applied` vs `Stale` is not branched on: a stale
+        // result means a `payment_method.detached` webhook already
+        // soft-deleted the row, which is not an error -- the card is gone
+        // either way.
+        let _application = self
+            .payment_methods
+            .detach_event(
+                tenant,
+                &payment_method.stripe_payment_method_id,
+                OffsetDateTime::now_utc(),
+            )
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -879,6 +932,127 @@ mod tests {
         assert!(matches!(result, Err(DomainError::NotFound)));
         assert!(
             svc.provider.set_default_calls().is_empty(),
+            "the provider must never be called for a cross-tenant id"
+        );
+        Ok(())
+    }
+
+    // --- Task 12: remove_payment_method (§7.4 ordering) -----------------
+
+    #[tokio::test]
+    async fn remove_detaches_at_stripe_then_soft_deletes() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let customer = linked_customer(tenant, "cus_rm");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let pm = payment_method(tenant, customer_id, true);
+        let pm_id = pm.id;
+        let stripe_pm_id = pm.stripe_payment_method_id.clone();
+        svc.payment_methods.seed(pm);
+
+        svc.remove_payment_method(tenant, pm_id).await?;
+
+        assert_eq!(svc.provider.detach_calls(), vec![stripe_pm_id]);
+        assert_eq!(
+            svc.payment_methods.find(tenant, pm_id).await?,
+            None,
+            "the row must be soft-deleted after a successful detach"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_calls_the_provider_before_the_repository() -> Result<(), Box<dyn Error>> {
+        let log: CallLog = CallLog::default();
+        let svc = service_for_ordering(log.clone(), false);
+        let tenant = TenantId::new(Uuid::new_v4());
+        let customer = linked_customer(tenant, "cus_rm_order");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let pm = payment_method(tenant, customer_id, false);
+        let pm_id = pm.id;
+        svc.payment_methods.seed(pm);
+
+        svc.remove_payment_method(tenant, pm_id).await?;
+
+        assert_eq!(
+            *log.lock().unwrap_or_else(|p| p.into_inner()),
+            vec!["provider", "repository"],
+            "Stripe must detach before the mirror is soft-deleted (§7.4)"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_provider_error_leaves_the_row_present() -> Result<(), Box<dyn Error>> {
+        // The reversed (mirror-first) implementation would already have
+        // soft-deleted the row before the failing detach.
+        let log: CallLog = CallLog::default();
+        let svc = service_for_ordering(log.clone(), true);
+        let tenant = TenantId::new(Uuid::new_v4());
+        let customer = linked_customer(tenant, "cus_rm_fail");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let pm = payment_method(tenant, customer_id, false);
+        let pm_id = pm.id;
+        svc.payment_methods.seed(pm);
+
+        let result = svc.remove_payment_method(tenant, pm_id).await;
+
+        assert!(matches!(result, Err(DomainError::Provider(_))));
+        assert!(
+            svc.payment_methods.find(tenant, pm_id).await?.is_some(),
+            "a failed detach must leave the row present, not a mirror that lies"
+        );
+        assert_eq!(
+            *log.lock().unwrap_or_else(|p| p.into_inner()),
+            vec!["provider"],
+            "the repository must not be reached after a provider error"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn removing_an_already_detached_method_is_not_an_error() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let customer = linked_customer(tenant, "cus_rm_stale");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        // A newer event already touched the row, so `detach_event` will
+        // report it stale rather than soft-delete it.
+        let mut pm = payment_method(tenant, customer_id, false);
+        pm.last_event_created_at = Some(OffsetDateTime::now_utc() + Duration::hours(1));
+        let pm_id = pm.id;
+        svc.payment_methods.seed(pm);
+
+        svc.remove_payment_method(tenant, pm_id).await?;
+
+        assert_eq!(svc.provider.detach_calls().len(), 1);
+        // Stale is not an error; the webhook path owns the row now.
+        assert!(svc.payment_methods.find(tenant, pm_id).await?.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_for_another_tenants_payment_method_is_not_found() -> Result<(), Box<dyn Error>>
+    {
+        let mine = TenantId::new(Uuid::new_v4());
+        let theirs = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let their_customer = linked_customer(theirs, "cus_theirs_rm");
+        let their_customer_id = their_customer.id;
+        svc.customers.seed(their_customer);
+        let their_pm = payment_method(theirs, their_customer_id, false);
+        let their_pm_id = their_pm.id;
+        svc.payment_methods.seed(their_pm);
+
+        let result = svc.remove_payment_method(mine, their_pm_id).await;
+
+        assert!(matches!(result, Err(DomainError::NotFound)));
+        assert!(
+            svc.provider.detach_calls().is_empty(),
             "the provider must never be called for a cross-tenant id"
         );
         Ok(())

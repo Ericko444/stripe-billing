@@ -743,6 +743,7 @@ pub(crate) struct StubBillingProvider {
     change_plan_calls: Mutex<Vec<(String, String, String)>>,
     cancel_calls: Mutex<Vec<(String, CancellationTiming)>>,
     set_default_calls: Mutex<Vec<(String, String)>>,
+    detach_calls: Mutex<Vec<String>>,
     call_log: Option<CallLog>,
     fail_payment_method_ops: bool,
 }
@@ -765,6 +766,12 @@ impl StubBillingProvider {
     /// `set_default_payment_method`, in order. Empty if it was never reached.
     pub(crate) fn set_default_calls(&self) -> Vec<(String, String)> {
         lock(&self.set_default_calls).clone()
+    }
+
+    /// The `stripe_payment_method_id`s passed to `detach_payment_method`, in
+    /// order. Empty if it was never reached.
+    pub(crate) fn detach_calls(&self) -> Vec<String> {
+        lock(&self.detach_calls).clone()
     }
 
     /// How many times `create_customer` has been called on this double.
@@ -900,16 +907,15 @@ impl BillingProvider for StubBillingProvider {
         Ok(())
     }
 
-    // Task 12 adds call-recording here; for now it only needs the call-log
-    // hook (for the shared §7.4 ordering machinery) and the failure knob.
     async fn detach_payment_method(
         &self,
         _tenant_id: TenantId,
-        _stripe_payment_method_id: &str,
+        stripe_payment_method_id: &str,
     ) -> Result<(), DomainError> {
         if let Some(log) = &self.call_log {
             lock(log).push("provider");
         }
+        lock(&self.detach_calls).push(stripe_payment_method_id.to_string());
         if self.fail_payment_method_ops {
             return Err(DomainError::Provider(
                 "simulated Stripe failure".to_string(),

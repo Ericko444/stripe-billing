@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use time::OffsetDateTime;
+
 use api::{ApiError, AppState};
 use async_trait::async_trait;
 use axum::extract::FromRequestParts;
@@ -228,6 +230,16 @@ impl Writes for UnusedWrites {
             "UnusedWrites: the write path is not exercised by this test".to_string(),
         ))
     }
+
+    async fn remove_payment_method(
+        &self,
+        _tenant: TenantId,
+        _payment_method_id: PaymentMethodId,
+    ) -> Result<(), DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
 }
 
 /// A `Writes` fake for the write-route tests. Mimics `WriteService`'s
@@ -251,6 +263,7 @@ pub struct StubWrites {
     pub change_plan_calls: Mutex<Vec<(TenantId, SubscriptionId, PlanId)>>,
     pub cancel_calls: Mutex<Vec<(TenantId, SubscriptionId, bool)>>,
     pub set_default_calls: Mutex<Vec<(TenantId, PaymentMethodId)>>,
+    pub remove_calls: Mutex<Vec<(TenantId, PaymentMethodId)>>,
 }
 
 impl StubWrites {
@@ -287,6 +300,12 @@ impl StubWrites {
     /// `set_default_payment_method` actually reached mutation, in order.
     pub fn set_default_calls(&self) -> Vec<(TenantId, PaymentMethodId)> {
         lock(&self.set_default_calls).clone()
+    }
+
+    /// The `(tenant, payment_method_id)` pairs for which
+    /// `remove_payment_method` actually reached mutation, in order.
+    pub fn remove_calls(&self) -> Vec<(TenantId, PaymentMethodId)> {
+        lock(&self.remove_calls).clone()
     }
 }
 
@@ -379,6 +398,23 @@ impl Writes for StubWrites {
             .find(|pm| pm.id == payment_method_id)
             .cloned()
             .ok_or(DomainError::NotFound)
+    }
+
+    async fn remove_payment_method(
+        &self,
+        tenant: TenantId,
+        payment_method_id: PaymentMethodId,
+    ) -> Result<(), DomainError> {
+        let mut payment_methods = lock(&self.payment_methods);
+        let row = payment_methods
+            .iter_mut()
+            .find(|pm| {
+                pm.tenant_id == tenant && pm.id == payment_method_id && pm.deleted_at.is_none()
+            })
+            .ok_or(DomainError::NotFound)?;
+        lock(&self.remove_calls).push((tenant, payment_method_id));
+        row.deleted_at = Some(OffsetDateTime::now_utc());
+        Ok(())
     }
 }
 
