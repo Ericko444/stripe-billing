@@ -4,7 +4,7 @@
 //! Reads and validates its configuration once at startup, builds the
 //! Postgres pool, runs migrations, wires the Postgres repositories, the
 //! Stripe webhook verifier and a logging [`BillingEventSink`] into a
-//! [`WebhookProcessor`], and serves `api`'s `billing_router`.
+//! [`WebhookProcessor`], and serves `api`'s `webhook_router`.
 //!
 //! The workspace denies `unwrap`, `expect` and `panic`; the one documented
 //! exception (`init-spec.md` §5.5) is startup config parsing, and even here
@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use api::{AppState, billing_router};
+use api::{AppState, webhook_router};
 use async_trait::async_trait;
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use persistence::{
@@ -24,7 +24,7 @@ use persistence::{
     PgSubscriptionRepository, PgWebhookEventRepository, run_migrations,
 };
 use secrecy::SecretString;
-use service::{WebhookHandler, WebhookProcessor};
+use service::{ReadService, Reads, WebhookHandler, WebhookProcessor};
 use sqlx::postgres::PgPoolOptions;
 use stripe_adapter::{DEFAULT_TOLERANCE, StripeWebhookVerifier, WebhookConfig};
 use thiserror::Error;
@@ -130,7 +130,20 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         LoggingSink,
     ));
 
-    let router = billing_router(AppState::new(verifier, handler));
+    // The read service the tenant-scoped routes will use. Wired now, from a
+    // second set of repository handles (a `PgPool` clone is cheap), so
+    // `AppState` is complete even though only the webhook route is mounted.
+    let reads: Arc<dyn Reads> = Arc::new(ReadService::new(
+        PgPlanRepository::new(pool.clone()),
+        PgSubscriptionRepository::new(pool.clone()),
+        PgInvoiceRepository::new(pool.clone()),
+        PgPaymentMethodRepository::new(pool.clone()),
+    ));
+
+    // The tenant-scoped `billing_router` is not mounted here until the demo
+    // gains `POST /demo/token` and the `jwt-auth` feature (Phase 4d); for now
+    // the composition root serves only the webhook route it already had.
+    let router = webhook_router(AppState::new(verifier, handler, reads));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = TcpListener::bind(addr).await?;

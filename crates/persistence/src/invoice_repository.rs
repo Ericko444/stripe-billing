@@ -1,6 +1,6 @@
 use domain::{
-    CustomerId, DomainError, EventApplication, Invoice, InvoiceId, InvoiceRepository,
-    InvoiceStatus, Money, SubscriptionId, TenantId,
+    CustomerId, DomainError, EventApplication, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
+    InvoiceRepository, InvoiceStatus, Money, SubscriptionId, TenantId,
 };
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -128,6 +128,65 @@ impl InvoiceRepository for PgInvoiceRepository {
         .map_err(to_domain_error)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
+    }
+
+    async fn list_page(
+        &self,
+        tenant_id: TenantId,
+        after: Option<InvoiceCursor>,
+        limit: u16,
+    ) -> Result<InvoicePage, DomainError> {
+        // The keyset seek is one row-value comparison, not
+        // `created_at < $2 OR (created_at = $2 AND id < $3)` -- Postgres
+        // compares tuples lexicographically and can walk
+        // `invoices_tenant_created_id_idx` (0013) directly. When `after` is
+        // NULL the `$2::timestamptz IS NULL` guard short-circuits the seek and
+        // the scan starts at the newest row.
+        //
+        // Fetch one row past `limit`: its presence is the only reliable
+        // "there is a next page" signal, so `next` is never a cursor that
+        // would yield nothing.
+        let (after_ts, after_id) = match after {
+            Some(cursor) => (Some(cursor.created_at()), Some(cursor.id().as_uuid())),
+            None => (None, None),
+        };
+        let fetch_limit = i64::from(limit) + 1;
+
+        let mut rows = sqlx::query_as::<_, InvoiceRow>(
+            "SELECT id, tenant_id, customer_id, subscription_id, stripe_invoice_id, \
+                    amount_minor, currency, status, last_event_created_at, created_at, deleted_at \
+             FROM billing.invoices \
+             WHERE tenant_id = $1 AND deleted_at IS NULL \
+               AND ($2::timestamptz IS NULL \
+                    OR (created_at, id) < ($2::timestamptz, $3::uuid)) \
+             ORDER BY created_at DESC, id DESC \
+             LIMIT $4",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(after_ts)
+        .bind(after_id)
+        .bind(fetch_limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        let has_more = rows.len() > usize::from(limit);
+        rows.truncate(usize::from(limit));
+        let items: Vec<Invoice> = rows
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<_, _>>()?;
+
+        let next = if has_more {
+            items
+                .last()
+                .map(|last| InvoiceCursor::new(last.created_at, last.id))
+        } else {
+            None
+        };
+
+        Ok(InvoicePage { items, next })
     }
 
     async fn find_by_stripe_invoice_id(

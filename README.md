@@ -66,9 +66,32 @@ it):
 `RUST_LOG` tunes tracing output. A `docs/walkthrough/phase-4a-webhook.md`
 records an end-to-end run against real Stripe traffic.
 
+## Read routes
+
+`api::billing_router` mounts five tenant-scoped `GET` routes, each reading
+only the local mirror (no outbound Stripe call):
+
+| Method | Path | Returns |
+|--------|------|---------|
+| GET | `/plans` | the tenant's plans |
+| GET | `/subscription` | the current subscription, or `null` (200, not 404) |
+| GET | `/invoices` | keyset-paginated page (`?limit=` 1–100, `?after=` opaque cursor) |
+| GET | `/invoices/{id}` | one invoice; unknown id and another tenant's id both 404 |
+| GET | `/payment-methods` | the tenant's stored cards (brand / last4 / default only) |
+
+`billing_router` is generic over a host-supplied tenant extractor
+(`TenantExtractor`); the tenant never crosses the wire as input. `demo`
+does not mount these yet — they need `POST /demo/token` and the `jwt-auth`
+feature, scheduled for Phase 4d — so for now they are exercised in `api`'s
+router tests only. `POST /webhooks/stripe` is served separately by
+`api::webhook_router`, which takes no tenant.
+
 ## Status
 
-Phase 4a complete: the `service` webhook processor (every `init-spec.md`
-§10.4 event type), `persistence` adapters, the `api` router with
-`POST /webhooks/stripe`, and the `demo` composition root. `stripe-adapter`'s
-outbound `BillingProvider` and the frontend are still later phases.
+Phase 4b complete: the five read routes above, the generic tenant
+extractor, `api`-owned DTOs, and keyset invoice pagination (migration
+`0013`). Phase 4a delivered the `service` webhook processor (every
+`init-spec.md` §10.4 event type), the `persistence` adapters, `POST
+/webhooks/stripe`, and the `demo` composition root. `stripe-adapter`'s
+outbound `BillingProvider`, the `jwt-auth` demo wiring, and the frontend
+are still later phases.

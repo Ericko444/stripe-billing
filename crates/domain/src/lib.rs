@@ -21,7 +21,9 @@ pub use billing_provider::{
 };
 pub use customer::{Customer, CustomerId, CustomerRepository};
 pub use error::DomainError;
-pub use invoice::{Invoice, InvoiceId, InvoiceRepository, InvoiceStatus};
+pub use invoice::{
+    Invoice, InvoiceCursor, InvoiceId, InvoicePage, InvoiceRepository, InvoiceStatus,
+};
 pub use money::{Currency, Money};
 pub use outbound_request::{OutboundRequest, OutboundRequestId, OutboundRequestRepository};
 pub use payment_method::{PaymentMethod, PaymentMethodId, PaymentMethodRepository};

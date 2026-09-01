@@ -39,6 +39,7 @@ dependencies = [
  "async-trait",
  "axum",
  "domain",
+ "hex",
  "jsonwebtoken",
  "serde",
  "serde_json",

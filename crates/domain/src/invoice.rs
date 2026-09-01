@@ -98,6 +98,55 @@ pub struct Invoice {
     pub deleted_at: Option<OffsetDateTime>,
 }
 
+/// An opaque position in a tenant's invoice list, ordered by
+/// `(created_at DESC, id DESC)`. Carries only what the keyset query needs to
+/// resume from: the sort key of the last row of the previous page.
+///
+/// **Opaque on the wire.** `api` base64-encodes it, so this shape can change
+/// without a wire break. It is neither encrypted nor authenticated, and does
+/// not need to be: it names a position *within the caller's own tenant*, and
+/// [`InvoiceRepository::list_page`] is tenant-scoped regardless of what the
+/// cursor says. A forged cursor can only reposition a caller inside data they
+/// already have.
+///
+/// No public field: constructed by [`InvoiceRepository::list_page`] for a
+/// page's `next`, or by `api`'s codec via [`InvoiceCursor::new`] when
+/// decoding one off the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvoiceCursor {
+    created_at: OffsetDateTime,
+    id: InvoiceId,
+}
+
+impl InvoiceCursor {
+    /// Builds a cursor from a row's sort key.
+    pub fn new(created_at: OffsetDateTime, id: InvoiceId) -> Self {
+        Self { created_at, id }
+    }
+
+    /// The `created_at` half of the keyset position.
+    pub fn created_at(&self) -> OffsetDateTime {
+        self.created_at
+    }
+
+    /// The `id` half of the keyset position -- the tiebreaker when two rows
+    /// share a `created_at`.
+    pub fn id(&self) -> InvoiceId {
+        self.id
+    }
+}
+
+/// One page of a tenant's invoices, newest first, and where to resume.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvoicePage {
+    /// The page's invoices, ordered `(created_at DESC, id DESC)`.
+    pub items: Vec<Invoice>,
+    /// The cursor to pass as `after` for the next page, or `None` when this
+    /// is the last page. Never a cursor that would yield an empty page --
+    /// [`InvoiceRepository::list_page`] looks one row past the page to decide.
+    pub next: Option<InvoiceCursor>,
+}
+
 /// Port for persisting and querying `Invoice` records. Implemented by an
 /// adapter crate (`persistence`); no I/O here.
 ///
@@ -130,10 +179,35 @@ pub trait InvoiceRepository {
     ) -> impl Future<Output = Result<Option<Invoice>, DomainError>> + Send;
 
     /// Lists all invoices for the given tenant, excluding soft-deleted ones.
+    ///
+    /// Kept alongside [`list_page`](Self::list_page): still the simplest call
+    /// for tests and for callers that genuinely want every row.
     fn list(
         &self,
         tenant_id: TenantId,
     ) -> impl Future<Output = Result<Vec<Invoice>, DomainError>> + Send;
+
+    /// One keyset-paginated page of the tenant's invoices, newest first
+    /// (`created_at DESC, id DESC`), soft-deleted rows excluded.
+    ///
+    /// `after` is the previous page's [`InvoicePage::next`]; `None` starts at
+    /// the newest row. `limit` is the maximum number of rows in the returned
+    /// page -- the implementation may read one more internally to decide
+    /// whether `next` should be set.
+    ///
+    /// **Keyset, not `OFFSET`.** The seek is a row-value comparison
+    /// `(created_at, id) < (after.created_at, after.id)`, which is an index
+    /// range scan regardless of how deep the caller has paged, and is stable
+    /// under concurrent inserts: it names a position in the ordering, not a
+    /// count of rows to skip. `(created_at, id)` rather than `created_at`
+    /// alone because `created_at` is not unique -- ties would drop or
+    /// duplicate rows across a page boundary.
+    fn list_page(
+        &self,
+        tenant_id: TenantId,
+        after: Option<InvoiceCursor>,
+        limit: u16,
+    ) -> impl Future<Output = Result<InvoicePage, DomainError>> + Send;
 
     /// Finds an invoice by its Stripe id, scoped to the tenant. Returns
     /// `None` if it does not exist, has been soft-deleted, or belongs to a

@@ -1,13 +1,22 @@
 //! Router-level tests for `POST /webhooks/stripe`, driving the router
 //! with `tower::ServiceExt::oneshot` (no bound port).
+//!
+//! Every test here goes through [`webhook_router`], the non-generic factory.
+//! There is no tenant extractor type named anywhere in this file -- that is
+//! the point: the webhook route must keep answering 200/400 with no tenant
+//! context in scope at all, so that making `billing_router` generic can never
+//! have quietly made a tenant a precondition of this route (§10.3).
+
+mod common;
 
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 
-use api::{AppState, billing_router};
+use api::{AppState, webhook_router};
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use common::StubReads;
 use domain::{DomainError, VerifiedEvent, WebhookEventId, WebhookReceipt, WebhookVerifier};
 use serde_json::json;
 use service::{EventOutcome, NotAppliedReason, WebhookHandler};
@@ -94,14 +103,21 @@ fn verified_event() -> VerifiedEvent {
     }
 }
 
+/// `AppState` carries a read service for the tenant-scoped routes. The
+/// webhook route never touches it; an empty [`StubReads`] satisfies the
+/// field without saying anything about tenants.
 fn app_state(verifier: Arc<StubVerifier>, outcome: EventOutcome) -> AppState {
-    AppState::new(verifier, Arc::new(StubHandler { outcome }))
+    AppState::new(
+        verifier,
+        Arc::new(StubHandler { outcome }),
+        Arc::new(StubReads::default()),
+    )
 }
 
 #[tokio::test]
 async fn valid_signature_returns_200() -> Result<(), Box<dyn Error>> {
     let verifier = Arc::new(StubVerifier::new(VerifierResponse::Fresh(verified_event())));
-    let router = billing_router(app_state(
+    let router = webhook_router(app_state(
         verifier,
         EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
     ));
@@ -124,7 +140,7 @@ async fn duplicate_receipt_returns_200_without_calling_the_handler() -> Result<(
     // A handler that would fail loudly if it were ever reached: `Duplicate`
     // has no `VerifiedEvent` to hand it, so if this ran the route is wrong
     // in a way that would panic before this outcome is even relevant.
-    let router = billing_router(app_state(
+    let router = webhook_router(app_state(
         verifier,
         EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
     ));
@@ -144,7 +160,7 @@ async fn duplicate_receipt_returns_200_without_calling_the_handler() -> Result<(
 #[tokio::test]
 async fn verification_failure_returns_400_problem_json() -> Result<(), Box<dyn Error>> {
     let verifier = Arc::new(StubVerifier::new(VerifierResponse::VerificationFailed));
-    let router = billing_router(app_state(
+    let router = webhook_router(app_state(
         verifier,
         EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
     ));
@@ -170,7 +186,7 @@ async fn verification_failure_returns_400_problem_json() -> Result<(), Box<dyn E
 #[tokio::test]
 async fn missing_signature_header_returns_400_no_panic() -> Result<(), Box<dyn Error>> {
     let verifier = Arc::new(StubVerifier::new(VerifierResponse::Fresh(verified_event())));
-    let router = billing_router(app_state(
+    let router = webhook_router(app_state(
         verifier,
         EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
     ));
@@ -197,7 +213,7 @@ async fn exact_request_bytes_reach_the_verifier_unmodified() -> Result<(), Box<d
     // re-encodes the body, this exact byte sequence would not survive.
     let raw_payload = b"{\"b\": 2,   \"a\": 1}".to_vec();
     let verifier = Arc::new(StubVerifier::new(VerifierResponse::Fresh(verified_event())));
-    let router = billing_router(app_state(
+    let router = webhook_router(app_state(
         verifier.clone(),
         EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
     ));
@@ -218,7 +234,7 @@ async fn exact_request_bytes_reach_the_verifier_unmodified() -> Result<(), Box<d
 #[tokio::test]
 async fn not_applied_outcome_still_returns_200() -> Result<(), Box<dyn Error>> {
     let verifier = Arc::new(StubVerifier::new(VerifierResponse::Fresh(verified_event())));
-    let router = billing_router(app_state(
+    let router = webhook_router(app_state(
         verifier,
         EventOutcome::NotApplied(NotAppliedReason::UnknownCustomer),
     ));
@@ -232,5 +248,39 @@ async fn not_applied_outcome_still_returns_200() -> Result<(), Box<dyn Error>> {
         .await?;
 
     assert_eq!(response.status(), StatusCode::OK);
+    Ok(())
+}
+
+/// The seam's load-bearing assertion (Phase 4b, Task 1): the webhook route
+/// answers 200 for a good delivery and 400 for a missing signature while
+/// driven through [`webhook_router`], which takes no type parameter -- there
+/// is no tenant extractor to name, in this test or anywhere it can reach.
+/// Splitting `webhook_router` off [`billing_router<T>`](api::billing_router)
+/// is what guarantees a later refactor cannot make a tenant a precondition of
+/// this route without deleting this factory outright.
+#[tokio::test]
+async fn webhook_route_needs_no_tenant_extractor() -> Result<(), Box<dyn Error>> {
+    let ok_router = webhook_router(app_state(
+        Arc::new(StubVerifier::new(VerifierResponse::Fresh(verified_event()))),
+        EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
+    ));
+    let ok = ok_router
+        .oneshot(
+            Request::post("/webhooks/stripe")
+                .header("Stripe-Signature", "t=1,v1=fake")
+                .body(Body::from("{}"))?,
+        )
+        .await?;
+    assert_eq!(ok.status(), StatusCode::OK);
+
+    let bad_router = webhook_router(app_state(
+        Arc::new(StubVerifier::new(VerifierResponse::Fresh(verified_event()))),
+        EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
+    ));
+    let bad = bad_router
+        .oneshot(Request::post("/webhooks/stripe").body(Body::from("{}"))?)
+        .await?;
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+
     Ok(())
 }
