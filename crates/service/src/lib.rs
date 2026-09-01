@@ -25,9 +25,11 @@ mod payment_method_events;
 mod reads;
 mod subscription_lifecycle;
 mod webhook;
+mod writes;
 
 #[cfg(test)]
 mod test_support;
 
 pub use reads::{ReadService, Reads};
 pub use webhook::{EventOutcome, NotAppliedReason, WebhookHandler, WebhookProcessor};
+pub use writes::{WriteService, Writes};

@@ -13,7 +13,7 @@ use domain::{
     DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, Plan, Subscription,
     SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
-use service::{EventOutcome, Reads, WebhookHandler};
+use service::{EventOutcome, Reads, WebhookHandler, Writes};
 use uuid::Uuid;
 
 /// Test tenant extractor: reads the tenant from an `x-tenant` header. Stands
@@ -162,12 +162,20 @@ impl WebhookHandler for UnusedHandler {
     }
 }
 
+/// A `Writes` with no behaviour: the trait carries no methods yet (Phase 4c
+/// Task 1), and the read-route tests never reach the write path. It fails
+/// loudly the moment the trait grows a method the tests do exercise.
+pub struct UnusedWrites;
+
+impl Writes for UnusedWrites {}
+
 /// `AppState` wired for a tenant-scoped route test: real reads, inert webhook
-/// deps.
+/// and write deps.
 pub fn app_state(reads: StubReads) -> AppState {
     AppState::new(
         Arc::new(UnusedVerifier),
         Arc::new(UnusedHandler),
         Arc::new(reads),
+        Arc::new(UnusedWrites),
     )
 }

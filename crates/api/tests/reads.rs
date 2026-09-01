@@ -18,7 +18,7 @@ use api::{AppState, billing_router, webhook_router};
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
-use common::{HeaderTenant, StubReads, UnusedHandler};
+use common::{HeaderTenant, StubReads, UnusedHandler, UnusedWrites};
 use domain::{
     Currency, CustomerId, DomainError, Invoice, InvoiceId, InvoiceStatus, Money, PaymentMethod,
     PaymentMethodId, Plan, PlanId, Subscription, SubscriptionId, SubscriptionStatus, TenantId,
@@ -334,6 +334,7 @@ async fn the_webhook_route_answers_with_no_tenant_context() -> Result<(), Box<dy
         Arc::new(DuplicateVerifier),
         Arc::new(UnusedHandler),
         Arc::new(StubReads::default()),
+        Arc::new(UnusedWrites),
     );
 
     // Through `webhook_router` -- the non-generic factory. No `x-tenant`
