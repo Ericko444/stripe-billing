@@ -12,8 +12,8 @@
 //! to parse a locale back out). Timestamps are RFC 3339 UTC strings.
 
 use domain::{
-    Currency, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, Money, PaymentMethod,
-    Plan, SetupIntentSnapshot, Subscription,
+    CheckoutSessionSnapshot, Currency, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
+    Money, PaymentMethod, Plan, SetupIntentSnapshot, Subscription,
 };
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcOffset};
@@ -126,6 +126,32 @@ pub struct CancelRequest {
 
 fn default_at_period_end() -> bool {
     true
+}
+
+/// Request body for `POST /subscriptions/checkout-session`. `plan_id` is the
+/// **local** plan id, resolved server-side. The success/cancel URLs are
+/// **not** here -- they are host config (P4), so a caller cannot redirect a
+/// customer anywhere after payment.
+#[derive(Debug, Deserialize)]
+pub struct CheckoutSessionRequest {
+    /// The local id of the plan to subscribe to.
+    pub plan_id: String,
+}
+
+/// Response to `POST /subscriptions/checkout-session`: the hosted Checkout
+/// page URL, and nothing else -- the frontend just redirects there. The
+/// `url` is browser-destined and appears **only** in this body, never a log
+/// line (§9), the same rule as `SetupIntentDto.client_secret`.
+#[derive(Debug, Serialize)]
+pub struct CheckoutSessionDto {
+    /// `https://checkout.stripe.com/...`.
+    pub url: String,
+}
+
+impl From<CheckoutSessionSnapshot> for CheckoutSessionDto {
+    fn from(snapshot: CheckoutSessionSnapshot) -> Self {
+        Self { url: snapshot.url }
+    }
 }
 
 /// A stored card on the wire. Display metadata only -- `brand`, `last4`,

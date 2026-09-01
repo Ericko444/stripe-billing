@@ -744,6 +744,7 @@ pub(crate) struct StubBillingProvider {
     cancel_calls: Mutex<Vec<(String, CancellationTiming)>>,
     set_default_calls: Mutex<Vec<(String, String)>>,
     detach_calls: Mutex<Vec<String>>,
+    checkout_calls: Mutex<Vec<(String, String)>>,
     call_log: Option<CallLog>,
     fail_payment_method_ops: bool,
 }
@@ -772,6 +773,12 @@ impl StubBillingProvider {
     /// order. Empty if it was never reached.
     pub(crate) fn detach_calls(&self) -> Vec<String> {
         lock(&self.detach_calls).clone()
+    }
+
+    /// The `(stripe_customer_id, stripe_price_id)` pairs passed to
+    /// `create_checkout_session`, in order. Empty if it was never reached.
+    pub(crate) fn checkout_calls(&self) -> Vec<(String, String)> {
+        lock(&self.checkout_calls).clone()
     }
 
     /// How many times `create_customer` has been called on this double.
@@ -924,13 +931,15 @@ impl BillingProvider for StubBillingProvider {
         Ok(())
     }
 
-    // Task 16 replaces this with a call-recording version; for now it only
-    // needs to satisfy the trait and hand back a deterministic snapshot.
     async fn create_checkout_session(
         &self,
         _tenant_id: TenantId,
         params: CheckoutSessionParams,
     ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        lock(&self.checkout_calls).push((
+            params.stripe_customer_id.clone(),
+            params.stripe_price_id.clone(),
+        ));
         Ok(CheckoutSessionSnapshot {
             url: format!(
                 "https://checkout.stripe.com/c/pay/cs_stub_{}",

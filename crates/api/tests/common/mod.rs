@@ -14,9 +14,9 @@ use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use domain::{
-    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, PaymentMethodId,
-    Plan, PlanId, SetupIntentSnapshot, Subscription, SubscriptionId, SubscriptionStatus, TenantId,
-    VerifiedEvent, WebhookReceipt, WebhookVerifier,
+    CheckoutSessionSnapshot, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
+    PaymentMethod, PaymentMethodId, Plan, PlanId, SetupIntentSnapshot, Subscription,
+    SubscriptionId, SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
 use service::{EventOutcome, Reads, WebhookHandler, Writes};
 use tracing_subscriber::fmt::MakeWriter;
@@ -240,6 +240,18 @@ impl Writes for UnusedWrites {
             "UnusedWrites: the write path is not exercised by this test".to_string(),
         ))
     }
+
+    async fn start_checkout_session(
+        &self,
+        _tenant: TenantId,
+        _plan_id: PlanId,
+        _success_url: &str,
+        _cancel_url: &str,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
 }
 
 /// A `Writes` fake for the write-route tests. Mimics `WriteService`'s
@@ -258,12 +270,14 @@ pub struct StubWrites {
     customers: Mutex<HashMap<TenantId, String>>,
     subscriptions: Mutex<Vec<Subscription>>,
     payment_methods: Mutex<Vec<PaymentMethod>>,
+    plans: Mutex<Vec<Plan>>,
     pub ensure_customer_calls: Mutex<Vec<TenantId>>,
     pub setup_intent_calls: Mutex<Vec<(TenantId, String)>>,
     pub change_plan_calls: Mutex<Vec<(TenantId, SubscriptionId, PlanId)>>,
     pub cancel_calls: Mutex<Vec<(TenantId, SubscriptionId, bool)>>,
     pub set_default_calls: Mutex<Vec<(TenantId, PaymentMethodId)>>,
     pub remove_calls: Mutex<Vec<(TenantId, PaymentMethodId)>>,
+    pub checkout_calls: Mutex<Vec<(TenantId, PlanId)>>,
 }
 
 impl StubWrites {
@@ -294,6 +308,17 @@ impl StubWrites {
     /// `remove_payment_method` can find.
     pub fn seed_payment_method(&self, payment_method: PaymentMethod) {
         lock(&self.payment_methods).push(payment_method);
+    }
+
+    /// Seeds a plan row `start_checkout_session` can resolve.
+    pub fn seed_plan(&self, plan: Plan) {
+        lock(&self.plans).push(plan);
+    }
+
+    /// The `(tenant, plan_id)` pairs for which `start_checkout_session`
+    /// actually reached its "provider" call, in order.
+    pub fn checkout_calls(&self) -> Vec<(TenantId, PlanId)> {
+        lock(&self.checkout_calls).clone()
     }
 
     /// The `(tenant, payment_method_id)` pairs for which
@@ -415,6 +440,28 @@ impl Writes for StubWrites {
         lock(&self.remove_calls).push((tenant, payment_method_id));
         row.deleted_at = Some(OffsetDateTime::now_utc());
         Ok(())
+    }
+
+    async fn start_checkout_session(
+        &self,
+        tenant: TenantId,
+        plan_id: PlanId,
+        _success_url: &str,
+        _cancel_url: &str,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        // Resolve the plan tenant-scoped first, like `WriteService` -- a
+        // cross-tenant or unknown id 404s here and records no call.
+        let price_id = lock(&self.plans)
+            .iter()
+            .find(|p| p.tenant_id == tenant && p.id == plan_id)
+            .map(|p| p.stripe_price_id.clone())
+            .ok_or(DomainError::NotFound)?;
+        let customer = self.ensure_customer(tenant).await?;
+        lock(&self.checkout_calls).push((tenant, plan_id));
+        Ok(CheckoutSessionSnapshot {
+            url: format!("https://checkout.stripe.com/c/pay/cs_{customer}_{price_id}"),
+            stripe_session_id: "cs_stub".to_string(),
+        })
     }
 }
 

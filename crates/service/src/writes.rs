@@ -15,10 +15,10 @@
 
 use async_trait::async_trait;
 use domain::{
-    BillingProvider, CancellationTiming, CreateCustomerParams, CustomerRepository, DomainError,
-    PaymentMethod, PaymentMethodId, PaymentMethodRepository, PlanId, PlanRepository,
-    SetupIntentSnapshot, Subscription, SubscriptionId, SubscriptionRepository,
-    SubscriptionSnapshot, SubscriptionStatus, TenantId,
+    BillingProvider, CancellationTiming, CheckoutSessionParams, CheckoutSessionSnapshot,
+    CreateCustomerParams, CustomerRepository, DomainError, PaymentMethod, PaymentMethodId,
+    PaymentMethodRepository, PlanId, PlanRepository, SetupIntentSnapshot, Subscription,
+    SubscriptionId, SubscriptionRepository, SubscriptionSnapshot, SubscriptionStatus, TenantId,
 };
 use time::OffsetDateTime;
 
@@ -148,6 +148,28 @@ pub trait Writes: Send + Sync {
         tenant: TenantId,
         payment_method_id: PaymentMethodId,
     ) -> Result<(), DomainError>;
+
+    /// Starts a `subscription`-mode Checkout Session for `plan_id` (a
+    /// **local** plan id) and returns its hosted-page `url`.
+    ///
+    /// Resolves the local plan **first**: an unknown or another tenant's
+    /// `plan_id` is [`DomainError::NotFound`] with **no outbound call**.
+    /// Then [`ensure_customer`](Self::ensure_customer) (creating the Stripe
+    /// customer on first use), then the session. `success_url` /
+    /// `cancel_url` come from host config, threaded in by the route -- never
+    /// a request field.
+    ///
+    /// No mirror write: the local `subscriptions` row is created by the
+    /// `customer.subscription.created` webhook once the customer completes
+    /// checkout. The returned `url` is browser-destined and must not be
+    /// logged.
+    async fn start_checkout_session(
+        &self,
+        tenant: TenantId,
+        plan_id: PlanId,
+        success_url: &str,
+        cancel_url: &str,
+    ) -> Result<CheckoutSessionSnapshot, DomainError>;
 }
 
 /// Applies a direct (non-webhook) [`SubscriptionSnapshot`] through
@@ -428,6 +450,37 @@ where
             .await?;
 
         Ok(())
+    }
+
+    async fn start_checkout_session(
+        &self,
+        tenant: TenantId,
+        plan_id: PlanId,
+        success_url: &str,
+        cancel_url: &str,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        // Resolve the plan first: an unknown or cross-tenant id 404s here,
+        // before `ensure_customer` could create a Stripe customer and before
+        // the provider is reached.
+        let plan = self
+            .plans
+            .find(tenant, plan_id)
+            .await?
+            .ok_or(DomainError::NotFound)?;
+
+        let stripe_customer_id = self.ensure_customer(tenant).await?;
+
+        self.provider
+            .create_checkout_session(
+                tenant,
+                CheckoutSessionParams {
+                    stripe_customer_id,
+                    stripe_price_id: plan.stripe_price_id,
+                    success_url: success_url.to_string(),
+                    cancel_url: cancel_url.to_string(),
+                },
+            )
+            .await
     }
 }
 
@@ -1055,6 +1108,67 @@ mod tests {
             svc.provider.detach_calls().is_empty(),
             "the provider must never be called for a cross-tenant id"
         );
+        Ok(())
+    }
+
+    // --- Task 16: start_checkout_session -------------------------------
+
+    #[tokio::test]
+    async fn start_checkout_resolves_the_plan_and_creates_the_session() -> Result<(), Box<dyn Error>>
+    {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let plan = plan(tenant, "price_checkout");
+        let plan_id = plan.id;
+        svc.plans.seed(plan);
+
+        let snapshot = svc
+            .start_checkout_session(tenant, plan_id, "https://ok", "https://cancel")
+            .await?;
+
+        assert!(snapshot.url.contains("price_checkout"));
+        // ensure_customer minted a customer, and the provider was called for
+        // it with the resolved price.
+        assert_eq!(svc.provider.create_customer_calls(), 1);
+        let calls = svc.provider.checkout_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, "price_checkout");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn start_checkout_unknown_plan_is_not_found_and_reaches_nothing()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+
+        let result = svc
+            .start_checkout_session(tenant, PlanId::new(Uuid::new_v4()), "a", "b")
+            .await;
+
+        assert!(matches!(result, Err(DomainError::NotFound)));
+        // The plan is resolved before ensure_customer, so no Stripe customer
+        // was created and no session was attempted.
+        assert_eq!(svc.provider.create_customer_calls(), 0);
+        assert!(svc.provider.checkout_calls().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn start_checkout_another_tenants_plan_is_not_found() -> Result<(), Box<dyn Error>> {
+        let mine = TenantId::new(Uuid::new_v4());
+        let theirs = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let their_plan = plan(theirs, "price_theirs");
+        let their_plan_id = their_plan.id;
+        svc.plans.seed(their_plan);
+
+        let result = svc
+            .start_checkout_session(mine, their_plan_id, "a", "b")
+            .await;
+
+        assert!(matches!(result, Err(DomainError::NotFound)));
+        assert!(svc.provider.checkout_calls().is_empty());
         Ok(())
     }
 }

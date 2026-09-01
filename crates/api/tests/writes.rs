@@ -17,6 +17,11 @@
 //! and `DELETE /payment-methods/{id}` (204): a malformed or cross-tenant id
 //! is a 404 that never reaches `Writes`, and a second delete of the same id
 //! is a 404.
+//!
+//! Task 16 covers `POST /subscriptions/checkout-session`: 200 with a hosted
+//! `url`, an unknown or cross-tenant `plan_id` is a 404 that never reaches
+//! `Writes`, the url never reaches a log line, and two tenants get sessions
+//! for their own plans.
 
 mod common;
 
@@ -28,8 +33,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::{CapturedLogs, HeaderTenant, StubWrites, app_state_writes};
 use domain::{
-    CustomerId, PaymentMethod, PaymentMethodId, PlanId, Subscription, SubscriptionId,
-    SubscriptionStatus, TenantId,
+    Currency, CustomerId, Money, PaymentMethod, PaymentMethodId, Plan, PlanId, Subscription,
+    SubscriptionId, SubscriptionStatus, TenantId,
 };
 use serde_json::{Value, json};
 use time::OffsetDateTime;
@@ -52,6 +57,19 @@ fn subscription(tenant: TenantId, plan_id: PlanId, status: SubscriptionStatus) -
         cancel_at_period_end: false,
         last_event_created_at: None,
         created_at: now,
+        deleted_at: None,
+    }
+}
+
+fn plan(tenant: TenantId, stripe_price_id: &str) -> Plan {
+    Plan {
+        id: PlanId::new(Uuid::new_v4()),
+        tenant_id: tenant,
+        stripe_price_id: stripe_price_id.to_string(),
+        stripe_product_id: "prod_test".to_string(),
+        name: "test plan".to_string(),
+        amount: Money::new(1999, Currency::Usd),
+        created_at: OffsetDateTime::now_utc(),
         deleted_at: None,
     }
 }
@@ -606,5 +624,151 @@ async fn deleting_an_already_removed_card_is_404() -> Result<(), Box<dyn Error>>
     )
     .await?;
     assert_eq!(second, StatusCode::NOT_FOUND, "the row is already gone");
+    Ok(())
+}
+
+// --- Task 16: POST /subscriptions/checkout-session -------------------
+
+#[tokio::test]
+async fn checkout_session_returns_a_url() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let plan = plan(tenant_id, "price_pro");
+    let plan_id = plan.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_plan(plan);
+
+    let (status, body) = post_json(
+        app_state_writes(writes),
+        &tenant,
+        "/subscriptions/checkout-session",
+        json!({ "plan_id": plan_id }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let url = body["url"].as_str().unwrap_or_default();
+    assert!(
+        url.starts_with("https://checkout.stripe.com/"),
+        "expected a hosted checkout url, got {body}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn checkout_session_unknown_plan_is_404_and_never_reached() -> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+    let writes = Arc::new(StubWrites::default());
+
+    let (status, _body) = post_json(
+        app_state_writes(writes.clone()),
+        &tenant,
+        "/subscriptions/checkout-session",
+        json!({ "plan_id": Uuid::new_v4().to_string() }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(writes.checkout_calls().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn checkout_session_for_another_tenants_plan_is_404() -> Result<(), Box<dyn Error>> {
+    let owner = TenantId::new(Uuid::new_v4());
+    let caller = TenantId::new(Uuid::new_v4()).as_uuid().to_string();
+    let plan = plan(owner, "price_owner");
+    let plan_id = plan.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_plan(plan);
+
+    let (status, _body) = post_json(
+        app_state_writes(writes.clone()),
+        &caller,
+        "/subscriptions/checkout-session",
+        json!({ "plan_id": plan_id }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(writes.checkout_calls().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn checkout_session_never_logs_the_url() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let plan = plan(tenant_id, "price_secret_check");
+    let plan_id = plan.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_plan(plan);
+
+    let logs = CapturedLogs::default();
+    let subscriber = fmt()
+        .with_writer(logs.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .finish();
+    let (status, body) = {
+        let _guard = tracing::subscriber::set_default(subscriber);
+        post_json(
+            app_state_writes(writes),
+            &tenant,
+            "/subscriptions/checkout-session",
+            json!({ "plan_id": plan_id }),
+        )
+        .await?
+    };
+
+    assert_eq!(status, StatusCode::OK);
+    let url = body["url"].as_str().unwrap_or_default();
+    assert!(!url.is_empty());
+    let logged = logs.contents();
+    assert!(
+        !logged.contains(url),
+        "the checkout url must never reach a log line; captured: {logged}"
+    );
+    assert!(
+        !logged.contains("checkout.stripe.com"),
+        "no checkout url fragment may reach a log line; captured: {logged}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_tenants_get_sessions_for_their_own_plans() -> Result<(), Box<dyn Error>> {
+    let tenant_a = TenantId::new(Uuid::new_v4());
+    let tenant_b = TenantId::new(Uuid::new_v4());
+    let plan_a = plan(tenant_a, "price_a");
+    let plan_b = plan(tenant_b, "price_b");
+    let plan_a_id = plan_a.id.as_uuid().to_string();
+    let plan_b_id = plan_b.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_plan(plan_a);
+    writes.seed_plan(plan_b);
+
+    let (status_a, body_a) = post_json(
+        app_state_writes(writes.clone()),
+        &tenant_a.as_uuid().to_string(),
+        "/subscriptions/checkout-session",
+        json!({ "plan_id": plan_a_id }),
+    )
+    .await?;
+    let (status_b, body_b) = post_json(
+        app_state_writes(writes.clone()),
+        &tenant_b.as_uuid().to_string(),
+        "/subscriptions/checkout-session",
+        json!({ "plan_id": plan_b_id }),
+    )
+    .await?;
+
+    assert_eq!(status_a, StatusCode::OK);
+    assert_eq!(status_b, StatusCode::OK);
+    let url_a = body_a["url"].as_str().unwrap_or_default();
+    let url_b = body_b["url"].as_str().unwrap_or_default();
+    assert!(url_a.contains("price_a"));
+    assert!(url_b.contains("price_b"));
+    assert_ne!(url_a, url_b);
     Ok(())
 }
