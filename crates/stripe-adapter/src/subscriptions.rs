@@ -2,7 +2,7 @@ use domain::{
     CancellationTiming, DomainError, OutboundRequestRepository, SubscriptionSnapshot,
     SubscriptionStatus, TenantId,
 };
-use stripe::{IdempotencyKey, RequestStrategy, StripeRequest};
+use stripe::{RequestStrategy, StripeRequest};
 use stripe_billing::subscription::{
     CancelSubscription, CreateSubscription, CreateSubscriptionItems, UpdateSubscription,
     UpdateSubscriptionItems, UpdateSubscriptionPaymentBehavior,
@@ -11,7 +11,7 @@ use stripe_billing::subscription::{
 use time::OffsetDateTime;
 
 use crate::Reservation;
-use crate::ledger::Ledger;
+use crate::ledger::{Ledger, idempotency_key};
 use crate::{StripeError, fingerprint};
 
 /// `BillingProvider::create_subscription`'s real implementation. Same shape
@@ -150,16 +150,6 @@ pub async fn cancel_subscription<R: OutboundRequestRepository>(
     .map_err(DomainError::from)?;
 
     complete_with_snapshot(ledger, tenant_id, &reservation, subscription).await
-}
-
-/// Turns a ledger reservation's key string into the SDK's `IdempotencyKey`.
-/// The key came from the ledger, which mints a v4 uuid -- always valid --
-/// but the ledger's key column is plain `TEXT`, so a malformed value stays a
-/// typed error rather than an `unwrap`.
-fn idempotency_key(reservation: &Reservation) -> Result<IdempotencyKey, DomainError> {
-    IdempotencyKey::new(&reservation.idempotency_key)
-        .map_err(|err| StripeError::Config(err.to_string()))
-        .map_err(DomainError::from)
 }
 
 /// Marks the reservation complete with the subscription's id and returns its
