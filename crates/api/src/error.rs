@@ -79,11 +79,33 @@ impl IntoResponse for ApiError {
                 "Not found",
                 "The requested resource was not found.",
             ),
-            // Every other DomainError -- Repository, Provider, Conflict,
-            // MalformedEvent, and any variant a later phase adds -- falls to
-            // 500. This is deliberately the default arm, not an enumerated
-            // list: a new DomainError variant must not silently acquire a 4xx
-            // because a wildcard elsewhere guessed at it.
+            // A write lost a race for a record it needed -- in practice the
+            // idempotency ledger refusing to guess the outcome of a prior
+            // in-flight attempt (Phase 2's case E). 409, not the 500 the
+            // default arm would give it, so the caller is told to retry the
+            // logical operation rather than left thinking the request was
+            // malformed. `detail` carries nothing caller-specific.
+            ApiError::Domain(DomainError::Conflict) => (
+                StatusCode::CONFLICT,
+                "Conflict",
+                "The request conflicts with the current state of the resource.",
+            ),
+            // A `BillingProvider` call failed -- Stripe returned an error, or
+            // was unreachable. 502: the failure is upstream of us, not the
+            // caller's request. The provider's own message is in
+            // `Provider(String)` and reaches the log line below; it never
+            // reaches the caller (§5.5 -- a provider error can carry account
+            // or schema internals).
+            ApiError::Domain(DomainError::Provider(_)) => (
+                StatusCode::BAD_GATEWAY,
+                "Upstream provider error",
+                "An upstream provider failed to process the request.",
+            ),
+            // Every other DomainError -- Repository, MalformedEvent, and any
+            // variant a later phase adds -- falls to 500. This is
+            // deliberately the default arm, not an enumerated list: a new
+            // DomainError variant must not silently acquire a 4xx because a
+            // wildcard elsewhere guessed at it.
             ApiError::Domain(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal error",
@@ -175,10 +197,39 @@ mod tests {
 
     #[tokio::test]
     async fn unmapped_domain_error_falls_to_500() {
-        let (status, body) = response_json(ApiError::Domain(DomainError::Conflict)).await;
+        // `Conflict` and `Provider` now have their own arms, so the
+        // default-arm test must use a variant that still falls through --
+        // `MalformedEvent` is one that has no mapping of its own.
+        let (status, body) = response_json(ApiError::Domain(DomainError::MalformedEvent(
+            "shape".into(),
+        )))
+        .await;
 
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body["status"], 500);
+    }
+
+    #[tokio::test]
+    async fn conflict_maps_to_409() {
+        let (status, body) = response_json(ApiError::Domain(DomainError::Conflict)).await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["status"], 409);
+    }
+
+    #[tokio::test]
+    async fn provider_error_maps_to_502_and_reveals_no_internals() {
+        let (status, body) = response_json(ApiError::Domain(DomainError::Provider(
+            "No such customer: 'cus_123'; a similar object exists in test mode".to_string(),
+        )))
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["status"], 502);
+        // The provider's own message must not reach the caller.
+        let rendered = body.to_string();
+        assert!(!rendered.contains("cus_123"));
+        assert!(!rendered.contains("test mode"));
     }
 
     #[tokio::test]
