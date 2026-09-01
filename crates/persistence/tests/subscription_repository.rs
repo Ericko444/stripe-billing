@@ -323,3 +323,77 @@ async fn apply_event_with_an_equal_timestamp_applies() -> Result<(), Box<dyn Err
     assert!(found.cancel_at_period_end);
     Ok(())
 }
+
+#[tokio::test]
+async fn set_plan_repoints_the_row_and_touches_nothing_else() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgSubscriptionRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let (customer_id, plan_id) = seed(&db.pool, tenant).await?;
+    let created = create_subscription(&repo, tenant, customer_id, plan_id, "sub_set_plan").await?;
+
+    // A second plan for the same tenant to move to.
+    let (_, other_plan_id) = seed(&db.pool, tenant).await?;
+
+    repo.set_plan(tenant, created.id, other_plan_id).await?;
+
+    let found = repo.find(tenant, created.id).await?.ok_or("row exists")?;
+    assert_eq!(found.plan_id, other_plan_id);
+    // Every other column is the statement's business to leave alone: this
+    // write answers to the caller's plan choice, not to a Stripe event.
+    assert_eq!(found.status, created.status);
+    assert_eq!(found.current_period_start, created.current_period_start);
+    assert_eq!(found.current_period_end, created.current_period_end);
+    assert_eq!(found.cancel_at_period_end, created.cancel_at_period_end);
+    assert_eq!(found.last_event_created_at, created.last_event_created_at);
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_plan_is_scoped_to_tenant() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgSubscriptionRepository::new(db.pool.clone());
+    let owner = TenantId::new(Uuid::new_v4());
+    let intruder = TenantId::new(Uuid::new_v4());
+    let (customer_id, plan_id) = seed(&db.pool, owner).await?;
+    let created = create_subscription(&repo, owner, customer_id, plan_id, "sub_scoped").await?;
+    let (_, intruder_plan_id) = seed(&db.pool, intruder).await?;
+
+    // Another tenant naming a real subscription id must move nothing.
+    repo.set_plan(intruder, created.id, intruder_plan_id)
+        .await?;
+
+    let found = repo.find(owner, created.id).await?.ok_or("row exists")?;
+    assert_eq!(
+        found.plan_id, plan_id,
+        "a cross-tenant set_plan must not repoint another tenant's subscription"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_plan_does_not_resurrect_a_soft_deleted_row() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgSubscriptionRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let (customer_id, plan_id) = seed(&db.pool, tenant).await?;
+    let created = create_subscription(&repo, tenant, customer_id, plan_id, "sub_deleted").await?;
+    let (_, other_plan_id) = seed(&db.pool, tenant).await?;
+
+    sqlx::query("UPDATE billing.subscriptions SET deleted_at = now() WHERE id = $1")
+        .bind(created.id.as_uuid())
+        .execute(&db.pool)
+        .await?;
+
+    // Not an error -- the documented precondition is that the caller already
+    // found the row -- but it must write nothing.
+    repo.set_plan(tenant, created.id, other_plan_id).await?;
+
+    let row_plan_id: Uuid =
+        sqlx::query_scalar("SELECT plan_id FROM billing.subscriptions WHERE id = $1")
+            .bind(created.id.as_uuid())
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(row_plan_id, plan_id.as_uuid());
+    Ok(())
+}

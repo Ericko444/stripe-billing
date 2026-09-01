@@ -206,4 +206,30 @@ impl SubscriptionRepository for PgSubscriptionRepository {
             Ok(EventApplication::Applied)
         }
     }
+
+    async fn set_plan(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        plan_id: PlanId,
+    ) -> Result<(), DomainError> {
+        // No ordering predicate, unlike `apply_event`: no webhook ever writes
+        // this column, so there is no event to be stale against -- see the
+        // port's rustdoc. Tenant-scoped like every other statement here, so a
+        // wrong tenant updates nothing rather than another tenant's row.
+        sqlx::query(
+            "UPDATE billing.subscriptions \
+                SET plan_id = $3 \
+              WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(id.as_uuid())
+        .bind(plan_id.as_uuid())
+        .execute(&self.pool)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        Ok(())
+    }
 }

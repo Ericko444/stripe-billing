@@ -68,12 +68,24 @@ pub trait Writes: Send + Sync {
     /// Ownership is checked before Stripe is ever called: an unknown
     /// `subscription_id`, or one belonging to another tenant, is
     /// [`DomainError::NotFound`] with **no outbound call**; so is an unknown
-    /// `plan_id`. The snapshot Stripe returns is applied through
-    /// [`SubscriptionRepository::apply_event`]'s §10.2 ordering guard rather
-    /// than written directly, so a `customer.subscription.updated` webhook
-    /// racing this call cannot be regressed by it (or vice versa) -- this is
-    /// the one place outside the webhook path that writes the mirror, and it
-    /// borrows the webhook path's own safety.
+    /// `plan_id`.
+    ///
+    /// On success the mirror is updated by **two** writes, deliberately
+    /// separate because they answer to different authorities:
+    ///
+    /// - [`SubscriptionRepository::set_plan`] repoints `plan_id` at the plan
+    ///   *this caller* named. Unguarded: no webhook ever writes that column,
+    ///   so there is no event to be stale against.
+    /// - The snapshot Stripe returned goes through
+    ///   [`SubscriptionRepository::apply_event`]'s §10.2 ordering guard, so a
+    ///   `customer.subscription.updated` webhook racing this call cannot be
+    ///   regressed by it (or vice versa) -- this is the one place outside the
+    ///   webhook path that writes those columns, and it borrows the webhook
+    ///   path's own safety.
+    ///
+    /// A stale snapshot therefore leaves status and period bounds at the
+    /// newer webhook's values while `plan_id` still moves, which is correct:
+    /// the caller's plan choice is not something a webhook can be newer than.
     async fn change_plan(
         &self,
         tenant: TenantId,
@@ -256,6 +268,16 @@ where
                 &subscription.stripe_subscription_item_id,
                 &plan.stripe_price_id,
             )
+            .await?;
+
+        // Stripe accepted the change, so the mirror may now be repointed at
+        // the new plan. Two separate writes because they answer to two
+        // different authorities: `set_plan` records what *this caller* asked
+        // for (unguarded -- no webhook writes `plan_id`), while the snapshot
+        // below records what *Stripe* reported and goes through §10.2's
+        // ordering guard. See `SubscriptionRepository::set_plan`'s rustdoc.
+        self.subscriptions
+            .set_plan(tenant, subscription_id, plan_id)
             .await?;
 
         apply_subscription_snapshot(&self.subscriptions, tenant, subscription_id, snapshot).await
@@ -491,6 +513,10 @@ mod tests {
         );
         // The stub's snapshot (status Active) was applied through apply_event.
         assert_eq!(updated.status, SubscriptionStatus::Active);
+        // ...and the mirror was repointed at the plan the caller asked for.
+        // Without `set_plan` this silently kept the old plan forever, since
+        // no webhook writes `plan_id` either.
+        assert_eq!(updated.plan_id, new_plan_id);
         Ok(())
     }
 
@@ -555,6 +581,10 @@ mod tests {
         // this call's own (now-stale) snapshot said.
         assert_eq!(svc.provider.change_plan_calls().len(), 1);
         assert_eq!(returned.status, SubscriptionStatus::PastDue);
+        // `plan_id` still moves, though: it is written by `set_plan`, which
+        // is deliberately unguarded because no webhook ever writes that
+        // column, so there is no newer event for it to lose to.
+        assert_eq!(returned.plan_id, new_plan_id);
         Ok(())
     }
 

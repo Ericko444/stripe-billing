@@ -204,6 +204,23 @@ impl SubscriptionRepository for InMemorySubscriptions {
         row.last_event_created_at = Some(event_created_at);
         Ok(EventApplication::Applied)
     }
+
+    async fn set_plan(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        plan_id: PlanId,
+    ) -> Result<(), DomainError> {
+        // Mirrors the SQL exactly: tenant-scoped, no ordering predicate, and
+        // a non-matching row is silently not updated.
+        if let Some(row) = lock(&self.rows)
+            .iter_mut()
+            .find(|s| s.tenant_id == tenant_id && s.id == id && s.deleted_at.is_none())
+        {
+            row.plan_id = plan_id;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Default)]
