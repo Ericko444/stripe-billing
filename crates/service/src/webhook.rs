@@ -4,7 +4,7 @@ use domain::{
     VerifiedEvent, WebhookEventRepository,
 };
 
-use crate::subscription_updated;
+use crate::subscription_lifecycle;
 
 /// The outcome of processing one verified webhook event (`init-spec.md`
 /// §10.2, spec decision 3).
@@ -98,7 +98,7 @@ where
         // acknowledged, never rejected (§10.4).
         let outcome = match event.event_type.as_str() {
             "customer.subscription.updated" => {
-                subscription_updated::apply(&self.customers, &self.subscriptions, &event).await?
+                subscription_lifecycle::apply(&self.customers, &self.subscriptions, &event).await?
             }
             _ => EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
         };
@@ -221,7 +221,7 @@ mod tests {
     }
 
     /// Builds a `customer.subscription.updated` payload with the shape
-    /// `subscription_updated::read_subscription` expects, for a given
+    /// `subscription_lifecycle::read_subscription` expects, for a given
     /// Stripe customer and subscription id.
     fn subscription_updated_payload(
         stripe_customer_id: &str,
