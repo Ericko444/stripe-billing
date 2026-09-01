@@ -53,8 +53,8 @@ mod routes;
 mod state;
 
 pub use dto::{
-    InvoiceDto, InvoicePageDto, MoneyDto, PageParams, PaymentMethodDto, PlanDto, SetupIntentDto,
-    SubscriptionDto,
+    CancelRequest, ChangePlanRequest, InvoiceDto, InvoicePageDto, MoneyDto, PageParams,
+    PaymentMethodDto, PlanDto, SetupIntentDto, SubscriptionDto,
 };
 pub use error::ApiError;
 pub use extract::TenantExtractor;
@@ -161,6 +161,14 @@ where
         .route(
             "/subscription",
             get(routes::subscription::get_subscription::<T>),
+        )
+        .route(
+            "/subscriptions/{id}/change-plan",
+            post(routes::subscriptions::change_plan::<T>),
+        )
+        .route(
+            "/subscriptions/{id}/cancel",
+            post(routes::subscriptions::cancel_subscription::<T>),
         )
         .route(
             "/payment-methods",

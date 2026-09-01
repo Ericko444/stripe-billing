@@ -18,7 +18,7 @@ use domain::{
     SubscriptionSnapshot, SubscriptionStatus, TenantId, UpdateCustomerParams, WebhookEvent,
     WebhookEventId, WebhookEventRepository,
 };
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 /// Locks `mutex`, recovering from poisoning rather than panicking -- these
@@ -673,15 +673,18 @@ impl BillingEventSink for InMemorySink {
 ///
 /// Counts `create_customer` calls so a test can assert the provider was
 /// **not** reached (the "already linked" path of `ensure_customer`), and
-/// records the `stripe_customer_id` passed to `create_setup_intent` so a
-/// test can assert the use case resolved the customer first. Returns
-/// deterministic snapshots. The subscription methods have no caller among
-/// the use cases wired so far; they return a `Provider` error rather than
-/// panic, which the workspace lints deny.
+/// records the inputs passed to `create_setup_intent`, `change_plan` and
+/// `cancel_subscription` so a test can assert what the use case actually
+/// sent. Returns deterministic snapshots -- `create_subscription` and
+/// `update_customer` have no caller among the use cases wired so far, and
+/// return a `Provider` error rather than panic, which the workspace lints
+/// deny.
 #[derive(Default)]
 pub(crate) struct StubBillingProvider {
     create_customer_calls: AtomicUsize,
     setup_intent_customers: Mutex<Vec<String>>,
+    change_plan_calls: Mutex<Vec<(String, String, String)>>,
+    cancel_calls: Mutex<Vec<(String, CancellationTiming)>>,
 }
 
 impl StubBillingProvider {
@@ -693,6 +696,18 @@ impl StubBillingProvider {
     /// The `stripe_customer_id`s passed to `create_setup_intent`, in order.
     pub(crate) fn setup_intent_customers(&self) -> Vec<String> {
         lock(&self.setup_intent_customers).clone()
+    }
+
+    /// The `(stripe_subscription_id, stripe_subscription_item_id,
+    /// new_stripe_price_id)` triples passed to `change_plan`, in order.
+    pub(crate) fn change_plan_calls(&self) -> Vec<(String, String, String)> {
+        lock(&self.change_plan_calls).clone()
+    }
+
+    /// The `(stripe_subscription_id, timing)` pairs passed to
+    /// `cancel_subscription`, in order.
+    pub(crate) fn cancel_calls(&self) -> Vec<(String, CancellationTiming)> {
+        lock(&self.cancel_calls).clone()
     }
 }
 
@@ -734,22 +749,44 @@ impl BillingProvider for StubBillingProvider {
     async fn change_plan(
         &self,
         _tenant_id: TenantId,
-        _stripe_subscription_id: &str,
-        _stripe_subscription_item_id: &str,
-        _new_stripe_price_id: &str,
+        stripe_subscription_id: &str,
+        stripe_subscription_item_id: &str,
+        new_stripe_price_id: &str,
     ) -> Result<SubscriptionSnapshot, DomainError> {
-        Err(DomainError::Provider("change_plan not stubbed".to_string()))
+        lock(&self.change_plan_calls).push((
+            stripe_subscription_id.to_string(),
+            stripe_subscription_item_id.to_string(),
+            new_stripe_price_id.to_string(),
+        ));
+        Ok(SubscriptionSnapshot {
+            stripe_subscription_id: stripe_subscription_id.to_string(),
+            stripe_subscription_item_id: stripe_subscription_item_id.to_string(),
+            status: SubscriptionStatus::Active,
+            current_period_start: OffsetDateTime::now_utc(),
+            current_period_end: OffsetDateTime::now_utc() + Duration::days(30),
+            cancel_at_period_end: false,
+        })
     }
 
     async fn cancel_subscription(
         &self,
         _tenant_id: TenantId,
-        _stripe_subscription_id: &str,
-        _timing: CancellationTiming,
+        stripe_subscription_id: &str,
+        timing: CancellationTiming,
     ) -> Result<SubscriptionSnapshot, DomainError> {
-        Err(DomainError::Provider(
-            "cancel_subscription not stubbed".to_string(),
-        ))
+        lock(&self.cancel_calls).push((stripe_subscription_id.to_string(), timing));
+        let (status, cancel_at_period_end) = match timing {
+            CancellationTiming::AtPeriodEnd => (SubscriptionStatus::Active, true),
+            CancellationTiming::Immediate => (SubscriptionStatus::Canceled, false),
+        };
+        Ok(SubscriptionSnapshot {
+            stripe_subscription_id: stripe_subscription_id.to_string(),
+            stripe_subscription_item_id: "si_stub".to_string(),
+            status,
+            current_period_start: OffsetDateTime::now_utc(),
+            current_period_end: OffsetDateTime::now_utc() + Duration::days(30),
+            cancel_at_period_end,
+        })
     }
 
     async fn create_setup_intent(

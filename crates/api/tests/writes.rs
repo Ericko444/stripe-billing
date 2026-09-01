@@ -5,6 +5,13 @@
 //! `client_secret`, it resolves the tenant's customer first (a tenant with
 //! none still succeeds), that secret never reaches a log line, and two
 //! tenants get intents for their own customers.
+//!
+//! Tasks 8-9 cover `POST /subscriptions/{id}/change-plan` and
+//! `POST /subscriptions/{id}/cancel`: malformed path/body ids 404 the same
+//! way an unknown or cross-tenant subscription does, and the latter never
+//! reaches `Writes` at all; `cancel`'s `at_period_end` defaults to `true`
+//! when absent; cancelling an already-canceled subscription is a 200 with no
+//! second call.
 
 mod common;
 
@@ -15,10 +22,51 @@ use api::billing_router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::{CapturedLogs, HeaderTenant, StubWrites, app_state_writes};
-use serde_json::Value;
+use domain::{CustomerId, PlanId, Subscription, SubscriptionId, SubscriptionStatus, TenantId};
+use serde_json::{Value, json};
+use time::OffsetDateTime;
 use tower::ServiceExt;
 use tracing_subscriber::fmt;
 use uuid::Uuid;
+
+fn subscription(tenant: TenantId, plan_id: PlanId, status: SubscriptionStatus) -> Subscription {
+    let now = OffsetDateTime::now_utc();
+    Subscription {
+        id: SubscriptionId::new(Uuid::new_v4()),
+        tenant_id: tenant,
+        customer_id: CustomerId::new(Uuid::new_v4()),
+        plan_id,
+        stripe_subscription_id: format!("sub_{}", Uuid::new_v4()),
+        stripe_subscription_item_id: "si_test".to_string(),
+        status,
+        current_period_start: now,
+        current_period_end: now,
+        cancel_at_period_end: false,
+        last_event_created_at: None,
+        created_at: now,
+        deleted_at: None,
+    }
+}
+
+async fn post_json(
+    state: api::AppState,
+    tenant: &str,
+    path: &str,
+    body: Value,
+) -> Result<(StatusCode, Value), Box<dyn Error>> {
+    let response = billing_router::<HeaderTenant>(state)
+        .oneshot(
+            Request::post(path)
+                .header("x-tenant", tenant)
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body)?))?,
+        )
+        .await?;
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+    let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    Ok((status, body))
+}
 
 async fn post_setup_intent(
     state: api::AppState,
@@ -121,5 +169,245 @@ async fn two_tenants_get_intents_for_their_own_customers() -> Result<(), Box<dyn
     assert_ne!(calls[0].1, calls[1].1, "two distinct Stripe customers");
     assert!(secret_a.contains(&calls[0].1));
     assert!(secret_b.contains(&calls[1].1));
+    Ok(())
+}
+
+// --- Task 8: POST /subscriptions/{id}/change-plan ---------------------
+
+#[tokio::test]
+async fn change_plan_returns_the_updated_subscription() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let sub = subscription(
+        tenant_id,
+        PlanId::new(Uuid::new_v4()),
+        SubscriptionStatus::PastDue,
+    );
+    let sub_id = sub.id.as_uuid().to_string();
+    let new_plan_id = Uuid::new_v4();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_subscription(sub);
+
+    let (status, body) = post_json(
+        app_state_writes(writes.clone()),
+        &tenant,
+        &format!("/subscriptions/{sub_id}/change-plan"),
+        json!({ "plan_id": new_plan_id.to_string() }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "active");
+    assert_eq!(body["plan_id"], new_plan_id.to_string());
+    Ok(())
+}
+
+#[tokio::test]
+async fn change_plan_with_a_malformed_subscription_id_is_404() -> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+
+    let (status, _body) = post_json(
+        app_state_writes(Arc::new(StubWrites::default())),
+        &tenant,
+        "/subscriptions/not-a-uuid/change-plan",
+        json!({ "plan_id": Uuid::new_v4().to_string() }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+async fn change_plan_with_a_malformed_plan_id_is_404() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let sub = subscription(
+        tenant_id,
+        PlanId::new(Uuid::new_v4()),
+        SubscriptionStatus::Active,
+    );
+    let sub_id = sub.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_subscription(sub);
+
+    let (status, _body) = post_json(
+        app_state_writes(writes),
+        &tenant,
+        &format!("/subscriptions/{sub_id}/change-plan"),
+        json!({ "plan_id": "not-a-uuid" }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+async fn change_plan_for_another_tenants_subscription_is_404_and_never_reached()
+-> Result<(), Box<dyn Error>> {
+    let owner = TenantId::new(Uuid::new_v4());
+    let caller = TenantId::new(Uuid::new_v4()).as_uuid().to_string();
+    let sub = subscription(
+        owner,
+        PlanId::new(Uuid::new_v4()),
+        SubscriptionStatus::Active,
+    );
+    let sub_id = sub.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_subscription(sub);
+
+    let (status, _body) = post_json(
+        app_state_writes(writes.clone()),
+        &caller,
+        &format!("/subscriptions/{sub_id}/change-plan"),
+        json!({ "plan_id": Uuid::new_v4().to_string() }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(writes.change_plan_calls().is_empty());
+    Ok(())
+}
+
+// --- Task 9: POST /subscriptions/{id}/cancel ---------------------------
+
+#[tokio::test]
+async fn cancel_at_period_end_true_sets_the_flag_without_canceling() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let sub = subscription(
+        tenant_id,
+        PlanId::new(Uuid::new_v4()),
+        SubscriptionStatus::Active,
+    );
+    let sub_id = sub.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_subscription(sub);
+
+    let (status, body) = post_json(
+        app_state_writes(writes),
+        &tenant,
+        &format!("/subscriptions/{sub_id}/cancel"),
+        json!({ "at_period_end": true }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cancel_at_period_end"], true);
+    assert_eq!(body["status"], "active");
+    Ok(())
+}
+
+#[tokio::test]
+async fn absent_at_period_end_defaults_to_true() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let sub = subscription(
+        tenant_id,
+        PlanId::new(Uuid::new_v4()),
+        SubscriptionStatus::Active,
+    );
+    let sub_id = sub.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_subscription(sub);
+
+    let (status, body) = post_json(
+        app_state_writes(writes),
+        &tenant,
+        &format!("/subscriptions/{sub_id}/cancel"),
+        json!({}),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["cancel_at_period_end"], true,
+        "an absent at_period_end must default to the safer `true`, not bool::default()'s false"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn at_period_end_false_cancels_immediately() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let sub = subscription(
+        tenant_id,
+        PlanId::new(Uuid::new_v4()),
+        SubscriptionStatus::Active,
+    );
+    let sub_id = sub.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_subscription(sub);
+
+    let (status, body) = post_json(
+        app_state_writes(writes),
+        &tenant,
+        &format!("/subscriptions/{sub_id}/cancel"),
+        json!({ "at_period_end": false }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "canceled");
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_for_another_tenants_subscription_is_404_and_never_reached()
+-> Result<(), Box<dyn Error>> {
+    let owner = TenantId::new(Uuid::new_v4());
+    let caller = TenantId::new(Uuid::new_v4()).as_uuid().to_string();
+    let sub = subscription(
+        owner,
+        PlanId::new(Uuid::new_v4()),
+        SubscriptionStatus::Active,
+    );
+    let sub_id = sub.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_subscription(sub);
+
+    let (status, _body) = post_json(
+        app_state_writes(writes.clone()),
+        &caller,
+        &format!("/subscriptions/{sub_id}/cancel"),
+        json!({ "at_period_end": true }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(writes.cancel_calls().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelling_an_already_canceled_subscription_is_200_with_no_second_call()
+-> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let sub = subscription(
+        tenant_id,
+        PlanId::new(Uuid::new_v4()),
+        SubscriptionStatus::Canceled,
+    );
+    let sub_id = sub.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_subscription(sub);
+
+    let (status, body) = post_json(
+        app_state_writes(writes.clone()),
+        &tenant,
+        &format!("/subscriptions/{sub_id}/cancel"),
+        json!({ "at_period_end": true }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "canceled");
+    assert!(
+        writes.cancel_calls().is_empty(),
+        "an already-canceled subscription must not place a second call"
+    );
     Ok(())
 }

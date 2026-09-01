@@ -99,6 +99,35 @@ impl From<Subscription> for SubscriptionDto {
     }
 }
 
+/// Request body for `POST /subscriptions/{id}/change-plan`. `plan_id` is the
+/// **local** plan id (a uuid), resolved to a Stripe price id server-side --
+/// never a Stripe id itself, consistent with `SubscriptionDto.plan_id` and
+/// with 4b's wire rule that ids in bodies are local.
+#[derive(Debug, Deserialize)]
+pub struct ChangePlanRequest {
+    /// The local id of the plan to change to.
+    pub plan_id: String,
+}
+
+/// Request body for `POST /subscriptions/{id}/cancel`.
+///
+/// `at_period_end` absent defaults to `true` -- the safer of the two: a
+/// client that forgets the field gets "cancels at the period boundary," not
+/// "cancels immediately." `#[serde(deny_unknown_fields)]` is deliberately
+/// not used (§9 decision 6): an extra key, such as a spoofed `tenant_id`,
+/// must stay inert rather than fail the request.
+#[derive(Debug, Deserialize)]
+pub struct CancelRequest {
+    /// Whether the subscription ends at the current period's boundary
+    /// (`true`) or immediately (`false`).
+    #[serde(default = "default_at_period_end")]
+    pub at_period_end: bool,
+}
+
+fn default_at_period_end() -> bool {
+    true
+}
+
 /// A stored card on the wire. Display metadata only -- `brand`, `last4`,
 /// `is_default`, plus id and creation time. No card number, no expiry, no
 /// token: §7.4 keeps card data in Stripe and the mirror table never held

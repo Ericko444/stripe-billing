@@ -12,9 +12,9 @@ use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use domain::{
-    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, Plan,
-    SetupIntentSnapshot, Subscription, SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt,
-    WebhookVerifier,
+    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, Plan, PlanId,
+    SetupIntentSnapshot, Subscription, SubscriptionId, SubscriptionStatus, TenantId, VerifiedEvent,
+    WebhookReceipt, WebhookVerifier,
 };
 use service::{EventOutcome, Reads, WebhookHandler, Writes};
 use tracing_subscriber::fmt::MakeWriter;
@@ -196,6 +196,28 @@ impl Writes for UnusedWrites {
             "UnusedWrites: the write path is not exercised by this test".to_string(),
         ))
     }
+
+    async fn change_plan(
+        &self,
+        _tenant: TenantId,
+        _subscription_id: SubscriptionId,
+        _plan_id: PlanId,
+    ) -> Result<Subscription, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+
+    async fn cancel_subscription(
+        &self,
+        _tenant: TenantId,
+        _subscription_id: SubscriptionId,
+        _at_period_end: bool,
+    ) -> Result<Subscription, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
 }
 
 /// A `Writes` fake for the write-route tests. Mimics `WriteService`'s
@@ -203,12 +225,20 @@ impl Writes for UnusedWrites {
 /// to a fresh `cus_...` on first call and returns the same id after;
 /// `create_setup_intent` resolves the customer first, then hands back a
 /// `client_secret` derived from it so a test can tell two tenants' intents
-/// apart. Every call is recorded for assertions.
+/// apart. `change_plan` and `cancel_subscription` look a seeded subscription
+/// up tenant-scoped (via `seed_subscription`), exactly the way
+/// `WriteService` does, so a cross-tenant id 404s here too. Every reached
+/// call is recorded for assertions -- a call that 404s before mutation is
+/// **not** recorded, mirroring "the provider is never called" for a wrong
+/// tenant.
 #[derive(Default)]
 pub struct StubWrites {
     customers: Mutex<HashMap<TenantId, String>>,
+    subscriptions: Mutex<Vec<Subscription>>,
     pub ensure_customer_calls: Mutex<Vec<TenantId>>,
     pub setup_intent_calls: Mutex<Vec<(TenantId, String)>>,
+    pub change_plan_calls: Mutex<Vec<(TenantId, SubscriptionId, PlanId)>>,
+    pub cancel_calls: Mutex<Vec<(TenantId, SubscriptionId, bool)>>,
 }
 
 impl StubWrites {
@@ -216,6 +246,23 @@ impl StubWrites {
     /// `create_setup_intent`, in call order.
     pub fn setup_intent_calls(&self) -> Vec<(TenantId, String)> {
         lock(&self.setup_intent_calls).clone()
+    }
+
+    /// The `(tenant, subscription_id, plan_id)` triples for which
+    /// `change_plan` actually reached its "provider" call, in order.
+    pub fn change_plan_calls(&self) -> Vec<(TenantId, SubscriptionId, PlanId)> {
+        lock(&self.change_plan_calls).clone()
+    }
+
+    /// The `(tenant, subscription_id, at_period_end)` triples for which
+    /// `cancel_subscription` actually reached its "provider" call, in order.
+    pub fn cancel_calls(&self) -> Vec<(TenantId, SubscriptionId, bool)> {
+        lock(&self.cancel_calls).clone()
+    }
+
+    /// Seeds a subscription row `change_plan`/`cancel_subscription` can find.
+    pub fn seed_subscription(&self, subscription: Subscription) {
+        lock(&self.subscriptions).push(subscription);
     }
 }
 
@@ -238,6 +285,46 @@ impl Writes for StubWrites {
         Ok(SetupIntentSnapshot {
             client_secret: format!("seti_{customer}_secret_test"),
         })
+    }
+
+    async fn change_plan(
+        &self,
+        tenant: TenantId,
+        subscription_id: SubscriptionId,
+        plan_id: PlanId,
+    ) -> Result<Subscription, DomainError> {
+        let mut subscriptions = lock(&self.subscriptions);
+        let subscription = subscriptions
+            .iter_mut()
+            .find(|s| s.tenant_id == tenant && s.id == subscription_id)
+            .ok_or(DomainError::NotFound)?;
+        lock(&self.change_plan_calls).push((tenant, subscription_id, plan_id));
+        subscription.plan_id = plan_id;
+        subscription.status = SubscriptionStatus::Active;
+        Ok(subscription.clone())
+    }
+
+    async fn cancel_subscription(
+        &self,
+        tenant: TenantId,
+        subscription_id: SubscriptionId,
+        at_period_end: bool,
+    ) -> Result<Subscription, DomainError> {
+        let mut subscriptions = lock(&self.subscriptions);
+        let subscription = subscriptions
+            .iter_mut()
+            .find(|s| s.tenant_id == tenant && s.id == subscription_id)
+            .ok_or(DomainError::NotFound)?;
+        if subscription.status == SubscriptionStatus::Canceled {
+            return Ok(subscription.clone());
+        }
+        lock(&self.cancel_calls).push((tenant, subscription_id, at_period_end));
+        if at_period_end {
+            subscription.cancel_at_period_end = true;
+        } else {
+            subscription.status = SubscriptionStatus::Canceled;
+        }
+        Ok(subscription.clone())
     }
 }
 
