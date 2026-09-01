@@ -12,6 +12,11 @@
 //! reaches `Writes` at all; `cancel`'s `at_period_end` defaults to `true`
 //! when absent; cancelling an already-canceled subscription is a 200 with no
 //! second call.
+//!
+//! Task 13 covers `POST /payment-methods/{id}/default` (200, updated card)
+//! and `DELETE /payment-methods/{id}` (204): a malformed or cross-tenant id
+//! is a 404 that never reaches `Writes`, and a second delete of the same id
+//! is a 404.
 
 mod common;
 
@@ -22,7 +27,10 @@ use api::billing_router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::{CapturedLogs, HeaderTenant, StubWrites, app_state_writes};
-use domain::{CustomerId, PlanId, Subscription, SubscriptionId, SubscriptionStatus, TenantId};
+use domain::{
+    CustomerId, PaymentMethod, PaymentMethodId, PlanId, Subscription, SubscriptionId,
+    SubscriptionStatus, TenantId,
+};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 use tower::ServiceExt;
@@ -46,6 +54,34 @@ fn subscription(tenant: TenantId, plan_id: PlanId, status: SubscriptionStatus) -
         created_at: now,
         deleted_at: None,
     }
+}
+
+fn payment_method(tenant: TenantId, is_default: bool) -> PaymentMethod {
+    PaymentMethod {
+        id: PaymentMethodId::new(Uuid::new_v4()),
+        tenant_id: tenant,
+        customer_id: CustomerId::new(Uuid::new_v4()),
+        stripe_payment_method_id: format!("pm_{}", Uuid::new_v4()),
+        brand: "visa".to_string(),
+        last4: "4242".to_string(),
+        is_default,
+        last_event_created_at: None,
+        created_at: OffsetDateTime::now_utc(),
+        deleted_at: None,
+    }
+}
+
+async fn send(
+    state: api::AppState,
+    request: Request<Body>,
+) -> Result<(StatusCode, Value), Box<dyn Error>> {
+    let response = billing_router::<HeaderTenant>(state)
+        .oneshot(request)
+        .await?;
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+    let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    Ok((status, body))
 }
 
 async fn post_json(
@@ -409,5 +445,166 @@ async fn cancelling_an_already_canceled_subscription_is_200_with_no_second_call(
         writes.cancel_calls().is_empty(),
         "an already-canceled subscription must not place a second call"
     );
+    Ok(())
+}
+
+// --- Task 13: POST /payment-methods/{id}/default -----------------------
+
+#[tokio::test]
+async fn set_default_returns_the_updated_card() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let old_default = payment_method(tenant_id, true);
+    let mut target = payment_method(tenant_id, false);
+    target.customer_id = old_default.customer_id;
+    let target_id = target.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_payment_method(old_default);
+    writes.seed_payment_method(target);
+
+    let (status, body) = send(
+        app_state_writes(writes),
+        Request::post(format!("/payment-methods/{target_id}/default"))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"], target_id);
+    assert_eq!(body["is_default"], true);
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_default_with_a_malformed_id_is_404() -> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+
+    let (status, _body) = send(
+        app_state_writes(Arc::new(StubWrites::default())),
+        Request::post("/payment-methods/not-a-uuid/default")
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_default_for_another_tenants_card_is_404_and_never_reached()
+-> Result<(), Box<dyn Error>> {
+    let owner = TenantId::new(Uuid::new_v4());
+    let caller = TenantId::new(Uuid::new_v4()).as_uuid().to_string();
+    let card = payment_method(owner, false);
+    let card_id = card.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_payment_method(card);
+
+    let (status, _body) = send(
+        app_state_writes(writes.clone()),
+        Request::post(format!("/payment-methods/{card_id}/default"))
+            .header("x-tenant", &caller)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(writes.set_default_calls().is_empty());
+    Ok(())
+}
+
+// --- Task 13: DELETE /payment-methods/{id} ---------------------------
+
+#[tokio::test]
+async fn delete_returns_204_and_records_the_removal() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let card = payment_method(tenant_id, false);
+    let card_id = card.id;
+    let card_id_str = card_id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_payment_method(card);
+
+    let (status, body) = send(
+        app_state_writes(writes.clone()),
+        Request::delete(format!("/payment-methods/{card_id_str}"))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, Value::Null, "204 carries no body");
+    assert_eq!(writes.remove_calls(), vec![(tenant_id, card_id)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_with_a_malformed_id_is_404() -> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+
+    let (status, _body) = send(
+        app_state_writes(Arc::new(StubWrites::default())),
+        Request::delete("/payment-methods/not-a-uuid")
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_for_another_tenants_card_is_404_and_never_reached() -> Result<(), Box<dyn Error>> {
+    let owner = TenantId::new(Uuid::new_v4());
+    let caller = TenantId::new(Uuid::new_v4()).as_uuid().to_string();
+    let card = payment_method(owner, false);
+    let card_id = card.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_payment_method(card);
+
+    let (status, _body) = send(
+        app_state_writes(writes.clone()),
+        Request::delete(format!("/payment-methods/{card_id}"))
+            .header("x-tenant", &caller)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(writes.remove_calls().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleting_an_already_removed_card_is_404() -> Result<(), Box<dyn Error>> {
+    let tenant_id = TenantId::new(Uuid::new_v4());
+    let tenant = tenant_id.as_uuid().to_string();
+    let card = payment_method(tenant_id, false);
+    let card_id = card.id.as_uuid().to_string();
+    let writes = Arc::new(StubWrites::default());
+    writes.seed_payment_method(card);
+    let state = || app_state_writes(writes.clone());
+
+    let (first, _) = send(
+        state(),
+        Request::delete(format!("/payment-methods/{card_id}"))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+    assert_eq!(first, StatusCode::NO_CONTENT);
+
+    let (second, _) = send(
+        state(),
+        Request::delete(format!("/payment-methods/{card_id}"))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+    assert_eq!(second, StatusCode::NOT_FOUND, "the row is already gone");
     Ok(())
 }

@@ -44,7 +44,7 @@
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 
 mod dto;
 mod error;
@@ -177,6 +177,14 @@ where
         .route(
             "/payment-methods/setup-intent",
             post(routes::payment_methods::create_setup_intent::<T>),
+        )
+        .route(
+            "/payment-methods/{id}/default",
+            post(routes::payment_methods::set_default_payment_method::<T>),
+        )
+        .route(
+            "/payment-methods/{id}",
+            delete(routes::payment_methods::remove_payment_method::<T>),
         )
         .route("/invoices", get(routes::invoices::list_invoices::<T>))
         .route("/invoices/{id}", get(routes::invoices::get_invoice::<T>))
