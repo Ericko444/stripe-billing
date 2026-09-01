@@ -127,6 +127,33 @@ pub trait PaymentMethodRepository {
         stripe_payment_method_id: &str,
         event_created_at: OffsetDateTime,
     ) -> impl Future<Output = Result<crate::EventApplication, DomainError>> + Send;
+
+    /// Makes `id` the customer's sole default in **one statement**: sets
+    /// `is_default = (id = $target)` across the customer's non-deleted rows,
+    /// so the old default is cleared and the new one set together -- never a
+    /// window with two defaults or none (`init-spec.md` §7.4).
+    ///
+    /// **Deliberately not guarded by §10.2's ordering rule, and separate
+    /// from [`apply_event`](Self::apply_event)** -- the same split as
+    /// [`SubscriptionRepository::set_plan`](crate::SubscriptionRepository::set_plan).
+    /// `apply_event` writes what a webhook reported and must be ordered
+    /// against other webhooks; `is_default` chosen through this method is
+    /// what *a caller explicitly asked for* via
+    /// `POST /payment-methods/{id}/default`, and no webhook writes it that
+    /// way, so there is no event for it to lose a race against. The caller
+    /// runs this **after** Stripe's own
+    /// `invoice_settings.default_payment_method` update has succeeded.
+    ///
+    /// **Precondition:** `id` names a live row for `(tenant_id, customer_id)`
+    /// -- the caller looked it up first. A non-matching `id` clears every
+    /// default for that customer and sets none, which is why the caller
+    /// checks ownership before calling.
+    fn set_default(
+        &self,
+        tenant_id: TenantId,
+        customer_id: CustomerId,
+        id: PaymentMethodId,
+    ) -> impl Future<Output = Result<(), DomainError>> + Send;
 }
 
 #[cfg(test)]

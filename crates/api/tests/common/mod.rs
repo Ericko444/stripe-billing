@@ -12,9 +12,9 @@ use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use domain::{
-    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, Plan, PlanId,
-    SetupIntentSnapshot, Subscription, SubscriptionId, SubscriptionStatus, TenantId, VerifiedEvent,
-    WebhookReceipt, WebhookVerifier,
+    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, PaymentMethodId,
+    Plan, PlanId, SetupIntentSnapshot, Subscription, SubscriptionId, SubscriptionStatus, TenantId,
+    VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
 use service::{EventOutcome, Reads, WebhookHandler, Writes};
 use tracing_subscriber::fmt::MakeWriter;
@@ -218,6 +218,16 @@ impl Writes for UnusedWrites {
             "UnusedWrites: the write path is not exercised by this test".to_string(),
         ))
     }
+
+    async fn set_default_payment_method(
+        &self,
+        _tenant: TenantId,
+        _payment_method_id: PaymentMethodId,
+    ) -> Result<PaymentMethod, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
 }
 
 /// A `Writes` fake for the write-route tests. Mimics `WriteService`'s
@@ -235,10 +245,12 @@ impl Writes for UnusedWrites {
 pub struct StubWrites {
     customers: Mutex<HashMap<TenantId, String>>,
     subscriptions: Mutex<Vec<Subscription>>,
+    payment_methods: Mutex<Vec<PaymentMethod>>,
     pub ensure_customer_calls: Mutex<Vec<TenantId>>,
     pub setup_intent_calls: Mutex<Vec<(TenantId, String)>>,
     pub change_plan_calls: Mutex<Vec<(TenantId, SubscriptionId, PlanId)>>,
     pub cancel_calls: Mutex<Vec<(TenantId, SubscriptionId, bool)>>,
+    pub set_default_calls: Mutex<Vec<(TenantId, PaymentMethodId)>>,
 }
 
 impl StubWrites {
@@ -263,6 +275,18 @@ impl StubWrites {
     /// Seeds a subscription row `change_plan`/`cancel_subscription` can find.
     pub fn seed_subscription(&self, subscription: Subscription) {
         lock(&self.subscriptions).push(subscription);
+    }
+
+    /// Seeds a payment-method row `set_default_payment_method` /
+    /// `remove_payment_method` can find.
+    pub fn seed_payment_method(&self, payment_method: PaymentMethod) {
+        lock(&self.payment_methods).push(payment_method);
+    }
+
+    /// The `(tenant, payment_method_id)` pairs for which
+    /// `set_default_payment_method` actually reached mutation, in order.
+    pub fn set_default_calls(&self) -> Vec<(TenantId, PaymentMethodId)> {
+        lock(&self.set_default_calls).clone()
     }
 }
 
@@ -325,6 +349,36 @@ impl Writes for StubWrites {
             subscription.status = SubscriptionStatus::Canceled;
         }
         Ok(subscription.clone())
+    }
+
+    async fn set_default_payment_method(
+        &self,
+        tenant: TenantId,
+        payment_method_id: PaymentMethodId,
+    ) -> Result<PaymentMethod, DomainError> {
+        let mut payment_methods = lock(&self.payment_methods);
+        // Ownership check first: an unknown or cross-tenant id 404s here the
+        // same way `WriteService` does, and never records a call.
+        let customer_id = payment_methods
+            .iter()
+            .find(|pm| {
+                pm.tenant_id == tenant && pm.id == payment_method_id && pm.deleted_at.is_none()
+            })
+            .map(|pm| pm.customer_id)
+            .ok_or(DomainError::NotFound)?;
+
+        lock(&self.set_default_calls).push((tenant, payment_method_id));
+        for pm in payment_methods
+            .iter_mut()
+            .filter(|pm| pm.tenant_id == tenant && pm.customer_id == customer_id)
+        {
+            pm.is_default = pm.id == payment_method_id;
+        }
+        payment_methods
+            .iter()
+            .find(|pm| pm.id == payment_method_id)
+            .cloned()
+            .ok_or(DomainError::NotFound)
     }
 }
 

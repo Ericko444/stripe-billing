@@ -16,8 +16,9 @@
 use async_trait::async_trait;
 use domain::{
     BillingProvider, CancellationTiming, CreateCustomerParams, CustomerRepository, DomainError,
-    PaymentMethodRepository, PlanId, PlanRepository, SetupIntentSnapshot, Subscription,
-    SubscriptionId, SubscriptionRepository, SubscriptionSnapshot, SubscriptionStatus, TenantId,
+    PaymentMethod, PaymentMethodId, PaymentMethodRepository, PlanId, PlanRepository,
+    SetupIntentSnapshot, Subscription, SubscriptionId, SubscriptionRepository,
+    SubscriptionSnapshot, SubscriptionStatus, TenantId,
 };
 use time::OffsetDateTime;
 
@@ -110,6 +111,24 @@ pub trait Writes: Send + Sync {
         subscription_id: SubscriptionId,
         at_period_end: bool,
     ) -> Result<Subscription, DomainError>;
+
+    /// Makes `payment_method_id` the calling tenant's default, and returns
+    /// the updated row.
+    ///
+    /// Ownership is checked first: an unknown or another tenant's payment
+    /// method id is [`DomainError::NotFound`] with **no outbound call**.
+    ///
+    /// **§7.4 ordering: Stripe first, mirror second.** Stripe's
+    /// `invoice_settings.default_payment_method` update runs before
+    /// [`PaymentMethodRepository::set_default`] touches the local
+    /// `is_default` flags, so a Stripe failure leaves those flags exactly as
+    /// they were. The mirror reconciliation is a single statement -- old
+    /// default cleared and new one set together, never two and never none.
+    async fn set_default_payment_method(
+        &self,
+        tenant: TenantId,
+        payment_method_id: PaymentMethodId,
+    ) -> Result<PaymentMethod, DomainError>;
 }
 
 /// Applies a direct (non-webhook) [`SubscriptionSnapshot`] through
@@ -311,6 +330,52 @@ where
 
         apply_subscription_snapshot(&self.subscriptions, tenant, subscription_id, snapshot).await
     }
+
+    async fn set_default_payment_method(
+        &self,
+        tenant: TenantId,
+        payment_method_id: PaymentMethodId,
+    ) -> Result<PaymentMethod, DomainError> {
+        let payment_method = self
+            .payment_methods
+            .find(tenant, payment_method_id)
+            .await?
+            .ok_or(DomainError::NotFound)?;
+
+        // The *Stripe* customer id lives on the `Customer` row, not on the
+        // payment method. The FK guarantees this lookup finds a row.
+        let stripe_customer_id = self
+            .customers
+            .find(tenant, payment_method.customer_id)
+            .await?
+            .and_then(|customer| customer.stripe_customer_id)
+            .ok_or_else(|| {
+                DomainError::Repository(
+                    "payment method's customer has no linked Stripe customer".to_string(),
+                )
+            })?;
+
+        // §7.4: Stripe first. `?` here returns before the mirror is touched,
+        // so the `is_default` flags stay exactly as they were.
+        self.provider
+            .set_default_payment_method(
+                tenant,
+                &stripe_customer_id,
+                &payment_method.stripe_payment_method_id,
+            )
+            .await?;
+
+        // Then the mirror, in one guarded-free statement (old default
+        // cleared and new one set together).
+        self.payment_methods
+            .set_default(tenant, payment_method.customer_id, payment_method_id)
+            .await?;
+
+        self.payment_methods
+            .find(tenant, payment_method_id)
+            .await?
+            .ok_or(DomainError::NotFound)
+    }
 }
 
 #[cfg(test)]
@@ -323,7 +388,7 @@ mod tests {
 
     use super::*;
     use crate::test_support::{
-        InMemoryCustomers, InMemoryPaymentMethods, InMemoryPlans, InMemorySubscriptions,
+        CallLog, InMemoryCustomers, InMemoryPaymentMethods, InMemoryPlans, InMemorySubscriptions,
         StubBillingProvider,
     };
 
@@ -396,6 +461,39 @@ mod tests {
             created_at: OffsetDateTime::now_utc(),
             deleted_at: None,
         }
+    }
+
+    fn payment_method(
+        tenant: TenantId,
+        customer_id: CustomerId,
+        is_default: bool,
+    ) -> PaymentMethod {
+        PaymentMethod {
+            id: PaymentMethodId::new(Uuid::new_v4()),
+            tenant_id: tenant,
+            customer_id,
+            stripe_payment_method_id: format!("pm_{}", Uuid::new_v4()),
+            brand: "visa".to_string(),
+            last4: "4242".to_string(),
+            is_default,
+            last_event_created_at: None,
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        }
+    }
+
+    /// A `WriteService` whose provider double and payment-method double both
+    /// push into `log` (`"provider"` / `"repository"`), and whose provider's
+    /// payment-method calls fail when `fail_provider` -- the two knobs the
+    /// §7.4 ordering tests need.
+    fn service_for_ordering(log: CallLog, fail_provider: bool) -> TestWrites {
+        WriteService::new(
+            StubBillingProvider::for_ordering_test(log.clone(), fail_provider),
+            InMemoryCustomers::default(),
+            InMemorySubscriptions::default(),
+            InMemoryPaymentMethods::with_call_log(log),
+            InMemoryPlans::default(),
+        )
     }
 
     #[tokio::test]
@@ -657,6 +755,131 @@ mod tests {
         assert!(
             svc.provider.cancel_calls().is_empty(),
             "an already-canceled subscription must not place a second Stripe call"
+        );
+        Ok(())
+    }
+
+    // --- Task 11: set_default_payment_method (§7.4 ordering) --------------
+
+    #[tokio::test]
+    async fn set_default_moves_the_flag_and_calls_stripe_for_the_customer()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let customer = linked_customer(tenant, "cus_pm");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let old_default = payment_method(tenant, customer_id, true);
+        let new_default = payment_method(tenant, customer_id, false);
+        let new_id = new_default.id;
+        let new_stripe_id = new_default.stripe_payment_method_id.clone();
+        let old_id = old_default.id;
+        svc.payment_methods.seed(old_default);
+        svc.payment_methods.seed(new_default);
+
+        let returned = svc.set_default_payment_method(tenant, new_id).await?;
+
+        assert!(returned.is_default);
+        assert_eq!(returned.id, new_id);
+        // The old default was cleared in the same reconciliation.
+        let rows = svc.payment_methods.list(tenant).await?;
+        let old = rows.iter().find(|p| p.id == old_id).ok_or("old row")?;
+        assert!(!old.is_default, "the previous default must be cleared");
+        // Stripe was told, keyed by the customer, not the local id.
+        assert_eq!(
+            svc.provider.set_default_calls(),
+            vec![("cus_pm".to_string(), new_stripe_id)]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_default_calls_the_provider_before_the_repository() -> Result<(), Box<dyn Error>> {
+        let log: CallLog = CallLog::default();
+        let svc = service_for_ordering(log.clone(), false);
+        let tenant = TenantId::new(Uuid::new_v4());
+        let customer = linked_customer(tenant, "cus_order");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let pm = payment_method(tenant, customer_id, false);
+        let pm_id = pm.id;
+        svc.payment_methods.seed(pm);
+
+        svc.set_default_payment_method(tenant, pm_id).await?;
+
+        assert_eq!(
+            *log.lock().unwrap_or_else(|p| p.into_inner()),
+            vec!["provider", "repository"],
+            "Stripe must be updated before the local mirror (§7.4)"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_default_provider_error_leaves_the_flags_exactly_as_they_were()
+    -> Result<(), Box<dyn Error>> {
+        // The test that bites a reversed (mirror-first) implementation: with
+        // the provider failing, a correct impl never touches the flags,
+        // while a reversed one would already have flipped them.
+        let log: CallLog = CallLog::default();
+        let svc = service_for_ordering(log.clone(), true);
+        let tenant = TenantId::new(Uuid::new_v4());
+        let customer = linked_customer(tenant, "cus_fail");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let old_default = payment_method(tenant, customer_id, true);
+        let target = payment_method(tenant, customer_id, false);
+        let old_id = old_default.id;
+        let target_id = target.id;
+        svc.payment_methods.seed(old_default);
+        svc.payment_methods.seed(target);
+
+        let result = svc.set_default_payment_method(tenant, target_id).await;
+
+        assert!(matches!(result, Err(DomainError::Provider(_))));
+        let rows = svc.payment_methods.list(tenant).await?;
+        assert!(
+            rows.iter()
+                .find(|p| p.id == old_id)
+                .ok_or("old row")?
+                .is_default,
+            "the old default must be untouched when Stripe failed"
+        );
+        assert!(
+            !rows
+                .iter()
+                .find(|p| p.id == target_id)
+                .ok_or("target row")?
+                .is_default,
+            "the target must not have become default when Stripe failed"
+        );
+        assert_eq!(
+            *log.lock().unwrap_or_else(|p| p.into_inner()),
+            vec!["provider"],
+            "the repository must not be reached at all after a provider error"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_default_for_another_tenants_payment_method_is_not_found()
+    -> Result<(), Box<dyn Error>> {
+        let mine = TenantId::new(Uuid::new_v4());
+        let theirs = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let their_customer = linked_customer(theirs, "cus_theirs");
+        let their_customer_id = their_customer.id;
+        svc.customers.seed(their_customer);
+        let their_pm = payment_method(theirs, their_customer_id, false);
+        let their_pm_id = their_pm.id;
+        svc.payment_methods.seed(their_pm);
+
+        let result = svc.set_default_payment_method(mine, their_pm_id).await;
+
+        assert!(matches!(result, Err(DomainError::NotFound)));
+        assert!(
+            svc.provider.set_default_calls().is_empty(),
+            "the provider must never be called for a cross-tenant id"
         );
         Ok(())
     }

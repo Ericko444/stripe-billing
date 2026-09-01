@@ -6,7 +6,7 @@
 //! and the ordering guard, not insertion mechanics.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use domain::{
@@ -29,6 +29,12 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+/// A shared, ordered record of *which* double was reached, so the
+/// `init-spec.md` §7.4 tests can assert "the provider ran before the
+/// repository." Both [`StubBillingProvider`] and [`InMemoryPaymentMethods`]
+/// push into the same one -- `"provider"` and `"repository"` respectively.
+pub(crate) type CallLog = Arc<Mutex<Vec<&'static str>>>;
 
 #[derive(Default)]
 pub(crate) struct InMemoryCustomers {
@@ -384,11 +390,27 @@ impl InvoiceRepository for InMemoryInvoices {
 #[derive(Default)]
 pub(crate) struct InMemoryPaymentMethods {
     rows: Mutex<Vec<PaymentMethod>>,
+    call_log: Option<CallLog>,
 }
 
 impl InMemoryPaymentMethods {
     pub(crate) fn seed(&self, payment_method: PaymentMethod) {
         lock(&self.rows).push(payment_method);
+    }
+
+    /// Like `default()`, but `set_default` and `detach_event` push
+    /// `"repository"` into `log` when reached -- the §7.4 ordering tests.
+    pub(crate) fn with_call_log(log: CallLog) -> Self {
+        Self {
+            rows: Mutex::default(),
+            call_log: Some(log),
+        }
+    }
+
+    fn record(&self) {
+        if let Some(log) = &self.call_log {
+            lock(log).push("repository");
+        }
     }
 }
 
@@ -502,12 +524,30 @@ impl PaymentMethodRepository for InMemoryPaymentMethods {
         }
     }
 
+    async fn set_default(
+        &self,
+        tenant_id: TenantId,
+        customer_id: CustomerId,
+        id: PaymentMethodId,
+    ) -> Result<(), DomainError> {
+        self.record();
+        // Mirror the SQL: is_default = (id == target) across the customer's
+        // live rows, in one pass -- no "two defaults or none" window.
+        for row in lock(&self.rows).iter_mut().filter(|p| {
+            p.tenant_id == tenant_id && p.customer_id == customer_id && p.deleted_at.is_none()
+        }) {
+            row.is_default = row.id == id;
+        }
+        Ok(())
+    }
+
     async fn detach_event(
         &self,
         tenant_id: TenantId,
         stripe_payment_method_id: &str,
         event_created_at: OffsetDateTime,
     ) -> Result<EventApplication, DomainError> {
+        self.record();
         let mut rows = lock(&self.rows);
         let Some(row) = rows.iter_mut().find(|p| {
             p.tenant_id == tenant_id
@@ -702,9 +742,31 @@ pub(crate) struct StubBillingProvider {
     setup_intent_customers: Mutex<Vec<String>>,
     change_plan_calls: Mutex<Vec<(String, String, String)>>,
     cancel_calls: Mutex<Vec<(String, CancellationTiming)>>,
+    set_default_calls: Mutex<Vec<(String, String)>>,
+    call_log: Option<CallLog>,
+    fail_payment_method_ops: bool,
 }
 
 impl StubBillingProvider {
+    /// A double for the §7.4 ordering tests: pushes `"provider"` into `log`
+    /// when a payment-method call is reached, and -- when `fail` -- returns a
+    /// `Provider` error from it. Pairing this (`fail = true`) with a check
+    /// that the mirror did not move is what catches a reversed
+    /// (mirror-first) implementation.
+    pub(crate) fn for_ordering_test(log: CallLog, fail: bool) -> Self {
+        Self {
+            call_log: Some(log),
+            fail_payment_method_ops: fail,
+            ..Self::default()
+        }
+    }
+
+    /// The `(stripe_customer_id, stripe_payment_method_id)` pairs passed to
+    /// `set_default_payment_method`, in order. Empty if it was never reached.
+    pub(crate) fn set_default_calls(&self) -> Vec<(String, String)> {
+        lock(&self.set_default_calls).clone()
+    }
+
     /// How many times `create_customer` has been called on this double.
     pub(crate) fn create_customer_calls(&self) -> usize {
         self.create_customer_calls.load(Ordering::SeqCst)
@@ -817,26 +879,42 @@ impl BillingProvider for StubBillingProvider {
         })
     }
 
-    // Task 11/12 replace these with a call-recording, optionally-failing
-    // implementation; for now they only need to satisfy the trait.
     async fn set_default_payment_method(
         &self,
         _tenant_id: TenantId,
-        _stripe_customer_id: &str,
-        _stripe_payment_method_id: &str,
+        stripe_customer_id: &str,
+        stripe_payment_method_id: &str,
     ) -> Result<(), DomainError> {
-        Err(DomainError::Provider(
-            "set_default_payment_method not stubbed".to_string(),
-        ))
+        if let Some(log) = &self.call_log {
+            lock(log).push("provider");
+        }
+        lock(&self.set_default_calls).push((
+            stripe_customer_id.to_string(),
+            stripe_payment_method_id.to_string(),
+        ));
+        if self.fail_payment_method_ops {
+            return Err(DomainError::Provider(
+                "simulated Stripe failure".to_string(),
+            ));
+        }
+        Ok(())
     }
 
+    // Task 12 adds call-recording here; for now it only needs the call-log
+    // hook (for the shared §7.4 ordering machinery) and the failure knob.
     async fn detach_payment_method(
         &self,
         _tenant_id: TenantId,
         _stripe_payment_method_id: &str,
     ) -> Result<(), DomainError> {
-        Err(DomainError::Provider(
-            "detach_payment_method not stubbed".to_string(),
-        ))
+        if let Some(log) = &self.call_log {
+            lock(log).push("provider");
+        }
+        if self.fail_payment_method_ops {
+            return Err(DomainError::Provider(
+                "simulated Stripe failure".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
