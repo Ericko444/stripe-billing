@@ -56,6 +56,7 @@ async fn returns_only_the_calling_tenants_plans() -> Result<(), Box<dyn Error>> 
             plan(tenant_a, "a-pro", 4999),
             plan(tenant_b, "b-only", 9999),
         ],
+        ..Default::default()
     });
 
     let (status_a, body_a) = get_plans(state.clone(), &tenant_a.as_uuid().to_string()).await?;
@@ -88,6 +89,7 @@ async fn money_is_minor_units_and_iso_code_never_a_float() -> Result<(), Box<dyn
     let tenant = TenantId::new(Uuid::new_v4());
     let state = app_state(StubReads {
         plans: vec![plan(tenant, "starter", 1999)],
+        ..Default::default()
     });
 
     let (status, body) = get_plans(state, &tenant.as_uuid().to_string()).await?;
@@ -107,6 +109,7 @@ async fn a_tenant_with_no_plans_gets_an_empty_array() -> Result<(), Box<dyn Erro
     let stranger = TenantId::new(Uuid::new_v4());
     let state = app_state(StubReads {
         plans: vec![plan(known, "starter", 1999)],
+        ..Default::default()
     });
 
     let (status, body) = get_plans(state, &stranger.as_uuid().to_string()).await?;

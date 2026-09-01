@@ -9,7 +9,10 @@ use api::{ApiError, AppState};
 use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use domain::{DomainError, Plan, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier};
+use domain::{
+    DomainError, Plan, Subscription, SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt,
+    WebhookVerifier,
+};
 use service::{EventOutcome, Reads, WebhookHandler};
 use uuid::Uuid;
 
@@ -47,6 +50,7 @@ impl From<HeaderTenant> for TenantId {
 #[derive(Default)]
 pub struct StubReads {
     pub plans: Vec<Plan>,
+    pub subscriptions: Vec<Subscription>,
 }
 
 #[async_trait]
@@ -58,6 +62,18 @@ impl Reads for StubReads {
             .filter(|plan| plan.tenant_id == tenant)
             .cloned()
             .collect())
+    }
+
+    async fn get_current_subscription(
+        &self,
+        tenant: TenantId,
+    ) -> Result<Option<Subscription>, DomainError> {
+        Ok(self
+            .subscriptions
+            .iter()
+            .filter(|s| s.tenant_id == tenant && s.status != SubscriptionStatus::Canceled)
+            .max_by_key(|s| s.created_at)
+            .cloned())
     }
 }
 

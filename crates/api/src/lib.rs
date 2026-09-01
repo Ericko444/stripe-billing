@@ -36,7 +36,7 @@ mod extract;
 mod routes;
 mod state;
 
-pub use dto::{MoneyDto, PlanDto};
+pub use dto::{MoneyDto, PlanDto, SubscriptionDto};
 pub use error::ApiError;
 pub use extract::TenantExtractor;
 pub use state::AppState;
@@ -135,5 +135,9 @@ where
     // `TenantId` enters a handler -- never a path, query, header or body.
     Router::new()
         .route("/plans", get(routes::plans::list_plans::<T>))
+        .route(
+            "/subscription",
+            get(routes::subscription::get_subscription::<T>),
+        )
         .with_state(state)
 }

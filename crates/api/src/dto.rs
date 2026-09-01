@@ -11,7 +11,7 @@
 //! exactly), never a pre-formatted `"€19.99"` (which forces every consumer
 //! to parse a locale back out). Timestamps are RFC 3339 UTC strings.
 
-use domain::{Currency, Money, Plan};
+use domain::{Currency, Money, Plan, Subscription};
 use serde::Serialize;
 use time::{OffsetDateTime, UtcOffset};
 
@@ -55,6 +55,42 @@ impl From<Plan> for PlanDto {
             name: plan.name,
             amount: plan.amount.into(),
             created_at: rfc3339_utc(plan.created_at),
+        }
+    }
+}
+
+/// A subscription on the wire. `plan_id` is the **local** plan id, never the
+/// Stripe price id -- a consumer joins it against `GET /plans`, not against
+/// anything in Stripe. Drops the Stripe ids, the customer id and the webhook
+/// ordering anchor.
+#[derive(Debug, Serialize)]
+pub struct SubscriptionDto {
+    /// The local subscription id, hyphenated uuid.
+    pub id: String,
+    /// The local plan id this subscription is for.
+    pub plan_id: String,
+    /// Lifecycle state: `active`, `past_due`, `canceled` or `incomplete`.
+    pub status: String,
+    /// Start of the current billing period, RFC 3339 UTC.
+    pub current_period_start: String,
+    /// End of the current billing period, RFC 3339 UTC.
+    pub current_period_end: String,
+    /// Whether the subscription is set to end at the period boundary.
+    pub cancel_at_period_end: bool,
+    /// When the subscription was created, RFC 3339 UTC.
+    pub created_at: String,
+}
+
+impl From<Subscription> for SubscriptionDto {
+    fn from(subscription: Subscription) -> Self {
+        Self {
+            id: subscription.id.as_uuid().to_string(),
+            plan_id: subscription.plan_id.as_uuid().to_string(),
+            status: subscription.status.as_str().to_string(),
+            current_period_start: rfc3339_utc(subscription.current_period_start),
+            current_period_end: rfc3339_utc(subscription.current_period_end),
+            cancel_at_period_end: subscription.cancel_at_period_end,
+            created_at: rfc3339_utc(subscription.created_at),
         }
     }
 }
