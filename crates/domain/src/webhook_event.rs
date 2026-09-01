@@ -43,9 +43,11 @@ pub struct WebhookEvent {
     pub payload: Value,
     /// When the event was received and stored.
     pub created_at: OffsetDateTime,
-    /// When the event finished processing, if it has. Phase 3 records events
-    /// with this NULL and dedups on `stripe_event_id` alone; setting it once
-    /// downstream processing completes is Phase 4's job (`init-spec.md` §10.2).
+    /// When the event finished processing, if it has. Set by
+    /// [`WebhookEventRepository::mark_processed`] once the mirror write and
+    /// the `BillingEventSink` call both succeed (`init-spec.md` §10.2) --
+    /// left `NULL` on a sink failure so a later recovery sweep over
+    /// `processed_at IS NULL` can find it.
     pub processed_at: Option<OffsetDateTime>,
 }
 
@@ -80,6 +82,18 @@ pub trait WebhookEventRepository {
         &self,
         stripe_event_id: &str,
     ) -> impl Future<Output = Result<Option<WebhookEvent>, DomainError>> + Send;
+
+    /// Marks a stored event as finished processing, setting `processed_at`
+    /// to the current time. Idempotent: marking an already-processed event
+    /// again is harmless (a later call simply advances the timestamp), which
+    /// matters because a later phase calls this even for an event its
+    /// handler declined to act on -- nothing further will ever happen to
+    /// that event, so leaving it `NULL` would give a later recovery sweep
+    /// permanent false work.
+    fn mark_processed(
+        &self,
+        id: WebhookEventId,
+    ) -> impl Future<Output = Result<(), DomainError>> + Send;
 }
 
 #[cfg(test)]

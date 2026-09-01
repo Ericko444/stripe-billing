@@ -36,6 +36,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "api"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "domain",
  "jsonwebtoken",
@@ -46,6 +47,7 @@ dependencies = [
  "time",
  "tokio",
  "tower",
+ "tracing",
  "uuid",
 ]
 
@@ -613,6 +615,7 @@ name = "demo"
 version = "0.1.0"
 dependencies = [
  "api",
+ "async-trait",
  "axum",
  "domain",
  "dotenvy",
@@ -2174,8 +2177,11 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "domain",
+ "serde_json",
  "thiserror",
  "time",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

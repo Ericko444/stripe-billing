@@ -1,3 +1,5 @@
+//! Integration tests for `outbound_request_repository`, against a disposable Postgres.
+
 mod common;
 
 use std::error::Error;

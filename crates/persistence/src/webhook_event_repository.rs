@@ -95,4 +95,15 @@ impl WebhookEventRepository for PgWebhookEventRepository {
 
         Ok(row.map(Into::into))
     }
+
+    async fn mark_processed(&self, id: WebhookEventId) -> Result<(), DomainError> {
+        sqlx::query("UPDATE billing.webhook_events SET processed_at = now() WHERE id = $1")
+            .bind(id.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        Ok(())
+    }
 }

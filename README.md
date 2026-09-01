@@ -51,8 +51,24 @@ Database tests bring up a disposable Postgres via `testcontainers` and need a
 running Docker daemon. Webhooks can be exercised locally with
 `stripe listen --forward-to localhost:PORT/webhooks/stripe`.
 
+### Running the demo
+
+`cargo run -p demo` reads and validates three environment variables at
+startup (all required; a missing one exits non-zero with a message naming
+it):
+
+| Variable | Purpose |
+|----------|---------|
+| `DATABASE_URL` | Postgres connection string for the mirror and ledger tables |
+| `STRIPE_WEBHOOK_SIGNING_SECRET` | the `whsec_…` printed by `stripe listen`; wrapped in `SecretString` on read |
+| `PORT` | TCP port the `POST /webhooks/stripe` listener binds |
+
+`RUST_LOG` tunes tracing output. A `docs/walkthrough/phase-4a-webhook.md`
+records an end-to-end run against real Stripe traffic.
+
 ## Status
 
-Workspace skeleton only — phase 1 of §18. The crate boundaries, dependency
-direction, lint policy are in place; the domain model,
-adapters, API and frontend are not implemented yet.
+Phase 4a complete: the `service` webhook processor (every `init-spec.md`
+§10.4 event type), `persistence` adapters, the `api` router with
+`POST /webhooks/stripe`, and the `demo` composition root. `stripe-adapter`'s
+outbound `BillingProvider` and the frontend are still later phases.

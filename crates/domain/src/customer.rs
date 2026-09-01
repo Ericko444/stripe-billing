@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -38,28 +40,58 @@ pub struct Customer {
 /// Port for persisting and querying `Customer` records. Implemented by an
 /// adapter crate (`persistence`); no I/O here.
 ///
-/// Uses native `async fn` rather than `async-trait` so `domain` doesn't need
-/// that dependency; this trait is meant to be used generically
-/// (`fn new<R: CustomerRepository>(repo: R)`), not as `dyn CustomerRepository`.
-#[allow(async_fn_in_trait)]
+/// This trait is meant to be used generically (`fn new<R: CustomerRepository>
+/// (repo: R)`), never as `dyn CustomerRepository`. Its methods are still
+/// written as `fn … -> impl Future<Output = …> + Send` rather than bare
+/// `async fn`, matching `OutboundRequestRepository` and
+/// `WebhookEventRepository`: a later phase's `WebhookProcessor<C, S, W, K>`
+/// goes behind `#[async_trait]` to implement the object-safe
+/// `WebhookHandler` port, which boxes its futures as `Send`, so every future
+/// it awaits -- including these -- must be `Send` too. A bare `async fn` in a
+/// trait does not promise that for a generic `C`. Implementors may still
+/// write `async fn` in the `impl` block; the bound is checked there.
 pub trait CustomerRepository {
     /// Creates a new customer for the given tenant.
-    async fn create(
+    fn create(
         &self,
         tenant_id: TenantId,
         stripe_customer_id: Option<String>,
-    ) -> Result<Customer, DomainError>;
+    ) -> impl Future<Output = Result<Customer, DomainError>> + Send;
 
     /// Finds a customer by id, scoped to the tenant. Returns `None` if the
     /// customer does not exist or has been soft-deleted.
-    async fn find(
+    fn find(
         &self,
         tenant_id: TenantId,
         id: CustomerId,
-    ) -> Result<Option<Customer>, DomainError>;
+    ) -> impl Future<Output = Result<Option<Customer>, DomainError>> + Send;
 
     /// Lists all customers for the given tenant, excluding soft-deleted ones.
-    async fn list(&self, tenant_id: TenantId) -> Result<Vec<Customer>, DomainError>;
+    fn list(
+        &self,
+        tenant_id: TenantId,
+    ) -> impl Future<Output = Result<Vec<Customer>, DomainError>> + Send;
+
+    /// Resolves the customer -- and therefore the tenant -- that owns a
+    /// Stripe customer id.
+    ///
+    /// **The one method on a tenant-scoped entity's repository that does not
+    /// take a `TenantId`.** (`WebhookEventRepository`'s methods take none
+    /// either, but the webhook ledger is not a tenant-scoped entity to begin
+    /// with, which is why none of its methods do.) This one is deliberately
+    /// the exception: a later phase's webhook path (`init-spec.md` §10.3)
+    /// has no token and no tenant context -- the Stripe signature is the
+    /// authentication -- so this is the function that *produces* a tenant,
+    /// not one more call site that must already have one.
+    ///
+    /// Returns the whole `Customer` rather than a bare `TenantId` so the
+    /// caller receives the tenant *attached to the row it was derived from*,
+    /// with no opportunity to pair it with a different customer. Excludes
+    /// soft-deleted rows, like every other read on this trait.
+    fn find_by_stripe_customer_id(
+        &self,
+        stripe_customer_id: &str,
+    ) -> impl Future<Output = Result<Option<Customer>, DomainError>> + Send;
 }
 
 #[cfg(test)]

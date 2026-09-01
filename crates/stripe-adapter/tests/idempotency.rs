@@ -1,3 +1,6 @@
+//! Idempotency-ledger tests for `StripeWebhookVerifier`, against a
+//! disposable Postgres.
+
 mod common;
 
 use std::error::Error;
