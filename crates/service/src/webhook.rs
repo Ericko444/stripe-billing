@@ -41,6 +41,12 @@ pub enum NotAppliedReason {
     UnknownCustomer,
     /// No local mirror row for the Stripe subscription id.
     UnknownSubscription,
+    /// No local mirror row for the Stripe payment-method id.
+    UnknownPaymentMethod,
+    /// The event type is handled, but this delivery carried nothing to
+    /// mirror -- e.g. `setup_intent.succeeded`, which only confirms a flow
+    /// finished. Distinct from `UnhandledType`: recognised, not ignored.
+    Acknowledged,
     /// No handler for this event type -- acknowledged, never rejected
     /// (§10.4).
     UnhandledType,

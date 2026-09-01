@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::{InvoiceId, SubscriptionId, TenantId};
+use crate::{InvoiceId, PaymentMethodId, SubscriptionId, TenantId};
 
 /// A typed notification handed to the host after a webhook event has been
 /// mirrored (`init-spec.md` §8.3).
@@ -64,6 +64,23 @@ pub enum BillingEvent {
         /// The subscription the invoice is for, if it is a subscription
         /// invoice and its mirror row is known.
         subscription_id: Option<SubscriptionId>,
+    },
+    /// A card was attached to a customer (`payment_method.attached`). A host
+    /// might refresh a "cards on file" view; a host that only cares about
+    /// payment failures ignores this variant.
+    PaymentMethodAttached {
+        /// The tenant the payment method belongs to.
+        tenant_id: TenantId,
+        /// The local payment-method mirror row.
+        payment_method_id: PaymentMethodId,
+    },
+    /// A card was removed from a customer (`payment_method.detached`). The
+    /// mirror row is soft-deleted, not physically removed.
+    PaymentMethodDetached {
+        /// The tenant the payment method belonged to.
+        tenant_id: TenantId,
+        /// The (now soft-deleted) local payment-method mirror row.
+        payment_method_id: PaymentMethodId,
     },
 }
 
