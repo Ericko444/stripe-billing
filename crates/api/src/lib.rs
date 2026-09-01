@@ -53,7 +53,8 @@ mod routes;
 mod state;
 
 pub use dto::{
-    InvoiceDto, InvoicePageDto, MoneyDto, PageParams, PaymentMethodDto, PlanDto, SubscriptionDto,
+    InvoiceDto, InvoicePageDto, MoneyDto, PageParams, PaymentMethodDto, PlanDto, SetupIntentDto,
+    SubscriptionDto,
 };
 pub use error::ApiError;
 pub use extract::TenantExtractor;
@@ -164,6 +165,10 @@ where
         .route(
             "/payment-methods",
             get(routes::payment_methods::list_payment_methods::<T>),
+        )
+        .route(
+            "/payment-methods/setup-intent",
+            post(routes::payment_methods::create_setup_intent::<T>),
         )
         .route("/invoices", get(routes::invoices::list_invoices::<T>))
         .route("/invoices/{id}", get(routes::invoices::get_invoice::<T>))

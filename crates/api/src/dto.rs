@@ -13,7 +13,7 @@
 
 use domain::{
     Currency, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, Money, PaymentMethod,
-    Plan, Subscription,
+    Plan, SetupIntentSnapshot, Subscription,
 };
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcOffset};
@@ -126,6 +126,28 @@ impl From<PaymentMethod> for PaymentMethodDto {
             last4: payment_method.last4,
             is_default: payment_method.is_default,
             created_at: rfc3339_utc(payment_method.created_at),
+        }
+    }
+}
+
+/// The response to `POST /payment-methods/setup-intent`: the SetupIntent's
+/// `client_secret`, and nothing else.
+///
+/// The `client_secret` is browser-destined and bearer-ish -- whoever holds
+/// it can attach a payment method to that customer. It belongs in this body
+/// and in no log line (§9; see `domain::SetupIntentSnapshot`'s own docs).
+/// The DTO carries only it on purpose: there is nothing else about the
+/// SetupIntent a caller of this route needs.
+#[derive(Debug, Serialize)]
+pub struct SetupIntentDto {
+    /// The SetupIntent `client_secret` (`seti_..._secret_...`).
+    pub client_secret: String,
+}
+
+impl From<SetupIntentSnapshot> for SetupIntentDto {
+    fn from(snapshot: SetupIntentSnapshot) -> Self {
+        Self {
+            client_secret: snapshot.client_secret,
         }
     }
 }

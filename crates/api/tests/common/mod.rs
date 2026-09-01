@@ -3,18 +3,31 @@
 // setup for the router-level tests.
 #![allow(dead_code)]
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::io;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use api::{ApiError, AppState};
 use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use domain::{
-    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, Plan, Subscription,
-    SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
+    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, Plan,
+    SetupIntentSnapshot, Subscription, SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt,
+    WebhookVerifier,
 };
 use service::{EventOutcome, Reads, WebhookHandler, Writes};
+use tracing_subscriber::fmt::MakeWriter;
 use uuid::Uuid;
+
+/// Locks a `Mutex`, recovering from poisoning rather than panicking -- the
+/// workspace lints deny `unwrap`/`expect`, and a poisoned test double is
+/// still readable.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Test tenant extractor: reads the tenant from an `x-tenant` header. Stands
 /// in for the host's real (authenticated) extractor -- all `billing_router`
@@ -174,6 +187,90 @@ impl Writes for UnusedWrites {
             "UnusedWrites: the write path is not exercised by this test".to_string(),
         ))
     }
+
+    async fn create_setup_intent(
+        &self,
+        _tenant: TenantId,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+}
+
+/// A `Writes` fake for the write-route tests. Mimics `WriteService`'s
+/// tenant->customer bookkeeping in memory: `ensure_customer` links a tenant
+/// to a fresh `cus_...` on first call and returns the same id after;
+/// `create_setup_intent` resolves the customer first, then hands back a
+/// `client_secret` derived from it so a test can tell two tenants' intents
+/// apart. Every call is recorded for assertions.
+#[derive(Default)]
+pub struct StubWrites {
+    customers: Mutex<HashMap<TenantId, String>>,
+    pub ensure_customer_calls: Mutex<Vec<TenantId>>,
+    pub setup_intent_calls: Mutex<Vec<(TenantId, String)>>,
+}
+
+impl StubWrites {
+    /// The `(tenant, stripe_customer_id)` pairs passed through
+    /// `create_setup_intent`, in call order.
+    pub fn setup_intent_calls(&self) -> Vec<(TenantId, String)> {
+        lock(&self.setup_intent_calls).clone()
+    }
+}
+
+#[async_trait]
+impl Writes for StubWrites {
+    async fn ensure_customer(&self, tenant: TenantId) -> Result<String, DomainError> {
+        lock(&self.ensure_customer_calls).push(tenant);
+        Ok(lock(&self.customers)
+            .entry(tenant)
+            .or_insert_with(|| format!("cus_{}", tenant.as_uuid().simple()))
+            .clone())
+    }
+
+    async fn create_setup_intent(
+        &self,
+        tenant: TenantId,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        let customer = self.ensure_customer(tenant).await?;
+        lock(&self.setup_intent_calls).push((tenant, customer.clone()));
+        Ok(SetupIntentSnapshot {
+            client_secret: format!("seti_{customer}_secret_test"),
+        })
+    }
+}
+
+/// A `tracing` sink that appends every formatted line to a shared buffer, so
+/// a test can install it with `tracing::subscriber::set_default` and assert
+/// on what was (not) logged during a request.
+#[derive(Clone, Default)]
+pub struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+impl CapturedLogs {
+    /// Everything logged through this sink so far, as a lossy UTF-8 string.
+    pub fn contents(&self) -> String {
+        String::from_utf8_lossy(&lock(&self.0)).into_owned()
+    }
+}
+
+impl io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        lock(&self.0).extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> MakeWriter<'a> for CapturedLogs {
+    type Writer = CapturedLogs;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
 }
 
 /// `AppState` wired for a tenant-scoped route test: real reads, inert webhook
@@ -184,5 +281,16 @@ pub fn app_state(reads: StubReads) -> AppState {
         Arc::new(UnusedHandler),
         Arc::new(reads),
         Arc::new(UnusedWrites),
+    )
+}
+
+/// `AppState` for the write-route tests: inert webhook and read deps, a real
+/// (caller-supplied) `Writes`.
+pub fn app_state_writes(writes: Arc<dyn Writes>) -> AppState {
+    AppState::new(
+        Arc::new(UnusedVerifier),
+        Arc::new(UnusedHandler),
+        Arc::new(StubReads::default()),
+        writes,
     )
 }

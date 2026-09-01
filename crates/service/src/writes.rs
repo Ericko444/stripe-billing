@@ -16,7 +16,7 @@
 use async_trait::async_trait;
 use domain::{
     BillingProvider, CreateCustomerParams, CustomerRepository, DomainError,
-    PaymentMethodRepository, PlanRepository, SubscriptionRepository, TenantId,
+    PaymentMethodRepository, PlanRepository, SetupIntentSnapshot, SubscriptionRepository, TenantId,
 };
 
 /// Object-safe façade over the write use cases.
@@ -46,6 +46,18 @@ pub trait Writes: Send + Sync {
     /// creates such a row today (Plan 4c, Open Question 1), and changing that
     /// is a `domain` port change rather than a tweak here.
     async fn ensure_customer(&self, tenant: TenantId) -> Result<String, DomainError>;
+
+    /// Creates a Stripe SetupIntent for the calling tenant, resolving (or
+    /// creating) their Stripe customer via [`ensure_customer`](Self::ensure_customer)
+    /// first -- a tenant with no customer yet still succeeds.
+    ///
+    /// The returned [`SetupIntentSnapshot`] carries only the browser-destined
+    /// `client_secret`. The route puts it in the response body and **nowhere
+    /// else** -- never a log line (`docs/spec/phase-4c-write-routes.md` §9).
+    async fn create_setup_intent(
+        &self,
+        tenant: TenantId,
+    ) -> Result<SetupIntentSnapshot, DomainError>;
 }
 
 /// Holds the [`BillingProvider`] and the four repositories a mutating call
@@ -126,6 +138,16 @@ where
             .create(tenant, Some(snapshot.stripe_customer_id.clone()))
             .await?;
         Ok(snapshot.stripe_customer_id)
+    }
+
+    async fn create_setup_intent(
+        &self,
+        tenant: TenantId,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        let stripe_customer_id = self.ensure_customer(tenant).await?;
+        self.provider
+            .create_setup_intent(tenant, &stripe_customer_id)
+            .await
     }
 }
 
@@ -208,6 +230,42 @@ mod tests {
         let again = svc.ensure_customer(tenant).await?;
         assert_eq!(again, id);
         assert_eq!(svc.provider.create_customer_calls(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_setup_intent_resolves_the_customer_first() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+
+        let snapshot = svc.create_setup_intent(tenant).await?;
+
+        // ensure_customer created a customer (provider hit once), and the
+        // SetupIntent was for that same id.
+        assert_eq!(svc.provider.create_customer_calls(), 1);
+        let linked = svc.customers.list(tenant).await?[0]
+            .stripe_customer_id
+            .clone()
+            .ok_or("the customer should be linked after ensure_customer")?;
+        assert_eq!(svc.provider.setup_intent_customers(), vec![linked.clone()]);
+        assert!(snapshot.client_secret.contains(&linked));
+        assert!(snapshot.client_secret.contains("_secret_"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_setup_intent_reuses_a_linked_customer() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        svc.customers.seed(linked_customer(tenant, "cus_linked"));
+
+        svc.create_setup_intent(tenant).await?;
+
+        assert_eq!(svc.provider.create_customer_calls(), 0);
+        assert_eq!(
+            svc.provider.setup_intent_customers(),
+            vec!["cus_linked".to_string()]
+        );
         Ok(())
     }
 

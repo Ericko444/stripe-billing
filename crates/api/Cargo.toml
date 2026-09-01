@@ -31,6 +31,10 @@ uuid.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 tower = { workspace = true, features = ["util"] }
+# Router-level tests capture `tracing` output to assert a `client_secret`
+# never reaches a log line (Phase 4c, spec §9). Already a workspace dep.
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
