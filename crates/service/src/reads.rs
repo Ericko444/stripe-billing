@@ -8,7 +8,7 @@
 
 use async_trait::async_trait;
 use domain::{
-    DomainError, InvoiceCursor, InvoicePage, InvoiceRepository, PaymentMethod,
+    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, InvoiceRepository, PaymentMethod,
     PaymentMethodRepository, Plan, PlanRepository, Subscription, SubscriptionRepository,
     SubscriptionStatus, TenantId,
 };
@@ -60,6 +60,12 @@ pub trait Reads: Send + Sync {
         after: Option<InvoiceCursor>,
         limit: u16,
     ) -> Result<InvoicePage, DomainError>;
+
+    /// One invoice by id, scoped to the tenant. `DomainError::NotFound` when
+    /// the id is unknown **or** belongs to another tenant -- the repository's
+    /// tenant-scoped `find` returns `None` for both, and this maps both to
+    /// the same error so the route cannot answer them differently.
+    async fn get_invoice(&self, tenant: TenantId, id: InvoiceId) -> Result<Invoice, DomainError>;
 }
 
 /// Holds the four read repositories a host wires in.
@@ -125,6 +131,13 @@ where
         limit: u16,
     ) -> Result<InvoicePage, DomainError> {
         self.invoices.list_page(tenant, after, limit).await
+    }
+
+    async fn get_invoice(&self, tenant: TenantId, id: InvoiceId) -> Result<Invoice, DomainError> {
+        self.invoices
+            .find(tenant, id)
+            .await?
+            .ok_or(DomainError::NotFound)
     }
 }
 
@@ -381,6 +394,43 @@ mod tests {
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].tenant_id, mine);
         assert!(page.next.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_invoice_returns_the_row_for_its_own_tenant() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let seeded = invoice(tenant, OffsetDateTime::UNIX_EPOCH);
+        let id = seeded.id;
+        svc.invoices.seed(seeded);
+
+        let got = svc.get_invoice(tenant, id).await?;
+
+        assert_eq!(got.id, id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_invoice_is_not_found_for_unknown_and_for_another_tenant()
+    -> Result<(), Box<dyn Error>> {
+        let mine = TenantId::new(Uuid::new_v4());
+        let theirs = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let theirs_invoice = invoice(theirs, OffsetDateTime::UNIX_EPOCH);
+        let their_id = theirs_invoice.id;
+        svc.invoices.seed(theirs_invoice);
+
+        // An id that exists but belongs to another tenant.
+        assert!(matches!(
+            svc.get_invoice(mine, their_id).await,
+            Err(DomainError::NotFound),
+        ));
+        // An id that does not exist at all.
+        assert!(matches!(
+            svc.get_invoice(mine, InvoiceId::new(Uuid::new_v4())).await,
+            Err(DomainError::NotFound),
+        ));
         Ok(())
     }
 }

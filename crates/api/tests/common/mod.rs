@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use domain::{
-    DomainError, Invoice, InvoiceCursor, InvoicePage, PaymentMethod, Plan, Subscription,
+    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, Plan, Subscription,
     SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
 use service::{EventOutcome, Reads, WebhookHandler};
@@ -127,6 +127,14 @@ impl Reads for StubReads {
             .cloned()
             .collect();
         Ok(keyset_page(mine, after, limit))
+    }
+
+    async fn get_invoice(&self, tenant: TenantId, id: InvoiceId) -> Result<Invoice, DomainError> {
+        self.invoices
+            .iter()
+            .find(|i| i.tenant_id == tenant && i.id == id && i.deleted_at.is_none())
+            .cloned()
+            .ok_or(DomainError::NotFound)
     }
 }
 

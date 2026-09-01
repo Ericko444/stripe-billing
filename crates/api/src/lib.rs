@@ -146,5 +146,6 @@ where
             get(routes::payment_methods::list_payment_methods::<T>),
         )
         .route("/invoices", get(routes::invoices::list_invoices::<T>))
+        .route("/invoices/{id}", get(routes::invoices::get_invoice::<T>))
         .with_state(state)
 }

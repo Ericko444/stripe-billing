@@ -69,11 +69,21 @@ impl IntoResponse for ApiError {
                 "Malformed request",
                 "A parameter in the request could not be parsed.",
             ),
+            // Used by `GET /invoices/{id}` for an unknown id **and** for
+            // another tenant's id -- the repository's tenant-scoped `find`
+            // returns `None` for both, so the two are one code path and one
+            // response. A 403 for "exists but not yours" would let the status
+            // code alone confirm another tenant holds that id.
+            ApiError::Domain(DomainError::NotFound) => (
+                StatusCode::NOT_FOUND,
+                "Not found",
+                "The requested resource was not found.",
+            ),
             // Every other DomainError -- Repository, Provider, Conflict,
-            // MalformedEvent, NotFound, and any variant a later phase adds
-            // -- falls to 500. This is deliberately the default arm, not an
-            // enumerated list: a new DomainError variant must not silently
-            // acquire a 4xx because a wildcard elsewhere guessed at it.
+            // MalformedEvent, and any variant a later phase adds -- falls to
+            // 500. This is deliberately the default arm, not an enumerated
+            // list: a new DomainError variant must not silently acquire a 4xx
+            // because a wildcard elsewhere guessed at it.
             ApiError::Domain(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal error",
@@ -169,6 +179,27 @@ mod tests {
 
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body["status"], 500);
+    }
+
+    #[tokio::test]
+    async fn not_found_maps_to_404() {
+        let (status, body) = response_json(ApiError::Domain(DomainError::NotFound)).await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["status"], 404);
+    }
+
+    #[tokio::test]
+    async fn malformed_request_maps_to_400() {
+        let (status, body) = response_json(ApiError::Domain(DomainError::MalformedRequest(
+            "bad cursor".into(),
+        )))
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["status"], 400);
+        // The specific parse reason must not reach the caller.
+        assert!(!body.to_string().contains("bad cursor"));
     }
 
     #[tokio::test]

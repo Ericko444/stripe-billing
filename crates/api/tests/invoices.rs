@@ -63,6 +63,29 @@ fn item_count(body: &Value) -> usize {
     body["items"].as_array().map(Vec::len).unwrap_or(0)
 }
 
+async fn get_invoice_by_id(
+    state: api::AppState,
+    tenant: &str,
+    id: &str,
+) -> Result<(StatusCode, Option<String>, Value), Box<dyn Error>> {
+    let response = billing_router::<HeaderTenant>(state)
+        .oneshot(
+            Request::get(format!("/invoices/{id}"))
+                .header("x-tenant", tenant)
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+    let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    Ok((status, content_type, body))
+}
+
 #[tokio::test]
 async fn limit_clamps_and_never_rejects() -> Result<(), Box<dyn Error>> {
     let tenant = TenantId::new(Uuid::new_v4());
@@ -175,5 +198,80 @@ async fn returns_only_the_calling_tenants_invoices() -> Result<(), Box<dyn Error
         !body.to_string().contains(&their_id.as_uuid().to_string()),
         "no trace of the other tenant's invoice",
     );
+    Ok(())
+}
+
+// --- GET /invoices/{id} (Task 8) ---------------------------------------
+
+#[tokio::test]
+async fn get_invoice_returns_the_row_for_its_own_tenant() -> Result<(), Box<dyn Error>> {
+    let tenant = TenantId::new(Uuid::new_v4());
+    let mut seeded = invoice(tenant, 0);
+    seeded.status = InvoiceStatus::Paid;
+    let id = seeded.id;
+    let state = app_state(StubReads {
+        invoices: vec![seeded],
+        ..Default::default()
+    });
+
+    let (status, _, body) = get_invoice_by_id(
+        state,
+        &tenant.as_uuid().to_string(),
+        &id.as_uuid().to_string(),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"], id.as_uuid().to_string());
+    assert_eq!(body["status"], "paid");
+    Ok(())
+}
+
+#[tokio::test]
+async fn unknown_id_and_another_tenants_id_return_an_identical_404() -> Result<(), Box<dyn Error>> {
+    let mine = TenantId::new(Uuid::new_v4());
+    let theirs = TenantId::new(Uuid::new_v4());
+    let their_invoice = invoice(theirs, 0);
+    let their_id = their_invoice.id.as_uuid().to_string();
+    let state = app_state(StubReads {
+        invoices: vec![their_invoice],
+        ..Default::default()
+    });
+    let mine_str = mine.as_uuid().to_string();
+
+    // An id that exists, but for another tenant.
+    let (status_other, ct_other, mut body_other) =
+        get_invoice_by_id(state.clone(), &mine_str, &their_id).await?;
+    // An id that exists nowhere.
+    let (status_unknown, ct_unknown, mut body_unknown) =
+        get_invoice_by_id(state, &mine_str, &Uuid::new_v4().to_string()).await?;
+
+    assert_eq!(status_other, StatusCode::NOT_FOUND);
+    assert_eq!(status_unknown, StatusCode::NOT_FOUND);
+    assert_eq!(ct_other.as_deref(), Some("application/problem+json"));
+    assert_eq!(ct_unknown, ct_other);
+
+    // Byte-identical once the per-request correlation id is removed.
+    for body in [&mut body_other, &mut body_unknown] {
+        if let Some(obj) = body.as_object_mut() {
+            obj.remove("correlation_id");
+        }
+    }
+    assert_eq!(body_other, body_unknown);
+    // And the 404 body names nothing about the other tenant's invoice.
+    assert!(!body_other.to_string().contains(&their_id));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_non_uuid_id_is_a_404_problem_json() -> Result<(), Box<dyn Error>> {
+    let tenant = TenantId::new(Uuid::new_v4());
+    let state = app_state(StubReads::default());
+
+    let (status, content_type, _) =
+        get_invoice_by_id(state, &tenant.as_uuid().to_string(), "not-a-uuid").await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(content_type.as_deref(), Some("application/problem+json"));
     Ok(())
 }
