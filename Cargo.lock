@@ -615,6 +615,7 @@ name = "demo"
 version = "0.1.0"
 dependencies = [
  "api",
+ "async-trait",
  "axum",
  "domain",
  "dotenvy",
