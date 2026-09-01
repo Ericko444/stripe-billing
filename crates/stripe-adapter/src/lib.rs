@@ -38,6 +38,7 @@ mod customers;
 mod error;
 mod fingerprint;
 mod ledger;
+mod payment_methods;
 mod provider;
 mod setup_intents;
 mod subscriptions;

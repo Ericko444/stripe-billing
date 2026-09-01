@@ -816,4 +816,27 @@ impl BillingProvider for StubBillingProvider {
             client_secret: format!("seti_for_{stripe_customer_id}_secret_stub"),
         })
     }
+
+    // Task 11/12 replace these with a call-recording, optionally-failing
+    // implementation; for now they only need to satisfy the trait.
+    async fn set_default_payment_method(
+        &self,
+        _tenant_id: TenantId,
+        _stripe_customer_id: &str,
+        _stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError> {
+        Err(DomainError::Provider(
+            "set_default_payment_method not stubbed".to_string(),
+        ))
+    }
+
+    async fn detach_payment_method(
+        &self,
+        _tenant_id: TenantId,
+        _stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError> {
+        Err(DomainError::Provider(
+            "detach_payment_method not stubbed".to_string(),
+        ))
+    }
 }

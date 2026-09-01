@@ -157,6 +157,44 @@ pub trait BillingProvider: Send + Sync {
         tenant_id: TenantId,
         stripe_customer_id: &str,
     ) -> Result<SetupIntentSnapshot, DomainError>;
+
+    /// Sets `stripe_payment_method_id` as the customer's default for
+    /// invoices and subscriptions
+    /// (`invoice_settings.default_payment_method` on the customer). Returns
+    /// nothing -- the caller already knows which method it asked for, and the
+    /// local mirror is reconciled by `service`, not from a snapshot here.
+    ///
+    /// **Ordering (`init-spec.md` §7.4): the caller runs this *before*
+    /// touching the mirror.** Reversed, a failure here would leave the local
+    /// `is_default` flags disagreeing with Stripe. `service`'s test suite
+    /// pins the order with a double that fails this call and asserts the
+    /// flags did not move.
+    async fn set_default_payment_method(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+        stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError>;
+
+    /// Detaches a payment method from its customer
+    /// (`POST /v1/payment_methods/{id}/detach`). Permanent and irreversible
+    /// at Stripe; the local mirror is *soft*-deleted by `service`
+    /// afterwards.
+    ///
+    /// **Ordering (`init-spec.md` §7.4): Stripe first, then the mirror.**
+    /// Reversed, a Stripe failure would leave the mirror claiming the card
+    /// is gone while it is still attached and still billable -- the customer
+    /// sees "removed" and keeps being charged.
+    ///
+    /// The idempotency fingerprint is **tenant + payment method id only** --
+    /// no timestamp. A retry inside the key window replays the original
+    /// detach rather than issuing a fresh one, so it cannot detach a card
+    /// the customer has since re-added.
+    async fn detach_payment_method(
+        &self,
+        tenant_id: TenantId,
+        stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError>;
 }
 
 #[cfg(test)]
