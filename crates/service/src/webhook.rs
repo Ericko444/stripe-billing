@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use domain::{
     BillingEvent, BillingEventSink, CustomerRepository, DomainError, InvoiceRepository,
-    SubscriptionRepository, VerifiedEvent, WebhookEventRepository,
+    PaymentMethodRepository, SubscriptionRepository, VerifiedEvent, WebhookEventRepository,
 };
 
-use crate::{invoice_events, subscription_lifecycle};
+use crate::{invoice_events, payment_method_events, subscription_lifecycle};
 
 /// The outcome of processing one verified webhook event (`init-spec.md`
 /// §10.2, spec decision 3).
@@ -74,21 +74,30 @@ pub trait WebhookHandler: Send + Sync {
 /// hot path. Implements the object-safe [`WebhookHandler`] below so a later
 /// phase's `AppState` can hold it as `Arc<dyn WebhookHandler>` instead -- so
 /// the parameter count stays between `demo` and `new`, never reaching `api`.
-pub struct WebhookProcessor<C, S, I, W, K> {
+pub struct WebhookProcessor<C, S, I, P, W, K> {
     customers: C,
     subscriptions: S,
     invoices: I,
+    payment_methods: P,
     webhook_events: W,
     sink: K,
 }
 
-impl<C, S, I, W, K> WebhookProcessor<C, S, I, W, K> {
+impl<C, S, I, P, W, K> WebhookProcessor<C, S, I, P, W, K> {
     /// Wraps the ports webhook processing needs.
-    pub fn new(customers: C, subscriptions: S, invoices: I, webhook_events: W, sink: K) -> Self {
+    pub fn new(
+        customers: C,
+        subscriptions: S,
+        invoices: I,
+        payment_methods: P,
+        webhook_events: W,
+        sink: K,
+    ) -> Self {
         Self {
             customers,
             subscriptions,
             invoices,
+            payment_methods,
             webhook_events,
             sink,
         }
@@ -96,11 +105,12 @@ impl<C, S, I, W, K> WebhookProcessor<C, S, I, W, K> {
 }
 
 #[async_trait]
-impl<C, S, I, W, K> WebhookHandler for WebhookProcessor<C, S, I, W, K>
+impl<C, S, I, P, W, K> WebhookHandler for WebhookProcessor<C, S, I, P, W, K>
 where
     C: CustomerRepository + Send + Sync,
     S: SubscriptionRepository + Send + Sync,
     I: InvoiceRepository + Send + Sync,
+    P: PaymentMethodRepository + Send + Sync,
     W: WebhookEventRepository + Send + Sync,
     K: BillingEventSink,
 {
@@ -141,6 +151,25 @@ where
                 )
                 .await?
             }
+            "payment_method.attached" => {
+                payment_method_events::apply_attached(
+                    &self.customers,
+                    &self.payment_methods,
+                    &event,
+                )
+                .await?
+            }
+            "payment_method.detached" => {
+                payment_method_events::apply_detached(
+                    &self.customers,
+                    &self.payment_methods,
+                    &event,
+                )
+                .await?
+            }
+            // Recognised, but the SetupIntent carries nothing to mirror --
+            // the card details arrive via `payment_method.attached`.
+            "setup_intent.succeeded" => EventOutcome::NotApplied(NotAppliedReason::Acknowledged),
             _ => EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
         };
 
@@ -181,8 +210,8 @@ mod tests {
 
     use super::*;
     use crate::test_support::{
-        InMemoryCustomers, InMemoryInvoices, InMemorySink, InMemorySubscriptions,
-        InMemoryWebhookEvents,
+        InMemoryCustomers, InMemoryInvoices, InMemoryPaymentMethods, InMemorySink,
+        InMemorySubscriptions, InMemoryWebhookEvents,
     };
 
     /// Compiles only if `WebhookHandler` is dyn-compatible -- the property
@@ -194,6 +223,7 @@ mod tests {
         InMemoryCustomers,
         InMemorySubscriptions,
         InMemoryInvoices,
+        InMemoryPaymentMethods,
         InMemoryWebhookEvents,
         InMemorySink,
     >;
@@ -203,6 +233,7 @@ mod tests {
             InMemoryCustomers::default(),
             InMemorySubscriptions::default(),
             InMemoryInvoices::default(),
+            InMemoryPaymentMethods::default(),
             InMemoryWebhookEvents::default(),
             InMemorySink::default(),
         )
@@ -417,6 +448,7 @@ mod tests {
             InMemoryCustomers::default(),
             InMemorySubscriptions::default(),
             InMemoryInvoices::default(),
+            InMemoryPaymentMethods::default(),
             InMemoryWebhookEvents::default(),
             InMemorySink::failing(),
         );
@@ -659,5 +691,71 @@ mod tests {
             Ok(EventOutcome::Applied(BillingEvent::PaymentFailed { tenant_id: t, .. })) if t == tenant_id
         ));
         assert_eq!(processor.sink.received().len(), 1);
+    }
+
+    // --- Task 20: payment_method.* / setup_intent.succeeded ---
+
+    #[tokio::test]
+    async fn payment_method_attached_routes_through_handle_and_notifies_the_sink_once() {
+        let processor = processor();
+        let tenant_id = TenantId::new(Uuid::new_v4());
+        processor.customers.seed(Customer {
+            id: CustomerId::new(Uuid::new_v4()),
+            tenant_id,
+            stripe_customer_id: Some("cus_pm".to_string()),
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        });
+        let event = VerifiedEvent {
+            id: WebhookEventId::new(Uuid::new_v4()),
+            stripe_event_id: format!("evt_{}", Uuid::new_v4()),
+            event_type: "payment_method.attached".to_string(),
+            created: OffsetDateTime::now_utc(),
+            payload: json!({
+                "id": "evt_pm",
+                "type": "payment_method.attached",
+                "data": { "object": {
+                    "id": "pm_routed",
+                    "type": "card",
+                    "customer": "cus_pm",
+                    "card": { "brand": "visa", "last4": "4242" },
+                }},
+            }),
+        };
+
+        let outcome = processor.handle(event).await;
+
+        assert!(matches!(
+            outcome,
+            Ok(EventOutcome::Applied(BillingEvent::PaymentMethodAttached { tenant_id: t, .. })) if t == tenant_id
+        ));
+        assert_eq!(processor.sink.received().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn setup_intent_succeeded_is_acknowledged_and_marked_processed() {
+        let processor = processor();
+        let event = verified_event("setup_intent.succeeded");
+        processor.webhook_events.seed(WebhookEvent {
+            id: event.id,
+            tenant_id: None,
+            stripe_event_id: event.stripe_event_id.clone(),
+            event_type: event.event_type.clone(),
+            payload: event.payload.clone(),
+            created_at: event.created,
+            processed_at: None,
+        });
+
+        let outcome = processor.handle(event.clone()).await;
+
+        assert_eq!(
+            outcome,
+            Ok(EventOutcome::NotApplied(NotAppliedReason::Acknowledged))
+        );
+        assert_eq!(processor.sink.received().len(), 0);
+        assert!(matches!(
+            processor.webhook_events.processed_at(event.id),
+            Some(Some(_))
+        ));
     }
 }

@@ -8,6 +8,7 @@
 //! sink call have succeeded (`init-spec.md` §10.2, §8.3).
 
 mod invoice_events;
+mod payment_method_events;
 mod subscription_lifecycle;
 mod webhook;
 

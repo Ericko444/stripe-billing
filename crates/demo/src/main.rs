@@ -20,8 +20,8 @@ use api::{AppState, billing_router};
 use async_trait::async_trait;
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use persistence::{
-    PgCustomerRepository, PgInvoiceRepository, PgSubscriptionRepository, PgWebhookEventRepository,
-    run_migrations,
+    PgCustomerRepository, PgInvoiceRepository, PgPaymentMethodRepository, PgSubscriptionRepository,
+    PgWebhookEventRepository, run_migrations,
 };
 use secrecy::SecretString;
 use service::{WebhookHandler, WebhookProcessor};
@@ -108,6 +108,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let customers = PgCustomerRepository::new(pool.clone());
     let subscriptions = PgSubscriptionRepository::new(pool.clone());
     let invoices = PgInvoiceRepository::new(pool.clone());
+    let payment_methods = PgPaymentMethodRepository::new(pool.clone());
     let processor_events = PgWebhookEventRepository::new(pool.clone());
     let verifier_events = PgWebhookEventRepository::new(pool.clone());
 
@@ -122,6 +123,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         customers,
         subscriptions,
         invoices,
+        payment_methods,
         processor_events,
         LoggingSink,
     ));

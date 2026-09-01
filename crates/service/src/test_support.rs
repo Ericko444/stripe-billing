@@ -10,9 +10,10 @@ use std::sync::{Mutex, MutexGuard};
 use async_trait::async_trait;
 use domain::{
     BillingEvent, BillingEventSink, Customer, CustomerId, CustomerRepository, DomainError,
-    EventApplication, Invoice, InvoiceId, InvoiceRepository, InvoiceStatus, Money, SinkError,
-    Subscription, SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId,
-    WebhookEvent, WebhookEventId, WebhookEventRepository,
+    EventApplication, Invoice, InvoiceId, InvoiceRepository, InvoiceStatus, Money, PaymentMethod,
+    PaymentMethodId, PaymentMethodRepository, SinkError, Subscription, SubscriptionId,
+    SubscriptionRepository, SubscriptionStatus, TenantId, WebhookEvent, WebhookEventId,
+    WebhookEventRepository,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -323,6 +324,154 @@ impl InvoiceRepository for InMemoryInvoices {
                 Ok(EventApplication::Applied)
             }
         }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct InMemoryPaymentMethods {
+    rows: Mutex<Vec<PaymentMethod>>,
+}
+
+impl InMemoryPaymentMethods {
+    pub(crate) fn seed(&self, payment_method: PaymentMethod) {
+        lock(&self.rows).push(payment_method);
+    }
+}
+
+impl PaymentMethodRepository for InMemoryPaymentMethods {
+    async fn create(
+        &self,
+        tenant_id: TenantId,
+        customer_id: CustomerId,
+        stripe_payment_method_id: String,
+        brand: String,
+        last4: String,
+        is_default: bool,
+    ) -> Result<PaymentMethod, DomainError> {
+        let pm = PaymentMethod {
+            id: PaymentMethodId::new(Uuid::new_v4()),
+            tenant_id,
+            customer_id,
+            stripe_payment_method_id,
+            brand,
+            last4,
+            is_default,
+            last_event_created_at: None,
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        };
+        lock(&self.rows).push(pm.clone());
+        Ok(pm)
+    }
+
+    async fn find(
+        &self,
+        tenant_id: TenantId,
+        id: PaymentMethodId,
+    ) -> Result<Option<PaymentMethod>, DomainError> {
+        Ok(lock(&self.rows)
+            .iter()
+            .find(|p| p.tenant_id == tenant_id && p.id == id && p.deleted_at.is_none())
+            .cloned())
+    }
+
+    async fn list(&self, tenant_id: TenantId) -> Result<Vec<PaymentMethod>, DomainError> {
+        Ok(lock(&self.rows)
+            .iter()
+            .filter(|p| p.tenant_id == tenant_id && p.deleted_at.is_none())
+            .cloned()
+            .collect())
+    }
+
+    async fn find_by_stripe_payment_method_id(
+        &self,
+        tenant_id: TenantId,
+        stripe_payment_method_id: &str,
+    ) -> Result<Option<PaymentMethod>, DomainError> {
+        Ok(lock(&self.rows)
+            .iter()
+            .find(|p| {
+                p.tenant_id == tenant_id
+                    && p.stripe_payment_method_id == stripe_payment_method_id
+                    && p.deleted_at.is_none()
+            })
+            .cloned())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn apply_event(
+        &self,
+        tenant_id: TenantId,
+        customer_id: CustomerId,
+        stripe_payment_method_id: &str,
+        brand: &str,
+        last4: &str,
+        is_default: bool,
+        event_created_at: OffsetDateTime,
+    ) -> Result<EventApplication, DomainError> {
+        let mut rows = lock(&self.rows);
+        match rows.iter_mut().find(|p| {
+            p.tenant_id == tenant_id
+                && p.stripe_payment_method_id == stripe_payment_method_id
+                && p.deleted_at.is_none()
+        }) {
+            Some(row) => {
+                let admitted = match row.last_event_created_at {
+                    None => true,
+                    Some(last) => last <= event_created_at,
+                };
+                if !admitted {
+                    return Ok(EventApplication::Stale);
+                }
+                row.customer_id = customer_id;
+                row.brand = brand.to_string();
+                row.last4 = last4.to_string();
+                row.is_default = is_default;
+                row.last_event_created_at = Some(event_created_at);
+                Ok(EventApplication::Applied)
+            }
+            None => {
+                rows.push(PaymentMethod {
+                    id: PaymentMethodId::new(Uuid::new_v4()),
+                    tenant_id,
+                    customer_id,
+                    stripe_payment_method_id: stripe_payment_method_id.to_string(),
+                    brand: brand.to_string(),
+                    last4: last4.to_string(),
+                    is_default,
+                    last_event_created_at: Some(event_created_at),
+                    created_at: OffsetDateTime::now_utc(),
+                    deleted_at: None,
+                });
+                Ok(EventApplication::Applied)
+            }
+        }
+    }
+
+    async fn detach_event(
+        &self,
+        tenant_id: TenantId,
+        stripe_payment_method_id: &str,
+        event_created_at: OffsetDateTime,
+    ) -> Result<EventApplication, DomainError> {
+        let mut rows = lock(&self.rows);
+        let Some(row) = rows.iter_mut().find(|p| {
+            p.tenant_id == tenant_id
+                && p.stripe_payment_method_id == stripe_payment_method_id
+                && p.deleted_at.is_none()
+        }) else {
+            return Ok(EventApplication::Stale);
+        };
+        let admitted = match row.last_event_created_at {
+            None => true,
+            Some(last) => last <= event_created_at,
+        };
+        if !admitted {
+            return Ok(EventApplication::Stale);
+        }
+        row.deleted_at = Some(OffsetDateTime::now_utc());
+        row.last_event_created_at = Some(event_created_at);
+        Ok(EventApplication::Applied)
     }
 }
 
