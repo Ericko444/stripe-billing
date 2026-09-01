@@ -17,7 +17,7 @@ mod webhook_verifier;
 pub use billing_event::{BillingEvent, BillingEventSink, SinkError};
 pub use billing_provider::{
     BillingProvider, CancellationTiming, CreateCustomerParams, CustomerSnapshot,
-    SubscriptionSnapshot, UpdateCustomerParams,
+    SetupIntentSnapshot, SubscriptionSnapshot, UpdateCustomerParams,
 };
 pub use customer::{Customer, CustomerId, CustomerRepository};
 pub use error::DomainError;

@@ -70,19 +70,35 @@ pub struct SubscriptionSnapshot {
     pub cancel_at_period_end: bool,
 }
 
-/// Port for mutating Stripe's customer and subscription state. Implemented
-/// by the `stripe-adapter` crate; no I/O here.
+/// What Stripe returned about a newly created SetupIntent, in domain terms.
+///
+/// One field: the SetupIntent's `client_secret`. It is **browser-destined**
+/// -- the frontend uses it with Stripe.js to collect and confirm a payment
+/// method against this customer -- and it is **bearer-ish**: whoever holds
+/// it can attach a payment method to that customer. It travels in the API
+/// response body and **must never reach a log line** (`init-spec.md` §15's
+/// Never list; `docs/spec/phase-4c-write-routes.md` §9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupIntentSnapshot {
+    /// The SetupIntent's `client_secret` (`seti_..._secret_...`). Never log
+    /// this.
+    pub client_secret: String,
+}
+
+/// Port for mutating Stripe's customer, subscription and payment-method
+/// state. Implemented by the `stripe-adapter` crate; no I/O here.
 ///
 /// Unlike the repository ports, this trait uses `#[async_trait]` rather than
 /// native `async fn`, because it needs to be dyn-compatible: it is held by
 /// shared application state that a host wires at runtime (a
-/// `dyn BillingProvider` in a later phase's `AppState`), not by exactly one
+/// `dyn BillingProvider` in `api`'s `AppState`), not by exactly one
 /// adapter the way each repository port is. See `docs/intent/phase-2.md`
 /// for the full argument.
 ///
-/// Grows method-by-method as later phases need it -- these five are what
-/// Phase 2 (customers, subscriptions, idempotency ledger) requires, not a
-/// speculative full surface.
+/// Grows method-by-method as later phases need it, not toward a speculative
+/// full surface: Phase 2 brought the customer and subscription methods;
+/// Phase 4c adds the SetupIntent, Checkout Session and payment-method
+/// methods the write routes need.
 #[async_trait]
 pub trait BillingProvider: Send + Sync {
     /// Creates a Stripe customer for the given tenant.
@@ -127,6 +143,20 @@ pub trait BillingProvider: Send + Sync {
         stripe_subscription_id: &str,
         timing: CancellationTiming,
     ) -> Result<SubscriptionSnapshot, DomainError>;
+
+    /// Creates a SetupIntent for an existing Stripe customer, so the
+    /// frontend can collect and confirm a payment method against them.
+    ///
+    /// The returned [`SetupIntentSnapshot`] carries only the
+    /// `client_secret`, which is browser-destined and **must never be
+    /// logged** -- see that type's docs. The caller (`service`) resolves the
+    /// tenant to a `stripe_customer_id` first (via `ensure_customer`); this
+    /// method never creates a customer of its own.
+    async fn create_setup_intent(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+    ) -> Result<SetupIntentSnapshot, DomainError>;
 }
 
 #[cfg(test)]
