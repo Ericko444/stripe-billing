@@ -1,25 +1,35 @@
 use domain::{
-    BillingEvent, CustomerRepository, DomainError, EventApplication, SubscriptionId,
-    SubscriptionRepository, SubscriptionStatus, TenantId, VerifiedEvent,
+    BillingEvent, CustomerRepository, DomainError, EventApplication, PlanRepository,
+    SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId, VerifiedEvent,
 };
 use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
 
+/// What [`apply`] does when the subscription has no local mirror row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnMissing {
+    /// Return `NotApplied(UnknownSubscription)` -- the `updated` / `deleted`
+    /// behaviour, and `created`'s too until Task 22.
+    NotApplied,
+    /// Create the mirror: resolve `plan_id` from the subscription's Stripe
+    /// price (`PlanRepository::find_by_stripe_price_id`), or
+    /// `NotApplied(UnknownPlan)` if no local plan mirrors it. Only
+    /// `customer.subscription.created` passes this.
+    Create,
+}
+
 /// Applies a `customer.subscription.{created,updated,deleted}` event:
-/// resolves the tenant from the Stripe customer id (§10.3), locates the
-/// local subscription mirror by its Stripe id, and applies the event through
-/// the ordering guard (§10.2).
+/// resolves the tenant from the Stripe customer id (§10.3), locates or --
+/// for `created` -- creates the local subscription mirror, and applies the
+/// event through the ordering guard (§10.2).
 ///
 /// One handler for all three because their `data.object` is the same shape
-/// and the flow is identical. `created` confirms an already-mirrored row --
-/// it never *creates* one, because a create needs a `plan_id` that only the
-/// price mapping (a later task) can supply, so an unknown subscription is
-/// `NotApplied(UnknownSubscription)`, not a bootstrap. `deleted` arrives as a
-/// `canceled` status and lands like any other status change; the ordering
-/// guard still applies, so a stale `deleted` cannot cancel a row a newer
-/// `updated` already reactivated.
+/// and the flow is identical. `deleted` arrives as a `canceled` status and
+/// lands like any other status change; the ordering guard still applies, so
+/// a stale `deleted` cannot cancel a row a newer `updated` already
+/// reactivated.
 ///
 /// Tenant resolution reads `data.object.customer` -- Stripe's *own*
 /// identifier for the object -- and looks it up in the database via
@@ -28,17 +38,20 @@ use crate::webhook::{EventOutcome, NotAppliedReason};
 /// *our* tenancy, only about Stripe's own objects, and this module never
 /// treats it as authority for anything else.
 ///
-/// `plan_id` is never touched -- a plan change is out of scope for this
-/// slice (spec Open Question 1); only status, both period bounds and
-/// `cancel_at_period_end` are applied.
-pub async fn apply<C, S>(
+/// On the create path `plan_id` comes from the price mapping; on every
+/// other path `plan_id` is never touched (spec Open Question 1) -- only
+/// status, both period bounds and `cancel_at_period_end` are applied.
+pub async fn apply<C, S, L>(
     customers: &C,
     subscriptions: &S,
+    plans: &L,
     event: &VerifiedEvent,
+    on_missing: OnMissing,
 ) -> Result<EventOutcome, DomainError>
 where
     C: CustomerRepository,
     S: SubscriptionRepository,
+    L: PlanRepository,
 {
     let fields = read_subscription(&event.payload)?;
 
@@ -50,20 +63,34 @@ where
         // does not own (§10.3).
         return Ok(EventOutcome::NotApplied(NotAppliedReason::UnknownCustomer));
     };
+    let tenant_id = customer.tenant_id;
 
-    let Some(subscription) = subscriptions
-        .find_by_stripe_subscription_id(customer.tenant_id, &fields.stripe_subscription_id)
+    let subscription_id = match subscriptions
+        .find_by_stripe_subscription_id(tenant_id, &fields.stripe_subscription_id)
         .await?
-    else {
-        return Ok(EventOutcome::NotApplied(
-            NotAppliedReason::UnknownSubscription,
-        ));
+    {
+        Some(subscription) => subscription.id,
+        None => match on_missing {
+            OnMissing::NotApplied => {
+                return Ok(EventOutcome::NotApplied(
+                    NotAppliedReason::UnknownSubscription,
+                ));
+            }
+            OnMissing::Create => {
+                match create_mirror(subscriptions, plans, tenant_id, customer.id, &fields).await? {
+                    Some(id) => id,
+                    None => {
+                        return Ok(EventOutcome::NotApplied(NotAppliedReason::UnknownPlan));
+                    }
+                }
+            }
+        },
     };
 
     let application = subscriptions
         .apply_event(
-            customer.tenant_id,
-            subscription.id,
+            tenant_id,
+            subscription_id,
             fields.status,
             fields.current_period_start,
             fields.current_period_end,
@@ -73,13 +100,52 @@ where
         .await?;
 
     Ok(match application {
-        EventApplication::Applied => EventOutcome::Applied(billing_event_for(
-            customer.tenant_id,
-            subscription.id,
-            fields.status,
-        )),
+        EventApplication::Applied => {
+            EventOutcome::Applied(billing_event_for(tenant_id, subscription_id, fields.status))
+        }
         EventApplication::Stale => EventOutcome::NotApplied(NotAppliedReason::Stale),
     })
+}
+
+/// Creates the subscription mirror for a `customer.subscription.created`
+/// whose row does not exist yet. Returns `None` when the subscription's
+/// Stripe price has no local plan -- the caller maps that to
+/// `NotApplied(UnknownPlan)` (`billing.subscriptions.plan_id` is `NOT NULL`,
+/// so there is no honest row to write). The caller runs `apply_event`
+/// afterwards to stamp the ordering anchor and `cancel_at_period_end`.
+async fn create_mirror<S, L>(
+    subscriptions: &S,
+    plans: &L,
+    tenant_id: TenantId,
+    customer_id: domain::CustomerId,
+    fields: &SubscriptionFields,
+) -> Result<Option<SubscriptionId>, DomainError>
+where
+    S: SubscriptionRepository,
+    L: PlanRepository,
+{
+    let Some(price_id) = fields.stripe_price_id.as_deref() else {
+        return Err(DomainError::MalformedEvent(
+            "subscription item carried no price id".to_string(),
+        ));
+    };
+    let Some(plan) = plans.find_by_stripe_price_id(tenant_id, price_id).await? else {
+        return Ok(None);
+    };
+
+    let created = subscriptions
+        .create(
+            tenant_id,
+            customer_id,
+            plan.id,
+            fields.stripe_subscription_id.clone(),
+            fields.stripe_subscription_item_id.clone(),
+            fields.status,
+            fields.current_period_start,
+            fields.current_period_end,
+        )
+        .await?;
+    Ok(Some(created.id))
 }
 
 /// Maps the subscription's new status to the [`BillingEvent`] this handler
@@ -116,11 +182,15 @@ fn billing_event_for(
     }
 }
 
-/// The fields this handler needs off a `customer.subscription.updated`
-/// envelope's `data.object`.
+/// The fields this handler needs off a `customer.subscription.*` envelope's
+/// `data.object`. `stripe_subscription_item_id` and `stripe_price_id` are
+/// only used on the create path; `stripe_price_id` is `Option` because a
+/// non-`created` payload need not carry a resolvable price.
 struct SubscriptionFields {
     stripe_customer_id: String,
     stripe_subscription_id: String,
+    stripe_subscription_item_id: String,
+    stripe_price_id: Option<String>,
     status: SubscriptionStatus,
     current_period_start: OffsetDateTime,
     current_period_end: OffsetDateTime,
@@ -180,6 +250,22 @@ fn read_subscription(payload: &Value) -> Result<SubscriptionFields, DomainError>
             DomainError::MalformedEvent("subscription object carried no items".to_string())
         })?;
 
+    let stripe_subscription_item_id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            DomainError::MalformedEvent("subscription item missing string `id`".to_string())
+        })?;
+    // `price.id` in current API versions, `plan.id` in older ones -- both
+    // carry the Stripe price id the local plan mirrors.
+    let stripe_price_id = item
+        .get("price")
+        .and_then(|price| price.get("id"))
+        .or_else(|| item.get("plan").and_then(|plan| plan.get("id")))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
     let field_i64 = |name: &str| -> Result<i64, DomainError> {
         item.get(name).and_then(Value::as_i64).ok_or_else(|| {
             DomainError::MalformedEvent(format!("subscription item missing integer `{name}`"))
@@ -198,6 +284,8 @@ fn read_subscription(payload: &Value) -> Result<SubscriptionFields, DomainError>
     Ok(SubscriptionFields {
         stripe_customer_id,
         stripe_subscription_id,
+        stripe_subscription_item_id,
+        stripe_price_id,
         status,
         current_period_start,
         current_period_end,
@@ -213,7 +301,24 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::test_support::{InMemoryCustomers, InMemorySubscriptions};
+    use crate::test_support::{InMemoryCustomers, InMemoryPlans, InMemorySubscriptions};
+
+    /// The pre-Task-22 call shape: `updated` / `deleted` semantics, where an
+    /// unknown subscription is `NotApplied` and no plan repo is consulted.
+    async fn apply_no_create(
+        customers: &InMemoryCustomers,
+        subscriptions: &InMemorySubscriptions,
+        event: &VerifiedEvent,
+    ) -> Result<EventOutcome, DomainError> {
+        apply(
+            customers,
+            subscriptions,
+            &InMemoryPlans::default(),
+            event,
+            OnMissing::NotApplied,
+        )
+        .await
+    }
 
     fn event_payload(
         stripe_customer_id: &str,
@@ -236,6 +341,7 @@ mod tests {
                         "data": [
                             {
                                 "id": "si_test",
+                                "price": { "id": "price_test" },
                                 "current_period_start": current_period_start,
                                 "current_period_end": current_period_end,
                             }
@@ -313,7 +419,7 @@ mod tests {
         );
         let event = verified_event(payload, created);
 
-        let outcome = apply(&customers, &subscriptions, &event).await;
+        let outcome = apply_no_create(&customers, &subscriptions, &event).await;
 
         assert_eq!(
             outcome,
@@ -346,7 +452,7 @@ mod tests {
             false,
         );
         let newer_event = verified_event(newer_payload, newer);
-        let first = apply(&customers, &subscriptions, &newer_event).await;
+        let first = apply_no_create(&customers, &subscriptions, &newer_event).await;
         assert_eq!(
             first,
             Ok(EventOutcome::Applied(BillingEvent::SubscriptionActivated {
@@ -366,7 +472,7 @@ mod tests {
         );
         let older_event = verified_event(older_payload, older);
 
-        let outcome = apply(&customers, &subscriptions, &older_event).await;
+        let outcome = apply_no_create(&customers, &subscriptions, &older_event).await;
 
         assert_eq!(
             outcome,
@@ -396,7 +502,7 @@ mod tests {
         );
         let event = verified_event(payload, created);
 
-        let outcome = apply(&customers, &subscriptions, &event).await;
+        let outcome = apply_no_create(&customers, &subscriptions, &event).await;
 
         assert_eq!(
             outcome,
@@ -430,7 +536,7 @@ mod tests {
         );
         let event = verified_event(payload, created);
 
-        let outcome = apply(&customers, &subscriptions, &event).await;
+        let outcome = apply_no_create(&customers, &subscriptions, &event).await;
 
         assert_eq!(
             outcome,

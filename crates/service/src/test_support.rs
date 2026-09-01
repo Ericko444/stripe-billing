@@ -11,9 +11,9 @@ use async_trait::async_trait;
 use domain::{
     BillingEvent, BillingEventSink, Customer, CustomerId, CustomerRepository, DomainError,
     EventApplication, Invoice, InvoiceId, InvoiceRepository, InvoiceStatus, Money, PaymentMethod,
-    PaymentMethodId, PaymentMethodRepository, SinkError, Subscription, SubscriptionId,
-    SubscriptionRepository, SubscriptionStatus, TenantId, WebhookEvent, WebhookEventId,
-    WebhookEventRepository,
+    PaymentMethodId, PaymentMethodRepository, Plan, PlanId, PlanRepository, SinkError,
+    Subscription, SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId,
+    WebhookEvent, WebhookEventId, WebhookEventRepository,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -472,6 +472,71 @@ impl PaymentMethodRepository for InMemoryPaymentMethods {
         row.deleted_at = Some(OffsetDateTime::now_utc());
         row.last_event_created_at = Some(event_created_at);
         Ok(EventApplication::Applied)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct InMemoryPlans {
+    rows: Mutex<Vec<Plan>>,
+}
+
+impl InMemoryPlans {
+    pub(crate) fn seed(&self, plan: Plan) {
+        lock(&self.rows).push(plan);
+    }
+}
+
+impl PlanRepository for InMemoryPlans {
+    async fn create(
+        &self,
+        tenant_id: TenantId,
+        stripe_price_id: String,
+        stripe_product_id: String,
+        name: String,
+        amount: Money,
+    ) -> Result<Plan, DomainError> {
+        let plan = Plan {
+            id: PlanId::new(Uuid::new_v4()),
+            tenant_id,
+            stripe_price_id,
+            stripe_product_id,
+            name,
+            amount,
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        };
+        lock(&self.rows).push(plan.clone());
+        Ok(plan)
+    }
+
+    async fn find(&self, tenant_id: TenantId, id: PlanId) -> Result<Option<Plan>, DomainError> {
+        Ok(lock(&self.rows)
+            .iter()
+            .find(|p| p.tenant_id == tenant_id && p.id == id && p.deleted_at.is_none())
+            .cloned())
+    }
+
+    async fn list(&self, tenant_id: TenantId) -> Result<Vec<Plan>, DomainError> {
+        Ok(lock(&self.rows)
+            .iter()
+            .filter(|p| p.tenant_id == tenant_id && p.deleted_at.is_none())
+            .cloned()
+            .collect())
+    }
+
+    async fn find_by_stripe_price_id(
+        &self,
+        tenant_id: TenantId,
+        stripe_price_id: &str,
+    ) -> Result<Option<Plan>, DomainError> {
+        Ok(lock(&self.rows)
+            .iter()
+            .find(|p| {
+                p.tenant_id == tenant_id
+                    && p.stripe_price_id == stripe_price_id
+                    && p.deleted_at.is_none()
+            })
+            .cloned())
     }
 }
 

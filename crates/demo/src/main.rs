@@ -2,8 +2,8 @@
 //! implementations and owns a `main`.
 //!
 //! Reads and validates its configuration once at startup, builds the
-//! Postgres pool, runs migrations, wires the four repositories, the Stripe
-//! webhook verifier and a logging [`BillingEventSink`] into a
+//! Postgres pool, runs migrations, wires the Postgres repositories, the
+//! Stripe webhook verifier and a logging [`BillingEventSink`] into a
 //! [`WebhookProcessor`], and serves `api`'s `billing_router`.
 //!
 //! The workspace denies `unwrap`, `expect` and `panic`; the one documented
@@ -20,8 +20,8 @@ use api::{AppState, billing_router};
 use async_trait::async_trait;
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use persistence::{
-    PgCustomerRepository, PgInvoiceRepository, PgPaymentMethodRepository, PgSubscriptionRepository,
-    PgWebhookEventRepository, run_migrations,
+    PgCustomerRepository, PgInvoiceRepository, PgPaymentMethodRepository, PgPlanRepository,
+    PgSubscriptionRepository, PgWebhookEventRepository, run_migrations,
 };
 use secrecy::SecretString;
 use service::{WebhookHandler, WebhookProcessor};
@@ -109,6 +109,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let subscriptions = PgSubscriptionRepository::new(pool.clone());
     let invoices = PgInvoiceRepository::new(pool.clone());
     let payment_methods = PgPaymentMethodRepository::new(pool.clone());
+    let plans = PgPlanRepository::new(pool.clone());
     let processor_events = PgWebhookEventRepository::new(pool.clone());
     let verifier_events = PgWebhookEventRepository::new(pool.clone());
 
@@ -124,6 +125,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         subscriptions,
         invoices,
         payment_methods,
+        plans,
         processor_events,
         LoggingSink,
     ));

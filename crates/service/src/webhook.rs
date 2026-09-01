@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use domain::{
     BillingEvent, BillingEventSink, CustomerRepository, DomainError, InvoiceRepository,
-    PaymentMethodRepository, SubscriptionRepository, VerifiedEvent, WebhookEventRepository,
+    PaymentMethodRepository, PlanRepository, SubscriptionRepository, VerifiedEvent,
+    WebhookEventRepository,
 };
 
 use crate::{checkout_session, invoice_events, payment_method_events, subscription_lifecycle};
@@ -43,6 +44,10 @@ pub enum NotAppliedReason {
     UnknownSubscription,
     /// No local mirror row for the Stripe payment-method id.
     UnknownPaymentMethod,
+    /// No local plan mirrors the Stripe price the subscription is on, so its
+    /// mirror cannot be created (`billing.subscriptions.plan_id` is
+    /// `NOT NULL`). §10.4: a verified event still never 5xxes.
+    UnknownPlan,
     /// The event type is handled, but this delivery carried nothing to
     /// mirror -- e.g. `setup_intent.succeeded`, which only confirms a flow
     /// finished. Distinct from `UnhandledType`: recognised, not ignored.
@@ -74,22 +79,25 @@ pub trait WebhookHandler: Send + Sync {
 /// hot path. Implements the object-safe [`WebhookHandler`] below so a later
 /// phase's `AppState` can hold it as `Arc<dyn WebhookHandler>` instead -- so
 /// the parameter count stays between `demo` and `new`, never reaching `api`.
-pub struct WebhookProcessor<C, S, I, P, W, K> {
+pub struct WebhookProcessor<C, S, I, P, L, W, K> {
     customers: C,
     subscriptions: S,
     invoices: I,
     payment_methods: P,
+    plans: L,
     webhook_events: W,
     sink: K,
 }
 
-impl<C, S, I, P, W, K> WebhookProcessor<C, S, I, P, W, K> {
+impl<C, S, I, P, L, W, K> WebhookProcessor<C, S, I, P, L, W, K> {
     /// Wraps the ports webhook processing needs.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         customers: C,
         subscriptions: S,
         invoices: I,
         payment_methods: P,
+        plans: L,
         webhook_events: W,
         sink: K,
     ) -> Self {
@@ -98,6 +106,7 @@ impl<C, S, I, P, W, K> WebhookProcessor<C, S, I, P, W, K> {
             subscriptions,
             invoices,
             payment_methods,
+            plans,
             webhook_events,
             sink,
         }
@@ -105,28 +114,45 @@ impl<C, S, I, P, W, K> WebhookProcessor<C, S, I, P, W, K> {
 }
 
 #[async_trait]
-impl<C, S, I, P, W, K> WebhookHandler for WebhookProcessor<C, S, I, P, W, K>
+impl<C, S, I, P, L, W, K> WebhookHandler for WebhookProcessor<C, S, I, P, L, W, K>
 where
     C: CustomerRepository + Send + Sync,
     S: SubscriptionRepository + Send + Sync,
     I: InvoiceRepository + Send + Sync,
     P: PaymentMethodRepository + Send + Sync,
+    L: PlanRepository + Send + Sync,
     W: WebhookEventRepository + Send + Sync,
     K: BillingEventSink,
 {
     async fn handle(&self, event: VerifiedEvent) -> Result<EventOutcome, DomainError> {
         // No match on anything but the type string. An unrecognised type is
-        // acknowledged, never rejected (§10.4). The three subscription
-        // lifecycle events share one handler: their `data.object` is the same
-        // shape and the flow (resolve tenant, find mirror, apply through the
-        // ordering guard) is identical -- `created` confirms an existing row,
-        // `deleted` lands as a `canceled` status, and `billing_event_for`
-        // already maps each status to the right `BillingEvent`.
+        // acknowledged, never rejected (§10.4). The subscription lifecycle
+        // events share one handler: same `data.object` shape, same
+        // resolve-tenant -> mirror -> ordering-guard flow, `billing_event_for`
+        // maps each status to the right `BillingEvent`. Only `created` may
+        // create the mirror when it is absent (resolving `plan_id` from the
+        // price); `updated`/`deleted` for an unknown subscription stay
+        // `NotApplied`.
         let outcome = match event.event_type.as_str() {
-            "customer.subscription.created"
-            | "customer.subscription.updated"
-            | "customer.subscription.deleted" => {
-                subscription_lifecycle::apply(&self.customers, &self.subscriptions, &event).await?
+            "customer.subscription.created" => {
+                subscription_lifecycle::apply(
+                    &self.customers,
+                    &self.subscriptions,
+                    &self.plans,
+                    &event,
+                    subscription_lifecycle::OnMissing::Create,
+                )
+                .await?
+            }
+            "customer.subscription.updated" | "customer.subscription.deleted" => {
+                subscription_lifecycle::apply(
+                    &self.customers,
+                    &self.subscriptions,
+                    &self.plans,
+                    &event,
+                    subscription_lifecycle::OnMissing::NotApplied,
+                )
+                .await?
             }
             // The two invoice events share a handler for the same reason:
             // one `data.object` shape, one resolve-tenant -> mirror flow,
@@ -213,7 +239,7 @@ mod tests {
 
     use super::*;
     use crate::test_support::{
-        InMemoryCustomers, InMemoryInvoices, InMemoryPaymentMethods, InMemorySink,
+        InMemoryCustomers, InMemoryInvoices, InMemoryPaymentMethods, InMemoryPlans, InMemorySink,
         InMemorySubscriptions, InMemoryWebhookEvents,
     };
 
@@ -227,6 +253,7 @@ mod tests {
         InMemorySubscriptions,
         InMemoryInvoices,
         InMemoryPaymentMethods,
+        InMemoryPlans,
         InMemoryWebhookEvents,
         InMemorySink,
     >;
@@ -237,6 +264,7 @@ mod tests {
             InMemorySubscriptions::default(),
             InMemoryInvoices::default(),
             InMemoryPaymentMethods::default(),
+            InMemoryPlans::default(),
             InMemoryWebhookEvents::default(),
             InMemorySink::default(),
         )
@@ -321,6 +349,7 @@ mod tests {
                         "data": [
                             {
                                 "id": "si_test",
+                                "price": { "id": "price_test" },
                                 "current_period_start": now.unix_timestamp(),
                                 "current_period_end": (now + Duration::days(30)).unix_timestamp(),
                             }
@@ -452,6 +481,7 @@ mod tests {
             InMemorySubscriptions::default(),
             InMemoryInvoices::default(),
             InMemoryPaymentMethods::default(),
+            InMemoryPlans::default(),
             InMemoryWebhookEvents::default(),
             InMemorySink::failing(),
         );
@@ -525,7 +555,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn created_for_unknown_subscription_is_not_applied_and_creates_nothing() {
+    async fn created_for_unknown_subscription_with_no_local_plan_is_unknown_plan() {
         let processor = processor();
         let tenant_id = TenantId::new(Uuid::new_v4());
         processor.customers.seed(Customer {
@@ -535,6 +565,7 @@ mod tests {
             created_at: OffsetDateTime::now_utc(),
             deleted_at: None,
         });
+        // No plan seeded for `price_test`.
         let event = VerifiedEvent {
             id: WebhookEventId::new(Uuid::new_v4()),
             stripe_event_id: format!("evt_{}", Uuid::new_v4()),
@@ -552,14 +583,63 @@ mod tests {
 
         assert_eq!(
             outcome,
-            Ok(EventOutcome::NotApplied(
-                NotAppliedReason::UnknownSubscription
-            ))
+            Ok(EventOutcome::NotApplied(NotAppliedReason::UnknownPlan))
         );
-        // Never a bootstrap: no row was inserted for the unknown id.
+        // No honest row to write without a plan_id.
         let listed = processor.subscriptions.list(tenant_id).await;
         assert!(matches!(listed, Ok(ref rows) if rows.is_empty()));
         assert_eq!(processor.sink.received().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn created_for_unknown_subscription_creates_the_mirror_when_the_plan_is_known() {
+        let processor = processor();
+        let tenant_id = TenantId::new(Uuid::new_v4());
+        processor.customers.seed(Customer {
+            id: CustomerId::new(Uuid::new_v4()),
+            tenant_id,
+            stripe_customer_id: Some("cus_boot".to_string()),
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        });
+        processor.plans.seed(domain::Plan {
+            id: domain::PlanId::new(Uuid::new_v4()),
+            tenant_id,
+            stripe_price_id: "price_test".to_string(),
+            stripe_product_id: "prod_test".to_string(),
+            name: "Boot".to_string(),
+            amount: domain::Money::new(1500, domain::Currency::Usd),
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        });
+        let event = VerifiedEvent {
+            id: WebhookEventId::new(Uuid::new_v4()),
+            stripe_event_id: format!("evt_{}", Uuid::new_v4()),
+            event_type: "customer.subscription.created".to_string(),
+            created: OffsetDateTime::now_utc(),
+            payload: lifecycle_payload(
+                "customer.subscription.created",
+                "cus_boot",
+                "sub_bootstrapped",
+                "active",
+            ),
+        };
+
+        let outcome = processor.handle(event).await;
+
+        assert!(matches!(
+            outcome,
+            Ok(EventOutcome::Applied(BillingEvent::SubscriptionActivated { tenant_id: t, .. })) if t == tenant_id
+        ));
+        let rows = processor.subscriptions.list(tenant_id).await;
+        assert!(matches!(
+            rows,
+            Ok(ref v) if v.len() == 1
+                && v[0].stripe_subscription_id == "sub_bootstrapped"
+                && v[0].status == domain::SubscriptionStatus::Active
+                && v[0].last_event_created_at.is_some()
+        ));
+        assert_eq!(processor.sink.received().len(), 1);
     }
 
     #[tokio::test]
