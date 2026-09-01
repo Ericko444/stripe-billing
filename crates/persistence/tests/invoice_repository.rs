@@ -6,8 +6,8 @@ use std::error::Error;
 
 use domain::{
     Currency, CustomerId, CustomerRepository, DomainError, EventApplication, Invoice,
-    InvoiceRepository, InvoiceStatus, Money, PlanRepository, SubscriptionId,
-    SubscriptionRepository, SubscriptionStatus, TenantId,
+    InvoiceCursor, InvoiceId, InvoiceRepository, InvoiceStatus, Money, PlanRepository,
+    SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId,
 };
 use persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgPlanRepository, PgSubscriptionRepository,
@@ -410,5 +410,231 @@ async fn apply_event_with_an_equal_timestamp_applies() -> Result<(), Box<dyn Err
         .await?
         .ok_or("row exists")?;
     assert_eq!(found.status, InvoiceStatus::Failed);
+    Ok(())
+}
+
+// --- list_page: keyset pagination (Phase 4b, Task 6) ---------------------
+
+/// Overwrites a row's `created_at`. `create` uses `DEFAULT now()`, so a test
+/// that needs a known ordering sets the timestamps itself afterwards.
+async fn set_created_at(
+    pool: &PgPool,
+    id: InvoiceId,
+    at: OffsetDateTime,
+) -> Result<(), Box<dyn Error>> {
+    sqlx::query("UPDATE billing.invoices SET created_at = $2 WHERE id = $1")
+        .bind(id.as_uuid())
+        .bind(at)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Creates `count` invoices for `tenant`, one second apart starting at
+/// `base`, and returns their ids in the order `list_page` should yield them:
+/// newest `created_at` first, `id` descending to break ties.
+async fn seed_invoices_over_time(
+    repo: &PgInvoiceRepository,
+    pool: &PgPool,
+    tenant: TenantId,
+    customer_id: CustomerId,
+    base: OffsetDateTime,
+    count: usize,
+) -> Result<Vec<InvoiceId>, Box<dyn Error>> {
+    let mut rows = Vec::new();
+    for i in 0..count {
+        let invoice = create_invoice(
+            repo,
+            tenant,
+            customer_id,
+            None,
+            &format!("in_pg_{i}_{}", Uuid::new_v4()),
+        )
+        .await?;
+        let at = base + Duration::seconds(i64::try_from(i)?);
+        set_created_at(pool, invoice.id, at).await?;
+        rows.push((at, invoice.id));
+    }
+    rows.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.as_uuid().cmp(&a.1.as_uuid()))
+    });
+    Ok(rows.into_iter().map(|(_, id)| id).collect())
+}
+
+/// Walks every page with `limit` and returns the ids in the order paging
+/// produced them.
+async fn all_ids_via_paging(
+    repo: &PgInvoiceRepository,
+    tenant: TenantId,
+    limit: u16,
+) -> Result<Vec<InvoiceId>, Box<dyn Error>> {
+    let mut ids = Vec::new();
+    let mut after: Option<InvoiceCursor> = None;
+    loop {
+        let page = repo.list_page(tenant, after, limit).await?;
+        assert!(page.items.len() <= usize::from(limit), "page overran limit");
+        ids.extend(page.items.iter().map(|invoice| invoice.id));
+        match page.next {
+            Some(cursor) => after = Some(cursor),
+            None => break,
+        }
+    }
+    Ok(ids)
+}
+
+#[tokio::test]
+async fn list_page_returns_newest_first_and_honours_limit() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let expected =
+        seed_invoices_over_time(&repo, &db.pool, tenant, customer_id, now_micros(), 5).await?;
+
+    let page = repo.list_page(tenant, None, 3).await?;
+
+    assert_eq!(page.items.len(), 3);
+    assert_eq!(
+        page.items.iter().map(|i| i.id).collect::<Vec<_>>(),
+        expected[..3].to_vec(),
+    );
+    assert!(
+        page.next.is_some(),
+        "a full page with rows behind it has a next cursor"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn paging_covers_every_row_with_no_overlap_or_gap() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let expected =
+        seed_invoices_over_time(&repo, &db.pool, tenant, customer_id, now_micros(), 10).await?;
+
+    // A limit that does not divide the row count, so the last page is short.
+    let paged = all_ids_via_paging(&repo, tenant, 3).await?;
+
+    assert_eq!(paged, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn last_full_page_has_no_next_cursor() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    seed_invoices_over_time(&repo, &db.pool, tenant, customer_id, now_micros(), 6).await?;
+
+    // Exactly two pages of 3. The second must report `next == None` rather
+    // than a cursor that would fetch an empty third page.
+    let first = repo.list_page(tenant, None, 3).await?;
+    let second = repo.list_page(tenant, first.next, 3).await?;
+
+    assert_eq!(second.items.len(), 3);
+    assert!(second.next.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_row_inserted_between_pages_does_not_shift_page_two() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let base = now_micros();
+    let expected = seed_invoices_over_time(&repo, &db.pool, tenant, customer_id, base, 6).await?;
+
+    let page_one = repo.list_page(tenant, None, 3).await?;
+    assert_eq!(
+        page_one.items.iter().map(|i| i.id).collect::<Vec<_>>(),
+        expected[..3].to_vec(),
+    );
+
+    // A new invoice lands newer than anything on page one.
+    let intruder = create_invoice(&repo, tenant, customer_id, None, "in_intruder").await?;
+    set_created_at(&db.pool, intruder.id, base + Duration::seconds(100)).await?;
+
+    let page_two = repo.list_page(tenant, page_one.next, 3).await?;
+
+    // Page two is still the original rows 4-6; the intruder is not among them.
+    assert_eq!(
+        page_two.items.iter().map(|i| i.id).collect::<Vec<_>>(),
+        expected[3..].to_vec(),
+    );
+    assert!(page_two.items.iter().all(|i| i.id != intruder.id));
+    Ok(())
+}
+
+#[tokio::test]
+async fn rows_with_identical_created_at_are_not_dropped_or_duplicated() -> Result<(), Box<dyn Error>>
+{
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+
+    // Seven invoices, all sharing one `created_at` -- the id is the only
+    // thing that orders them, which is exactly what the composite cursor is
+    // for.
+    let shared = now_micros();
+    let mut created = Vec::new();
+    for i in 0..7 {
+        let invoice =
+            create_invoice(&repo, tenant, customer_id, None, &format!("in_tie_{i}")).await?;
+        set_created_at(&db.pool, invoice.id, shared).await?;
+        created.push(invoice.id);
+    }
+
+    let paged = all_ids_via_paging(&repo, tenant, 2).await?;
+
+    let mut sorted_paged = paged.clone();
+    sorted_paged.sort_by_key(|id| id.as_uuid());
+    created.sort_by_key(|id| id.as_uuid());
+    assert_eq!(sorted_paged, created, "every tied row appears exactly once");
+    assert_eq!(paged.len(), 7);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_page_is_scoped_to_tenant() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let mine = TenantId::new(Uuid::new_v4());
+    let theirs = TenantId::new(Uuid::new_v4());
+    let my_customer = seed_customer(&db.pool, mine).await?;
+    let their_customer = seed_customer(&db.pool, theirs).await?;
+    let my_ids =
+        seed_invoices_over_time(&repo, &db.pool, mine, my_customer, now_micros(), 4).await?;
+    seed_invoices_over_time(&repo, &db.pool, theirs, their_customer, now_micros(), 4).await?;
+
+    let paged = all_ids_via_paging(&repo, mine, 2).await?;
+
+    assert_eq!(paged, my_ids);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_page_excludes_soft_deleted() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let ids =
+        seed_invoices_over_time(&repo, &db.pool, tenant, customer_id, now_micros(), 5).await?;
+
+    sqlx::query("UPDATE billing.invoices SET deleted_at = now() WHERE id = $1")
+        .bind(ids[2].as_uuid())
+        .execute(&db.pool)
+        .await?;
+
+    let paged = all_ids_via_paging(&repo, tenant, 2).await?;
+
+    let expected: Vec<InvoiceId> = ids.iter().copied().filter(|id| *id != ids[2]).collect();
+    assert_eq!(paged, expected);
     Ok(())
 }

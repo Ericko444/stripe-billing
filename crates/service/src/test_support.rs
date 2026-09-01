@@ -10,10 +10,10 @@ use std::sync::{Mutex, MutexGuard};
 use async_trait::async_trait;
 use domain::{
     BillingEvent, BillingEventSink, Customer, CustomerId, CustomerRepository, DomainError,
-    EventApplication, Invoice, InvoiceId, InvoiceRepository, InvoiceStatus, Money, PaymentMethod,
-    PaymentMethodId, PaymentMethodRepository, Plan, PlanId, PlanRepository, SinkError,
-    Subscription, SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId,
-    WebhookEvent, WebhookEventId, WebhookEventRepository,
+    EventApplication, Invoice, InvoiceCursor, InvoiceId, InvoicePage, InvoiceRepository,
+    InvoiceStatus, Money, PaymentMethod, PaymentMethodId, PaymentMethodRepository, Plan, PlanId,
+    PlanRepository, SinkError, Subscription, SubscriptionId, SubscriptionRepository,
+    SubscriptionStatus, TenantId, WebhookEvent, WebhookEventId, WebhookEventRepository,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -257,6 +257,40 @@ impl InvoiceRepository for InMemoryInvoices {
             .filter(|i| i.tenant_id == tenant_id && i.deleted_at.is_none())
             .cloned()
             .collect())
+    }
+
+    async fn list_page(
+        &self,
+        tenant_id: TenantId,
+        after: Option<InvoiceCursor>,
+        limit: u16,
+    ) -> Result<InvoicePage, DomainError> {
+        // Same contract as the Postgres query: newest first, keyset seek on
+        // `(created_at, id)`, one row peeked past `limit` to set `next`.
+        let mut rows: Vec<Invoice> = lock(&self.rows)
+            .iter()
+            .filter(|i| i.tenant_id == tenant_id && i.deleted_at.is_none())
+            .cloned()
+            .collect();
+        rows.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.id.as_uuid().cmp(&a.id.as_uuid()))
+        });
+        if let Some(cursor) = after {
+            rows.retain(|i| {
+                (i.created_at, i.id.as_uuid()) < (cursor.created_at(), cursor.id().as_uuid())
+            });
+        }
+
+        let has_more = rows.len() > usize::from(limit);
+        rows.truncate(usize::from(limit));
+        let next = has_more
+            .then(|| rows.last())
+            .flatten()
+            .map(|last| InvoiceCursor::new(last.created_at, last.id));
+
+        Ok(InvoicePage { items: rows, next })
     }
 
     async fn find_by_stripe_invoice_id(
