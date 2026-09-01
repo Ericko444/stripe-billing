@@ -87,6 +87,11 @@ pub struct Invoice {
     pub amount: Money,
     /// The current payment state.
     pub status: InvoiceStatus,
+    /// The `created` timestamp of the last webhook event applied to this row
+    /// (`init-spec.md` §10.2's ordering anchor). `None` means no event has
+    /// been applied yet -- true of a row created outside the webhook path,
+    /// and momentarily of the first mirror write before it commits.
+    pub last_event_created_at: Option<OffsetDateTime>,
     /// When the invoice was created.
     pub created_at: OffsetDateTime,
     /// When the invoice was soft-deleted, if at all.
@@ -129,6 +134,50 @@ pub trait InvoiceRepository {
         &self,
         tenant_id: TenantId,
     ) -> impl Future<Output = Result<Vec<Invoice>, DomainError>> + Send;
+
+    /// Finds an invoice by its Stripe id, scoped to the tenant. Returns
+    /// `None` if it does not exist, has been soft-deleted, or belongs to a
+    /// different tenant. Tenant-scoped, like
+    /// [`SubscriptionRepository::find_by_stripe_subscription_id`](crate::SubscriptionRepository::find_by_stripe_subscription_id):
+    /// the webhook path resolves the tenant from the invoice's customer
+    /// before it needs this lookup.
+    fn find_by_stripe_invoice_id(
+        &self,
+        tenant_id: TenantId,
+        stripe_invoice_id: &str,
+    ) -> impl Future<Output = Result<Option<Invoice>, DomainError>> + Send;
+
+    /// Mirrors a webhook event's invoice state, guarded by `init-spec.md`
+    /// §10.2's ordering rule: admitted when `event_created_at` is `>=` the
+    /// row's current `last_event_created_at` (or that column is `NULL`),
+    /// rejected -- [`EventApplication::Stale`](crate::EventApplication), row
+    /// unchanged -- otherwise.
+    ///
+    /// **An upsert, unlike
+    /// [`SubscriptionRepository::apply_event`](crate::SubscriptionRepository::apply_event).**
+    /// There is no `invoice.created` webhook (§10.4); `invoice.paid` /
+    /// `invoice.payment_failed` are the first the module sees, and "mirror
+    /// invoice" means creating the local row if it is absent. So this takes
+    /// the full set of insertable columns rather than a local `InvoiceId`,
+    /// and keys on `stripe_invoice_id`.
+    ///
+    /// **The guard is in the statement, not a read-then-compare in Rust.**
+    /// The write is one `INSERT … ON CONFLICT (tenant_id, stripe_invoice_id)
+    /// DO UPDATE … WHERE <ordering predicate>`. A fresh insert or an admitted
+    /// update reports one row affected; a conflict whose predicate fails
+    /// reports zero, and `rows_affected() == 0` *is* the stale signal --
+    /// resolved atomically by Postgres, not concluded here.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_event(
+        &self,
+        tenant_id: TenantId,
+        customer_id: CustomerId,
+        subscription_id: Option<SubscriptionId>,
+        stripe_invoice_id: &str,
+        amount: Money,
+        status: InvoiceStatus,
+        event_created_at: OffsetDateTime,
+    ) -> impl Future<Output = Result<crate::EventApplication, DomainError>> + Send;
 }
 
 #[cfg(test)]

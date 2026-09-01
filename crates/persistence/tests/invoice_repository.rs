@@ -3,9 +3,9 @@ mod common;
 use std::error::Error;
 
 use domain::{
-    Currency, CustomerId, CustomerRepository, DomainError, Invoice, InvoiceRepository,
-    InvoiceStatus, Money, PlanRepository, SubscriptionId, SubscriptionRepository,
-    SubscriptionStatus, TenantId,
+    Currency, CustomerId, CustomerRepository, DomainError, EventApplication, Invoice,
+    InvoiceRepository, InvoiceStatus, Money, PlanRepository, SubscriptionId,
+    SubscriptionRepository, SubscriptionStatus, TenantId,
 };
 use persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgPlanRepository, PgSubscriptionRepository,
@@ -13,6 +13,15 @@ use persistence::{
 use sqlx::PgPool;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
+
+/// `now_utc()` truncated to microsecond precision, matching what `TIMESTAMPTZ`
+/// stores -- a raw nanosecond value fails an equality assertion against a row
+/// that has round-tripped through Postgres on the sub-microsecond digits alone.
+fn now_micros() -> OffsetDateTime {
+    let nanos = OffsetDateTime::now_utc().unix_timestamp_nanos();
+    let micros = (nanos / 1_000) * 1_000;
+    OffsetDateTime::from_unix_timestamp_nanos(micros).unwrap_or_else(|_| OffsetDateTime::now_utc())
+}
 
 async fn seed_customer(pool: &PgPool, tenant: TenantId) -> Result<CustomerId, Box<dyn Error>> {
     let customer = PgCustomerRepository::new(pool.clone())
@@ -86,6 +95,8 @@ async fn create_then_find() -> Result<(), Box<dyn Error>> {
     assert_eq!(created.amount, Money::new(4200, Currency::Eur));
     assert_eq!(created.subscription_id, Some(subscription_id));
     assert_eq!(created.status, InvoiceStatus::Open);
+    // A row created outside the webhook path has no ordering anchor yet.
+    assert_eq!(created.last_event_created_at, None);
     Ok(())
 }
 
@@ -180,5 +191,222 @@ async fn create_with_unknown_subscription_fails_on_fk() -> Result<(), Box<dyn Er
     .await;
 
     assert!(matches!(result, Err(DomainError::Repository(_))));
+    Ok(())
+}
+
+// --- Task 17: find_by_stripe_invoice_id + apply_event ---
+
+#[tokio::test]
+async fn find_by_stripe_invoice_id_is_scoped_to_tenant() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant_a = TenantId::new(Uuid::new_v4());
+    let tenant_b = TenantId::new(Uuid::new_v4());
+    let customer_a = seed_customer(&db.pool, tenant_a).await?;
+    let customer_b = seed_customer(&db.pool, tenant_b).await?;
+
+    let invoice_a = create_invoice(&repo, tenant_a, customer_a, None, "in_shared").await?;
+    let invoice_b = create_invoice(&repo, tenant_b, customer_b, None, "in_shared").await?;
+
+    // Each tenant sees only its own row, even though the Stripe id collides.
+    assert_eq!(
+        repo.find_by_stripe_invoice_id(tenant_a, "in_shared")
+            .await?,
+        Some(invoice_a)
+    );
+    assert_eq!(
+        repo.find_by_stripe_invoice_id(tenant_b, "in_shared")
+            .await?,
+        Some(invoice_b)
+    );
+    assert_eq!(
+        repo.find_by_stripe_invoice_id(tenant_a, "in_absent")
+            .await?,
+        None
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn find_by_stripe_invoice_id_excludes_soft_deleted() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+
+    let created = create_invoice(&repo, tenant, customer_id, None, "in_gone").await?;
+    sqlx::query("UPDATE billing.invoices SET deleted_at = now() WHERE id = $1")
+        .bind(created.id.as_uuid())
+        .execute(&db.pool)
+        .await?;
+
+    assert_eq!(
+        repo.find_by_stripe_invoice_id(tenant, "in_gone").await?,
+        None
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_event_inserts_the_mirror_when_absent() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let subscription_id = seed_subscription(&db.pool, tenant, customer_id).await?;
+
+    let event_created_at = now_micros();
+    let outcome = repo
+        .apply_event(
+            tenant,
+            customer_id,
+            Some(subscription_id),
+            "in_first_seen",
+            Money::new(4200, Currency::Eur),
+            InvoiceStatus::Paid,
+            event_created_at,
+        )
+        .await?;
+
+    assert_eq!(outcome, EventApplication::Applied);
+
+    let found = repo
+        .find_by_stripe_invoice_id(tenant, "in_first_seen")
+        .await?
+        .ok_or("mirror was inserted")?;
+    assert_eq!(found.status, InvoiceStatus::Paid);
+    assert_eq!(found.amount, Money::new(4200, Currency::Eur));
+    assert_eq!(found.customer_id, customer_id);
+    assert_eq!(found.subscription_id, Some(subscription_id));
+    assert_eq!(found.last_event_created_at, Some(event_created_at));
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_event_updates_an_existing_mirror_and_advances_the_ordering_column()
+-> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+
+    let created = create_invoice(&repo, tenant, customer_id, None, "in_update").await?;
+    assert_eq!(created.status, InvoiceStatus::Open);
+
+    let event_created_at = now_micros();
+    let outcome = repo
+        .apply_event(
+            tenant,
+            customer_id,
+            None,
+            "in_update",
+            Money::new(4200, Currency::Eur),
+            InvoiceStatus::Paid,
+            event_created_at,
+        )
+        .await?;
+
+    assert_eq!(outcome, EventApplication::Applied);
+
+    let found = repo
+        .find_by_stripe_invoice_id(tenant, "in_update")
+        .await?
+        .ok_or("row exists")?;
+    assert_eq!(found.id, created.id);
+    assert_eq!(found.status, InvoiceStatus::Paid);
+    assert_eq!(found.last_event_created_at, Some(event_created_at));
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_event_with_an_older_timestamp_is_stale_and_leaves_the_row_unchanged()
+-> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+
+    let newer_created_at = now_micros();
+    let first = repo
+        .apply_event(
+            tenant,
+            customer_id,
+            None,
+            "in_ordering",
+            Money::new(4200, Currency::Eur),
+            InvoiceStatus::Paid,
+            newer_created_at,
+        )
+        .await?;
+    assert_eq!(first, EventApplication::Applied);
+
+    // An older redelivery carrying a different status and amount -- the guard
+    // must refuse to let it overwrite the row written above.
+    let older_created_at = newer_created_at - Duration::minutes(5);
+    let stale = repo
+        .apply_event(
+            tenant,
+            customer_id,
+            None,
+            "in_ordering",
+            Money::new(9999, Currency::Eur),
+            InvoiceStatus::Failed,
+            older_created_at,
+        )
+        .await?;
+
+    assert_eq!(stale, EventApplication::Stale);
+
+    let found = repo
+        .find_by_stripe_invoice_id(tenant, "in_ordering")
+        .await?
+        .ok_or("row exists")?;
+    assert_eq!(found.status, InvoiceStatus::Paid);
+    assert_eq!(found.amount, Money::new(4200, Currency::Eur));
+    assert_eq!(found.last_event_created_at, Some(newer_created_at));
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_event_with_an_equal_timestamp_applies() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgInvoiceRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+
+    // Stripe's `created` has second granularity, so two genuine events can
+    // share one -- equality must apply, not be dropped as stale.
+    let shared = now_micros();
+    let first = repo
+        .apply_event(
+            tenant,
+            customer_id,
+            None,
+            "in_equal",
+            Money::new(4200, Currency::Eur),
+            InvoiceStatus::Paid,
+            shared,
+        )
+        .await?;
+    assert_eq!(first, EventApplication::Applied);
+
+    let second = repo
+        .apply_event(
+            tenant,
+            customer_id,
+            None,
+            "in_equal",
+            Money::new(4200, Currency::Eur),
+            InvoiceStatus::Failed,
+            shared,
+        )
+        .await?;
+
+    assert_eq!(second, EventApplication::Applied);
+    let found = repo
+        .find_by_stripe_invoice_id(tenant, "in_equal")
+        .await?
+        .ok_or("row exists")?;
+    assert_eq!(found.status, InvoiceStatus::Failed);
     Ok(())
 }
