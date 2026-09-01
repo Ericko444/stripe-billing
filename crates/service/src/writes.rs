@@ -15,8 +15,8 @@
 
 use async_trait::async_trait;
 use domain::{
-    BillingProvider, CustomerRepository, PaymentMethodRepository, PlanRepository,
-    SubscriptionRepository,
+    BillingProvider, CreateCustomerParams, CustomerRepository, DomainError,
+    PaymentMethodRepository, PlanRepository, SubscriptionRepository, TenantId,
 };
 
 /// Object-safe façade over the write use cases.
@@ -27,12 +27,26 @@ use domain::{
 /// `#[async_trait]` for the same reason [`Reads`](crate::Reads) uses it: the
 /// trait must be dyn-compatible.
 ///
-/// **No methods yet.** Landing the port, the `AppState` field and the `demo`
-/// wiring on their own means that ripple is reviewed as a diff about
-/// plumbing rather than buried inside the first feature. The first method,
-/// `ensure_customer`, arrives in Task 3.
+/// Grows **one method per vertical slice** rather than arriving complete,
+/// the same discipline [`Reads`](crate::Reads) followed -- that keeps it
+/// honest about what is actually wired.
 #[async_trait]
-pub trait Writes: Send + Sync {}
+pub trait Writes: Send + Sync {
+    /// Returns the tenant's Stripe customer id, creating the Stripe customer
+    /// and the local `customers` row on first use.
+    ///
+    /// Routeless (`docs/spec/phase-4c-write-routes.md` §8.2): the callers are
+    /// other `Writes` methods -- `start_checkout_session` and
+    /// `create_setup_intent` -- that must name a customer to Stripe.
+    ///
+    /// A tenant counts as **linked** once it has a `customers` row carrying a
+    /// `stripe_customer_id`; that id is returned and the provider is **not**
+    /// called. `CustomerRepository` has no update, so a row with
+    /// `stripe_customer_id = None` cannot be upgraded in place -- nothing
+    /// creates such a row today (Plan 4c, Open Question 1), and changing that
+    /// is a `domain` port change rather than a tweak here.
+    async fn ensure_customer(&self, tenant: TenantId) -> Result<String, DomainError>;
+}
 
 /// Holds the [`BillingProvider`] and the four repositories a mutating call
 /// touches.
@@ -45,7 +59,8 @@ pub trait Writes: Send + Sync {}
 ///
 /// All five dependencies are taken from the start, like `ReadService`'s
 /// four, so `AppState` and every host's wiring stay fixed as the trait
-/// fills in. They are unread until Task 3 adds the first method.
+/// fills in. `subscriptions`, `payment_methods` and `plans` stay unread
+/// until the slices that need them (Tasks 8-16).
 #[allow(dead_code)]
 pub struct WriteService<P, C, S, M, L> {
     provider: P,
@@ -77,14 +92,140 @@ where
     M: PaymentMethodRepository + Send + Sync,
     L: PlanRepository + Send + Sync,
 {
+    async fn ensure_customer(&self, tenant: TenantId) -> Result<String, DomainError> {
+        // Already linked? Hand back that id and never touch Stripe. This is
+        // the common path -- every checkout and setup-intent call after the
+        // first.
+        if let Some(id) = self
+            .customers
+            .list(tenant)
+            .await?
+            .into_iter()
+            .find_map(|customer| customer.stripe_customer_id)
+        {
+            return Ok(id);
+        }
+
+        // Absent: Stripe is authoritative, so create there first, then
+        // mirror. The id only exists once Stripe has minted it, so this
+        // order is forced -- `CustomerRepository::create` needs it. A create
+        // that succeeds at Stripe but fails to persist leaves an unlinked
+        // Stripe customer; the ledger stopped a duplicate, and the webhook
+        // path re-links it via `find_by_stripe_customer_id`.
+        let snapshot = self
+            .provider
+            .create_customer(
+                tenant,
+                CreateCustomerParams {
+                    email: None,
+                    name: None,
+                },
+            )
+            .await?;
+        self.customers
+            .create(tenant, Some(snapshot.stripe_customer_id.clone()))
+            .await?;
+        Ok(snapshot.stripe_customer_id)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
+
+    use domain::{Customer, CustomerId};
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
     use super::*;
+    use crate::test_support::{
+        InMemoryCustomers, InMemoryPaymentMethods, InMemoryPlans, InMemorySubscriptions,
+        StubBillingProvider,
+    };
+
+    type TestWrites = WriteService<
+        StubBillingProvider,
+        InMemoryCustomers,
+        InMemorySubscriptions,
+        InMemoryPaymentMethods,
+        InMemoryPlans,
+    >;
 
     /// Compiles only if `Writes` is dyn-compatible -- the property the
     /// `#[async_trait]` decision exists for.
     #[allow(dead_code)]
     fn assert_dyn_compatible(_w: &dyn Writes) {}
+
+    /// A `WriteService` over the in-memory doubles. Seed and inspect through
+    /// the fields: `svc.customers.seed(..)`, `svc.provider.create_customer_calls()`.
+    fn service() -> TestWrites {
+        WriteService::new(
+            StubBillingProvider::default(),
+            InMemoryCustomers::default(),
+            InMemorySubscriptions::default(),
+            InMemoryPaymentMethods::default(),
+            InMemoryPlans::default(),
+        )
+    }
+
+    fn linked_customer(tenant: TenantId, stripe_customer_id: &str) -> Customer {
+        Customer {
+            id: CustomerId::new(Uuid::new_v4()),
+            tenant_id: tenant,
+            stripe_customer_id: Some(stripe_customer_id.to_string()),
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn returns_the_existing_id_without_calling_the_provider() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        svc.customers.seed(linked_customer(tenant, "cus_existing"));
+
+        let id = svc.ensure_customer(tenant).await?;
+
+        assert_eq!(id, "cus_existing");
+        assert_eq!(svc.provider.create_customer_calls(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn creates_at_stripe_then_persists_locally_when_absent() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+
+        let id = svc.ensure_customer(tenant).await?;
+
+        assert_eq!(svc.provider.create_customer_calls(), 1);
+        // The local row now exists and carries the same id.
+        let rows = svc.customers.list(tenant).await?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].stripe_customer_id.as_deref(), Some(id.as_str()));
+
+        // A second call is the "already linked" path: no further provider call.
+        let again = svc.ensure_customer(tenant).await?;
+        assert_eq!(again, id);
+        assert_eq!(svc.provider.create_customer_calls(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn another_tenants_customer_is_never_returned() -> Result<(), Box<dyn Error>> {
+        let mine = TenantId::new(Uuid::new_v4());
+        let theirs = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        svc.customers.seed(linked_customer(theirs, "cus_theirs"));
+
+        let id = svc.ensure_customer(mine).await?;
+
+        // Their linked id was neither returned nor seen; mine was created fresh.
+        assert_ne!(id, "cus_theirs");
+        assert_eq!(svc.provider.create_customer_calls(), 1);
+        let mine_rows = svc.customers.list(mine).await?;
+        assert_eq!(mine_rows.len(), 1);
+        assert_eq!(mine_rows[0].tenant_id, mine);
+        Ok(())
+    }
 }

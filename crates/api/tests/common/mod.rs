@@ -162,12 +162,19 @@ impl WebhookHandler for UnusedHandler {
     }
 }
 
-/// A `Writes` with no behaviour: the trait carries no methods yet (Phase 4c
-/// Task 1), and the read-route tests never reach the write path. It fails
-/// loudly the moment the trait grows a method the tests do exercise.
+/// A `Writes` the read-route and webhook tests never reach. Every method
+/// returns an error, so a regression that routes a read through the write
+/// path fails loudly rather than silently passing.
 pub struct UnusedWrites;
 
-impl Writes for UnusedWrites {}
+#[async_trait]
+impl Writes for UnusedWrites {
+    async fn ensure_customer(&self, _tenant: TenantId) -> Result<String, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+}
 
 /// `AppState` wired for a tenant-scoped route test: real reads, inert webhook
 /// and write deps.

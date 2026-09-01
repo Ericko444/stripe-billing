@@ -5,15 +5,18 @@
 //! directly rather than through `create` -- these tests exercise lookups
 //! and the ordering guard, not insertion mechanics.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use domain::{
-    BillingEvent, BillingEventSink, Customer, CustomerId, CustomerRepository, DomainError,
-    EventApplication, Invoice, InvoiceCursor, InvoiceId, InvoicePage, InvoiceRepository,
-    InvoiceStatus, Money, PaymentMethod, PaymentMethodId, PaymentMethodRepository, Plan, PlanId,
-    PlanRepository, SinkError, Subscription, SubscriptionId, SubscriptionRepository,
-    SubscriptionStatus, TenantId, WebhookEvent, WebhookEventId, WebhookEventRepository,
+    BillingEvent, BillingEventSink, BillingProvider, CancellationTiming, CreateCustomerParams,
+    Customer, CustomerId, CustomerRepository, CustomerSnapshot, DomainError, EventApplication,
+    Invoice, InvoiceCursor, InvoiceId, InvoicePage, InvoiceRepository, InvoiceStatus, Money,
+    PaymentMethod, PaymentMethodId, PaymentMethodRepository, Plan, PlanId, PlanRepository,
+    SinkError, Subscription, SubscriptionId, SubscriptionRepository, SubscriptionSnapshot,
+    SubscriptionStatus, TenantId, UpdateCustomerParams, WebhookEvent, WebhookEventId,
+    WebhookEventRepository,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -663,5 +666,81 @@ impl BillingEventSink for InMemorySink {
         }
         lock(&self.events).push(event);
         Ok(())
+    }
+}
+
+/// A [`BillingProvider`] double for the write-path use-case tests.
+///
+/// Counts `create_customer` calls so a test can assert the provider was
+/// **not** reached (the "already linked" path of `ensure_customer`), and
+/// returns a deterministic snapshot. The subscription methods have no caller
+/// among the use cases wired so far; they return a `Provider` error rather
+/// than panic, which the workspace lints deny.
+#[derive(Default)]
+pub(crate) struct StubBillingProvider {
+    create_customer_calls: AtomicUsize,
+}
+
+impl StubBillingProvider {
+    /// How many times `create_customer` has been called on this double.
+    pub(crate) fn create_customer_calls(&self) -> usize {
+        self.create_customer_calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl BillingProvider for StubBillingProvider {
+    async fn create_customer(
+        &self,
+        _tenant_id: TenantId,
+        _params: CreateCustomerParams,
+    ) -> Result<CustomerSnapshot, DomainError> {
+        let n = self.create_customer_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(CustomerSnapshot {
+            stripe_customer_id: format!("cus_stub_{n}"),
+        })
+    }
+
+    async fn update_customer(
+        &self,
+        _tenant_id: TenantId,
+        _stripe_customer_id: &str,
+        _params: UpdateCustomerParams,
+    ) -> Result<CustomerSnapshot, DomainError> {
+        Err(DomainError::Provider(
+            "update_customer not stubbed".to_string(),
+        ))
+    }
+
+    async fn create_subscription(
+        &self,
+        _tenant_id: TenantId,
+        _stripe_customer_id: &str,
+        _stripe_price_id: &str,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        Err(DomainError::Provider(
+            "create_subscription not stubbed".to_string(),
+        ))
+    }
+
+    async fn change_plan(
+        &self,
+        _tenant_id: TenantId,
+        _stripe_subscription_id: &str,
+        _stripe_subscription_item_id: &str,
+        _new_stripe_price_id: &str,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        Err(DomainError::Provider("change_plan not stubbed".to_string()))
+    }
+
+    async fn cancel_subscription(
+        &self,
+        _tenant_id: TenantId,
+        _stripe_subscription_id: &str,
+        _timing: CancellationTiming,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        Err(DomainError::Provider(
+            "cancel_subscription not stubbed".to_string(),
+        ))
     }
 }
