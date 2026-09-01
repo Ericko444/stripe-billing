@@ -115,4 +115,25 @@ impl PlanRepository for PgPlanRepository {
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
+
+    async fn find_by_stripe_price_id(
+        &self,
+        tenant_id: TenantId,
+        stripe_price_id: &str,
+    ) -> Result<Option<Plan>, DomainError> {
+        let row = sqlx::query_as::<_, PlanRow>(
+            "SELECT id, tenant_id, stripe_price_id, stripe_product_id, name, \
+                    amount_minor, currency, created_at, deleted_at \
+             FROM billing.plans \
+             WHERE tenant_id = $1 AND stripe_price_id = $2 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(stripe_price_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        row.map(TryInto::try_into).transpose()
+    }
 }

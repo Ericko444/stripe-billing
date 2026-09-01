@@ -122,3 +122,79 @@ async fn stripe_price_id_can_be_reused_after_soft_delete() -> Result<(), Box<dyn
     assert_eq!(list, vec![second]);
     Ok(())
 }
+
+// --- Task 21: find_by_stripe_price_id ---
+
+#[tokio::test]
+async fn find_by_stripe_price_id_scoped_to_tenant_and_none_for_unmapped_price()
+-> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgPlanRepository::new(db.pool.clone());
+    let tenant_a = TenantId::new(Uuid::new_v4());
+    let tenant_b = TenantId::new(Uuid::new_v4());
+
+    let plan_a = repo
+        .create(
+            tenant_a,
+            "price_shared".to_string(),
+            "prod_a".to_string(),
+            "A".to_string(),
+            Money::new(1000, Currency::Usd),
+        )
+        .await?;
+    let plan_b = repo
+        .create(
+            tenant_b,
+            "price_shared".to_string(),
+            "prod_b".to_string(),
+            "B".to_string(),
+            Money::new(2000, Currency::Usd),
+        )
+        .await?;
+
+    assert_eq!(
+        repo.find_by_stripe_price_id(tenant_a, "price_shared")
+            .await?,
+        Some(plan_a)
+    );
+    assert_eq!(
+        repo.find_by_stripe_price_id(tenant_b, "price_shared")
+            .await?,
+        Some(plan_b)
+    );
+    // The no-local-plan case: a Stripe price with no mirror row.
+    assert_eq!(
+        repo.find_by_stripe_price_id(tenant_a, "price_never_seen")
+            .await?,
+        None
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn find_by_stripe_price_id_excludes_soft_deleted() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgPlanRepository::new(db.pool.clone());
+    let tenant_id = TenantId::new(Uuid::new_v4());
+
+    let created = repo
+        .create(
+            tenant_id,
+            "price_gone".to_string(),
+            "prod_x".to_string(),
+            "X".to_string(),
+            Money::new(500, Currency::Gbp),
+        )
+        .await?;
+    sqlx::query("UPDATE billing.plans SET deleted_at = now() WHERE id = $1")
+        .bind(created.id.as_uuid())
+        .execute(&db.pool)
+        .await?;
+
+    assert_eq!(
+        repo.find_by_stripe_price_id(tenant_id, "price_gone")
+            .await?,
+        None
+    );
+    Ok(())
+}
