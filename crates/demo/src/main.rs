@@ -20,7 +20,8 @@ use api::{AppState, billing_router};
 use async_trait::async_trait;
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use persistence::{
-    PgCustomerRepository, PgSubscriptionRepository, PgWebhookEventRepository, run_migrations,
+    PgCustomerRepository, PgInvoiceRepository, PgSubscriptionRepository, PgWebhookEventRepository,
+    run_migrations,
 };
 use secrecy::SecretString;
 use service::{WebhookHandler, WebhookProcessor};
@@ -101,11 +102,12 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let pool = PgPoolOptions::new().connect(&config.database_url).await?;
     run_migrations(&pool).await?;
 
-    // Four Postgres repositories: customer and subscription lookups plus the
-    // webhook ledger for the processor, and a second ledger handle for the
-    // verifier's own dedup write.
+    // Postgres repositories: customer, subscription and invoice lookups plus
+    // the webhook ledger for the processor, and a second ledger handle for
+    // the verifier's own dedup write.
     let customers = PgCustomerRepository::new(pool.clone());
     let subscriptions = PgSubscriptionRepository::new(pool.clone());
+    let invoices = PgInvoiceRepository::new(pool.clone());
     let processor_events = PgWebhookEventRepository::new(pool.clone());
     let verifier_events = PgWebhookEventRepository::new(pool.clone());
 
@@ -119,6 +121,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let handler: Arc<dyn WebhookHandler> = Arc::new(WebhookProcessor::new(
         customers,
         subscriptions,
+        invoices,
         processor_events,
         LoggingSink,
     ));

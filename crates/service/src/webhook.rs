@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use domain::{
-    BillingEvent, BillingEventSink, CustomerRepository, DomainError, SubscriptionRepository,
-    VerifiedEvent, WebhookEventRepository,
+    BillingEvent, BillingEventSink, CustomerRepository, DomainError, InvoiceRepository,
+    SubscriptionRepository, VerifiedEvent, WebhookEventRepository,
 };
 
-use crate::subscription_lifecycle;
+use crate::{invoice_events, subscription_lifecycle};
 
 /// The outcome of processing one verified webhook event (`init-spec.md`
 /// §10.2, spec decision 3).
@@ -49,9 +49,9 @@ pub enum NotAppliedReason {
 /// Object-safe handler for one verified, deduplicated webhook event.
 ///
 /// A later phase's `AppState` holds this as `Arc<dyn WebhookHandler>` rather
-/// than the generic [`WebhookProcessor<C, S, W, K>`] directly, so the router
-/// factory does not have to carry four type parameters through its
-/// signature -- the same trade `BillingProvider` and `WebhookVerifier` made.
+/// than the generic [`WebhookProcessor`] directly, so the router factory
+/// does not have to carry its port type parameters through its signature --
+/// the same trade `BillingProvider` and `WebhookVerifier` made.
 #[async_trait]
 pub trait WebhookHandler: Send + Sync {
     /// Processes one verified event, reporting why nothing changed when
@@ -59,26 +59,30 @@ pub trait WebhookHandler: Send + Sync {
     async fn handle(&self, event: VerifiedEvent) -> Result<EventOutcome, DomainError>;
 }
 
-/// Orchestrates webhook processing over the four ports it needs: customer
-/// and subscription lookups, the webhook ledger, and the host's event sink.
+/// Orchestrates webhook processing over the ports it needs: customer,
+/// subscription and invoice lookups, the webhook ledger, and the host's
+/// event sink.
 ///
-/// Generic over all four, matching `StripeBillingProvider<R>`: the compiler
+/// Generic over every port, matching `StripeBillingProvider<R>`: the compiler
 /// monomorphises the real wiring `demo` picks, and nothing is boxed on the
 /// hot path. Implements the object-safe [`WebhookHandler`] below so a later
-/// phase's `AppState` can hold it as `Arc<dyn WebhookHandler>` instead.
-pub struct WebhookProcessor<C, S, W, K> {
+/// phase's `AppState` can hold it as `Arc<dyn WebhookHandler>` instead -- so
+/// the parameter count stays between `demo` and `new`, never reaching `api`.
+pub struct WebhookProcessor<C, S, I, W, K> {
     customers: C,
     subscriptions: S,
+    invoices: I,
     webhook_events: W,
     sink: K,
 }
 
-impl<C, S, W, K> WebhookProcessor<C, S, W, K> {
-    /// Wraps the four ports webhook processing needs.
-    pub fn new(customers: C, subscriptions: S, webhook_events: W, sink: K) -> Self {
+impl<C, S, I, W, K> WebhookProcessor<C, S, I, W, K> {
+    /// Wraps the ports webhook processing needs.
+    pub fn new(customers: C, subscriptions: S, invoices: I, webhook_events: W, sink: K) -> Self {
         Self {
             customers,
             subscriptions,
+            invoices,
             webhook_events,
             sink,
         }
@@ -86,10 +90,11 @@ impl<C, S, W, K> WebhookProcessor<C, S, W, K> {
 }
 
 #[async_trait]
-impl<C, S, W, K> WebhookHandler for WebhookProcessor<C, S, W, K>
+impl<C, S, I, W, K> WebhookHandler for WebhookProcessor<C, S, I, W, K>
 where
     C: CustomerRepository + Send + Sync,
     S: SubscriptionRepository + Send + Sync,
+    I: InvoiceRepository + Send + Sync,
     W: WebhookEventRepository + Send + Sync,
     K: BillingEventSink,
 {
@@ -106,6 +111,29 @@ where
             | "customer.subscription.updated"
             | "customer.subscription.deleted" => {
                 subscription_lifecycle::apply(&self.customers, &self.subscriptions, &event).await?
+            }
+            // The two invoice events share a handler for the same reason:
+            // one `data.object` shape, one resolve-tenant -> mirror flow,
+            // differing only in the status written and the event emitted.
+            "invoice.paid" => {
+                invoice_events::apply(
+                    &self.customers,
+                    &self.subscriptions,
+                    &self.invoices,
+                    &event,
+                    invoice_events::Kind::Paid,
+                )
+                .await?
+            }
+            "invoice.payment_failed" => {
+                invoice_events::apply(
+                    &self.customers,
+                    &self.subscriptions,
+                    &self.invoices,
+                    &event,
+                    invoice_events::Kind::PaymentFailed,
+                )
+                .await?
             }
             _ => EventOutcome::NotApplied(NotAppliedReason::UnhandledType),
         };
@@ -147,7 +175,8 @@ mod tests {
 
     use super::*;
     use crate::test_support::{
-        InMemoryCustomers, InMemorySink, InMemorySubscriptions, InMemoryWebhookEvents,
+        InMemoryCustomers, InMemoryInvoices, InMemorySink, InMemorySubscriptions,
+        InMemoryWebhookEvents,
     };
 
     /// Compiles only if `WebhookHandler` is dyn-compatible -- the property
@@ -158,6 +187,7 @@ mod tests {
     type TestProcessor = WebhookProcessor<
         InMemoryCustomers,
         InMemorySubscriptions,
+        InMemoryInvoices,
         InMemoryWebhookEvents,
         InMemorySink,
     >;
@@ -166,6 +196,7 @@ mod tests {
         WebhookProcessor::new(
             InMemoryCustomers::default(),
             InMemorySubscriptions::default(),
+            InMemoryInvoices::default(),
             InMemoryWebhookEvents::default(),
             InMemorySink::default(),
         )
@@ -379,6 +410,7 @@ mod tests {
         let processor = TestProcessor::new(
             InMemoryCustomers::default(),
             InMemorySubscriptions::default(),
+            InMemoryInvoices::default(),
             InMemoryWebhookEvents::default(),
             InMemorySink::failing(),
         );
@@ -545,5 +577,81 @@ mod tests {
             found,
             Ok(Some(ref s)) if s.status == domain::SubscriptionStatus::Active
         ));
+    }
+
+    // --- Task 18: invoice.paid / invoice.payment_failed ---
+
+    /// Seeds a customer and returns its tenant id plus a `VerifiedEvent` of
+    /// `event_type` for an invoice `in_applied` against it.
+    fn seeded_invoice_event(
+        processor: &TestProcessor,
+        event_type: &str,
+    ) -> (TenantId, VerifiedEvent) {
+        let tenant_id = TenantId::new(Uuid::new_v4());
+        processor.customers.seed(Customer {
+            id: CustomerId::new(Uuid::new_v4()),
+            tenant_id,
+            stripe_customer_id: Some("cus_inv".to_string()),
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        });
+        let event = VerifiedEvent {
+            id: WebhookEventId::new(Uuid::new_v4()),
+            stripe_event_id: format!("evt_{}", Uuid::new_v4()),
+            event_type: event_type.to_string(),
+            created: OffsetDateTime::now_utc(),
+            payload: json!({
+                "id": "evt_inv",
+                "type": event_type,
+                "data": { "object": {
+                    "id": "in_applied",
+                    "customer": "cus_inv",
+                    "total": 4200,
+                    "currency": "usd",
+                }},
+            }),
+        };
+        processor.webhook_events.seed(WebhookEvent {
+            id: event.id,
+            tenant_id: Some(tenant_id),
+            stripe_event_id: event.stripe_event_id.clone(),
+            event_type: event.event_type.clone(),
+            payload: event.payload.clone(),
+            created_at: event.created,
+            processed_at: None,
+        });
+        (tenant_id, event)
+    }
+
+    #[tokio::test]
+    async fn invoice_paid_routes_through_handle_and_notifies_the_sink_once() {
+        let processor = processor();
+        let (tenant_id, event) = seeded_invoice_event(&processor, "invoice.paid");
+
+        let outcome = processor.handle(event.clone()).await;
+
+        assert!(matches!(
+            outcome,
+            Ok(EventOutcome::Applied(BillingEvent::PaymentSucceeded { tenant_id: t, .. })) if t == tenant_id
+        ));
+        assert_eq!(processor.sink.received().len(), 1);
+        assert!(matches!(
+            processor.webhook_events.processed_at(event.id),
+            Some(Some(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn invoice_payment_failed_routes_and_emits_payment_failed() {
+        let processor = processor();
+        let (tenant_id, event) = seeded_invoice_event(&processor, "invoice.payment_failed");
+
+        let outcome = processor.handle(event).await;
+
+        assert!(matches!(
+            outcome,
+            Ok(EventOutcome::Applied(BillingEvent::PaymentFailed { tenant_id: t, .. })) if t == tenant_id
+        ));
+        assert_eq!(processor.sink.received().len(), 1);
     }
 }

@@ -1,4 +1,4 @@
-//! In-memory doubles for the four ports `WebhookProcessor` depends on.
+//! In-memory doubles for the ports `WebhookProcessor` depends on.
 //!
 //! `#[cfg(test)]`-only: nothing here is reachable outside this crate's own
 //! unit tests, so none of it needs to satisfy `missing_docs`. Seeded
@@ -10,8 +10,9 @@ use std::sync::{Mutex, MutexGuard};
 use async_trait::async_trait;
 use domain::{
     BillingEvent, BillingEventSink, Customer, CustomerId, CustomerRepository, DomainError,
-    EventApplication, SinkError, Subscription, SubscriptionId, SubscriptionRepository,
-    SubscriptionStatus, TenantId, WebhookEvent, WebhookEventId, WebhookEventRepository,
+    EventApplication, Invoice, InvoiceId, InvoiceRepository, InvoiceStatus, Money, SinkError,
+    Subscription, SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId,
+    WebhookEvent, WebhookEventId, WebhookEventRepository,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -198,6 +199,130 @@ impl SubscriptionRepository for InMemorySubscriptions {
         row.cancel_at_period_end = cancel_at_period_end;
         row.last_event_created_at = Some(event_created_at);
         Ok(EventApplication::Applied)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct InMemoryInvoices {
+    rows: Mutex<Vec<Invoice>>,
+}
+
+impl InMemoryInvoices {
+    pub(crate) fn seed(&self, invoice: Invoice) {
+        lock(&self.rows).push(invoice);
+    }
+}
+
+impl InvoiceRepository for InMemoryInvoices {
+    async fn create(
+        &self,
+        tenant_id: TenantId,
+        customer_id: CustomerId,
+        subscription_id: Option<SubscriptionId>,
+        stripe_invoice_id: String,
+        amount: Money,
+        status: InvoiceStatus,
+    ) -> Result<Invoice, DomainError> {
+        let invoice = Invoice {
+            id: InvoiceId::new(Uuid::new_v4()),
+            tenant_id,
+            customer_id,
+            subscription_id,
+            stripe_invoice_id,
+            amount,
+            status,
+            last_event_created_at: None,
+            created_at: OffsetDateTime::now_utc(),
+            deleted_at: None,
+        };
+        lock(&self.rows).push(invoice.clone());
+        Ok(invoice)
+    }
+
+    async fn find(
+        &self,
+        tenant_id: TenantId,
+        id: InvoiceId,
+    ) -> Result<Option<Invoice>, DomainError> {
+        Ok(lock(&self.rows)
+            .iter()
+            .find(|i| i.tenant_id == tenant_id && i.id == id && i.deleted_at.is_none())
+            .cloned())
+    }
+
+    async fn list(&self, tenant_id: TenantId) -> Result<Vec<Invoice>, DomainError> {
+        Ok(lock(&self.rows)
+            .iter()
+            .filter(|i| i.tenant_id == tenant_id && i.deleted_at.is_none())
+            .cloned()
+            .collect())
+    }
+
+    async fn find_by_stripe_invoice_id(
+        &self,
+        tenant_id: TenantId,
+        stripe_invoice_id: &str,
+    ) -> Result<Option<Invoice>, DomainError> {
+        Ok(lock(&self.rows)
+            .iter()
+            .find(|i| {
+                i.tenant_id == tenant_id
+                    && i.stripe_invoice_id == stripe_invoice_id
+                    && i.deleted_at.is_none()
+            })
+            .cloned())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn apply_event(
+        &self,
+        tenant_id: TenantId,
+        customer_id: CustomerId,
+        subscription_id: Option<SubscriptionId>,
+        stripe_invoice_id: &str,
+        amount: Money,
+        status: InvoiceStatus,
+        event_created_at: OffsetDateTime,
+    ) -> Result<EventApplication, DomainError> {
+        // Mirrors persistence's upsert-with-guard: insert if absent, else
+        // update only when this event is not older than the last applied.
+        let mut rows = lock(&self.rows);
+        match rows.iter_mut().find(|i| {
+            i.tenant_id == tenant_id
+                && i.stripe_invoice_id == stripe_invoice_id
+                && i.deleted_at.is_none()
+        }) {
+            Some(row) => {
+                let admitted = match row.last_event_created_at {
+                    None => true,
+                    Some(last) => last <= event_created_at,
+                };
+                if !admitted {
+                    return Ok(EventApplication::Stale);
+                }
+                row.customer_id = customer_id;
+                row.subscription_id = subscription_id;
+                row.amount = amount;
+                row.status = status;
+                row.last_event_created_at = Some(event_created_at);
+                Ok(EventApplication::Applied)
+            }
+            None => {
+                rows.push(Invoice {
+                    id: InvoiceId::new(Uuid::new_v4()),
+                    tenant_id,
+                    customer_id,
+                    subscription_id,
+                    stripe_invoice_id: stripe_invoice_id.to_string(),
+                    amount,
+                    status,
+                    last_event_created_at: Some(event_created_at),
+                    created_at: OffsetDateTime::now_utc(),
+                    deleted_at: None,
+                });
+                Ok(EventApplication::Applied)
+            }
+        }
     }
 }
 
