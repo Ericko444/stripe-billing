@@ -7,6 +7,8 @@
 //! context in scope at all, so that making `billing_router` generic can never
 //! have quietly made a tenant a precondition of this route (§10.3).
 
+mod common;
+
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 
@@ -14,11 +16,10 @@ use api::{AppState, webhook_router};
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use domain::{
-    DomainError, Plan, TenantId, VerifiedEvent, WebhookEventId, WebhookReceipt, WebhookVerifier,
-};
+use common::StubReads;
+use domain::{DomainError, VerifiedEvent, WebhookEventId, WebhookReceipt, WebhookVerifier};
 use serde_json::json;
-use service::{EventOutcome, NotAppliedReason, Reads, WebhookHandler};
+use service::{EventOutcome, NotAppliedReason, WebhookHandler};
 use time::OffsetDateTime;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -102,23 +103,14 @@ fn verified_event() -> VerifiedEvent {
     }
 }
 
-/// `AppState` now carries a read service for the tenant-scoped routes. The
-/// webhook route never touches it, so these tests wire a stub that would
-/// return nothing if it were ever called -- the point being that it is not.
-struct NoReads;
-
-#[async_trait]
-impl Reads for NoReads {
-    async fn list_plans(&self, _tenant: TenantId) -> Result<Vec<Plan>, DomainError> {
-        Ok(Vec::new())
-    }
-}
-
+/// `AppState` carries a read service for the tenant-scoped routes. The
+/// webhook route never touches it; an empty [`StubReads`] satisfies the
+/// field without saying anything about tenants.
 fn app_state(verifier: Arc<StubVerifier>, outcome: EventOutcome) -> AppState {
     AppState::new(
         verifier,
         Arc::new(StubHandler { outcome }),
-        Arc::new(NoReads),
+        Arc::new(StubReads::default()),
     )
 }
 

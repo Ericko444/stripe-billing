@@ -2,91 +2,19 @@
 //! with a stub tenant extractor. The load-bearing assertion is tenant
 //! isolation: each tenant's `GET /plans` returns only its own rows.
 
-use std::error::Error;
-use std::sync::Arc;
+mod common;
 
-use api::{ApiError, AppState, billing_router};
-use async_trait::async_trait;
+use std::error::Error;
+
+use api::billing_router;
 use axum::body::{Body, to_bytes};
-use axum::extract::FromRequestParts;
-use axum::http::request::Parts;
 use axum::http::{Request, StatusCode};
-use domain::{
-    Currency, DomainError, Money, Plan, PlanId, TenantId, VerifiedEvent, WebhookReceipt,
-    WebhookVerifier,
-};
+use common::{HeaderTenant, StubReads, app_state};
+use domain::{Currency, Money, Plan, PlanId, TenantId};
 use serde_json::Value;
-use service::{EventOutcome, Reads, WebhookHandler};
 use time::OffsetDateTime;
 use tower::ServiceExt;
 use uuid::Uuid;
-
-/// Test tenant extractor: reads the tenant from an `x-tenant` header. Stands
-/// in for the host's real (authenticated) extractor -- all `billing_router`
-/// needs is a `T` that rejects with [`ApiError`] and converts
-/// [`Into<TenantId>`].
-struct HeaderTenant(TenantId);
-
-impl<S: Send + Sync> FromRequestParts<S> for HeaderTenant {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let raw = parts
-            .headers
-            .get("x-tenant")
-            .and_then(|value| value.to_str().ok())
-            .ok_or(ApiError::from(DomainError::NotFound))?;
-        let id = Uuid::parse_str(raw).map_err(|_| ApiError::from(DomainError::NotFound))?;
-        Ok(HeaderTenant(TenantId::new(id)))
-    }
-}
-
-impl From<HeaderTenant> for TenantId {
-    fn from(tenant: HeaderTenant) -> Self {
-        tenant.0
-    }
-}
-
-/// A `Reads` that owns a flat plan list and tenant-scopes it on read, the
-/// way the real repository's `WHERE tenant_id = $1` does.
-struct StubReads {
-    plans: Vec<Plan>,
-}
-
-#[async_trait]
-impl Reads for StubReads {
-    async fn list_plans(&self, tenant: TenantId) -> Result<Vec<Plan>, DomainError> {
-        Ok(self
-            .plans
-            .iter()
-            .filter(|plan| plan.tenant_id == tenant)
-            .cloned()
-            .collect())
-    }
-}
-
-/// The webhook deps `AppState` requires; `GET /plans` never calls either.
-struct UnusedVerifier;
-
-#[async_trait]
-impl WebhookVerifier for UnusedVerifier {
-    async fn verify_and_record(
-        &self,
-        _payload: &[u8],
-        _signature_header: &str,
-    ) -> Result<WebhookReceipt, DomainError> {
-        Err(DomainError::WebhookVerification)
-    }
-}
-
-struct UnusedHandler;
-
-#[async_trait]
-impl WebhookHandler for UnusedHandler {
-    async fn handle(&self, _event: VerifiedEvent) -> Result<EventOutcome, DomainError> {
-        Err(DomainError::WebhookVerification)
-    }
-}
 
 fn plan(tenant: TenantId, name: &str, amount_minor: i64) -> Plan {
     Plan {
@@ -101,15 +29,10 @@ fn plan(tenant: TenantId, name: &str, amount_minor: i64) -> Plan {
     }
 }
 
-fn app_state(plans: Vec<Plan>) -> AppState {
-    AppState::new(
-        Arc::new(UnusedVerifier),
-        Arc::new(UnusedHandler),
-        Arc::new(StubReads { plans }),
-    )
-}
-
-async fn get_plans(state: AppState, tenant: &str) -> Result<(StatusCode, Value), Box<dyn Error>> {
+async fn get_plans(
+    state: api::AppState,
+    tenant: &str,
+) -> Result<(StatusCode, Value), Box<dyn Error>> {
     let response = billing_router::<HeaderTenant>(state)
         .oneshot(
             Request::get("/plans")
@@ -127,12 +50,13 @@ async fn get_plans(state: AppState, tenant: &str) -> Result<(StatusCode, Value),
 async fn returns_only_the_calling_tenants_plans() -> Result<(), Box<dyn Error>> {
     let tenant_a = TenantId::new(Uuid::new_v4());
     let tenant_b = TenantId::new(Uuid::new_v4());
-    let plans = vec![
-        plan(tenant_a, "a-starter", 1999),
-        plan(tenant_a, "a-pro", 4999),
-        plan(tenant_b, "b-only", 9999),
-    ];
-    let state = app_state(plans);
+    let state = app_state(StubReads {
+        plans: vec![
+            plan(tenant_a, "a-starter", 1999),
+            plan(tenant_a, "a-pro", 4999),
+            plan(tenant_b, "b-only", 9999),
+        ],
+    });
 
     let (status_a, body_a) = get_plans(state.clone(), &tenant_a.as_uuid().to_string()).await?;
     assert_eq!(status_a, StatusCode::OK);
@@ -154,7 +78,6 @@ async fn returns_only_the_calling_tenants_plans() -> Result<(), Box<dyn Error>> 
         .collect();
     assert_eq!(names_b, ["b-only"]);
 
-    // Nothing of tenant A's appears in tenant B's response.
     assert!(!body_b.to_string().contains("a-starter"));
     assert!(!body_b.to_string().contains("a-pro"));
     Ok(())
@@ -163,7 +86,9 @@ async fn returns_only_the_calling_tenants_plans() -> Result<(), Box<dyn Error>> 
 #[tokio::test]
 async fn money_is_minor_units_and_iso_code_never_a_float() -> Result<(), Box<dyn Error>> {
     let tenant = TenantId::new(Uuid::new_v4());
-    let state = app_state(vec![plan(tenant, "starter", 1999)]);
+    let state = app_state(StubReads {
+        plans: vec![plan(tenant, "starter", 1999)],
+    });
 
     let (status, body) = get_plans(state, &tenant.as_uuid().to_string()).await?;
 
@@ -180,7 +105,9 @@ async fn money_is_minor_units_and_iso_code_never_a_float() -> Result<(), Box<dyn
 async fn a_tenant_with_no_plans_gets_an_empty_array() -> Result<(), Box<dyn Error>> {
     let known = TenantId::new(Uuid::new_v4());
     let stranger = TenantId::new(Uuid::new_v4());
-    let state = app_state(vec![plan(known, "starter", 1999)]);
+    let state = app_state(StubReads {
+        plans: vec![plan(known, "starter", 1999)],
+    });
 
     let (status, body) = get_plans(state, &stranger.as_uuid().to_string()).await?;
 
