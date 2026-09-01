@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::{SubscriptionId, TenantId};
+use crate::{InvoiceId, SubscriptionId, TenantId};
 
 /// A typed notification handed to the host after a webhook event has been
 /// mirrored (`init-spec.md` §8.3).
@@ -12,9 +12,9 @@ use crate::{SubscriptionId, TenantId};
 /// would be fictional. A host must be able to implement
 /// [`BillingEventSink`] without adding a Stripe client to its own manifest.
 ///
-/// Starts with the three variants `customer.subscription.updated` produces;
-/// later event types (`invoice.payment_failed`'s `PaymentFailed`, and so on)
-/// add variants here as their handlers land.
+/// Started with the three variants `customer.subscription.*` produces; the
+/// invoice pair landed with `invoice.paid` / `invoice.payment_failed`. Later
+/// event types add variants here as their handlers land.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BillingEvent {
     /// The subscription became (or remained) active -- a new subscriber, or
@@ -41,6 +41,29 @@ pub enum BillingEvent {
         tenant_id: TenantId,
         /// The local subscription mirror row.
         subscription_id: SubscriptionId,
+    },
+    /// An invoice was paid in full (`invoice.paid`). A host might send a
+    /// receipt, or clear a past-due flag it set on an earlier failure.
+    PaymentSucceeded {
+        /// The tenant the invoice belongs to.
+        tenant_id: TenantId,
+        /// The local invoice mirror row.
+        invoice_id: InvoiceId,
+        /// The subscription the invoice is for, if it is a subscription
+        /// invoice and its mirror row is known.
+        subscription_id: Option<SubscriptionId>,
+    },
+    /// An invoice payment attempt failed (`invoice.payment_failed`) -- the
+    /// variant `init-spec.md` §8.3 names as the reason a host wires a sink
+    /// at all. A host typically starts dunning or restricts access here.
+    PaymentFailed {
+        /// The tenant the invoice belongs to.
+        tenant_id: TenantId,
+        /// The local invoice mirror row.
+        invoice_id: InvoiceId,
+        /// The subscription the invoice is for, if it is a subscription
+        /// invoice and its mirror row is known.
+        subscription_id: Option<SubscriptionId>,
     },
 }
 
