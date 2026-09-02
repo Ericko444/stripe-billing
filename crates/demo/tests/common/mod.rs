@@ -3,6 +3,9 @@
 // setup for the extractor-level tests.
 #![allow(dead_code)]
 
+use std::io;
+use std::sync::{Arc, Mutex};
+
 use api::{AppState, CheckoutUrls};
 use async_trait::async_trait;
 use domain::{
@@ -11,6 +14,7 @@ use domain::{
     SubscriptionId, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
 use service::{EventOutcome, Reads, WebhookHandler, Writes};
+use tracing_subscriber::fmt::MakeWriter;
 
 /// The one message every `Unused*` double's error carries -- these fakes
 /// exist only so [`unused_state`] can build a complete `AppState`; nothing
@@ -150,4 +154,46 @@ pub fn unused_state() -> AppState {
             cancel: "https://example.invalid/cancel".to_string(),
         },
     )
+}
+
+/// A `tracing` sink that appends every formatted line to a shared buffer, so
+/// a test can install it with `tracing::subscriber::set_default` and assert
+/// on what was (not) logged during a request. Mirrors `api`'s own
+/// `CapturedLogs` (`crates/api/tests/common/mod.rs`).
+#[derive(Clone, Default)]
+pub struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+impl CapturedLogs {
+    /// Everything logged through this sink so far, as a lossy UTF-8 string.
+    pub fn contents(&self) -> String {
+        String::from_utf8_lossy(
+            &self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+        .into_owned()
+    }
+}
+
+impl io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> MakeWriter<'a> for CapturedLogs {
+    type Writer = CapturedLogs;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
 }

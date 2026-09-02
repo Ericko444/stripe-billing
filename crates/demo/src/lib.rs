@@ -7,3 +7,4 @@
 //! has no library target for an integration test to link against.
 
 pub mod jwt;
+pub mod token;

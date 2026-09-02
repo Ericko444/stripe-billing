@@ -6,9 +6,11 @@
 //! Stripe webhook verifier and a logging [`BillingEventSink`] into a
 //! [`WebhookProcessor`], builds the read and write services `api`'s
 //! tenant-scoped router needs, and serves `billing_router::<DemoTenant>`
-//! merged with `webhook_router` -- twelve routes in one process, guarded by
-//! `demo`'s own [`JwtDecoder`](jwt::JwtDecoder) except for the webhook route,
-//! which authenticates by signature instead (Phase 4d).
+//! merged with `webhook_router` and [`token::demo_token_router`] --
+//! thirteen routes in one process, guarded by `demo`'s own
+//! [`JwtDecoder`](jwt::JwtDecoder) except for the webhook route (verified by
+//! signature instead) and `/demo/token` itself, which has no auth of its
+//! own and exists only to mint tokens the others accept (Phase 4d).
 //!
 //! The workspace denies `unwrap`, `expect` and `panic`; the one documented
 //! exception (`init-spec.md` §5.5) is startup config parsing, and even here
@@ -24,6 +26,7 @@ use api::{AppState, CheckoutUrls, billing_router, webhook_router};
 use async_trait::async_trait;
 use axum::extract::Extension;
 use demo::jwt::{DemoTenant, JwtDecoder};
+use demo::token::demo_token_router;
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgOutboundRequestRepository,
@@ -197,19 +200,29 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
 
     let state = AppState::new(verifier, handler, reads, writes, checkout_urls);
     let decoder = JwtDecoder::new(&config.billing_jwt_secret);
+    let token_router = demo_token_router(&config.billing_jwt_secret);
+
+    // Scaffolding, said loudly and every time: `/demo/token` mints a token
+    // for whatever tenant id it is given, no authentication of its own.
+    // Never expose this route, or this binary, outside a local demo.
+    tracing::warn!(
+        "POST /demo/token is unauthenticated scaffolding -- it mints a token for any tenant id given to it"
+    );
 
     // The eleven tenant-scoped routes, guarded by `demo`'s own extractor,
     // merged with the webhook route (which authenticates by signature and
-    // needs no token). `Extension(decoder)` is the layer `DemoTenant`'s
-    // rejection suite already proved every path needs (D3) -- installed
-    // once, here, over the merged router rather than either half alone.
+    // needs no token) and the token mint (which has no auth of its own).
+    // `Extension(decoder)` is the layer `DemoTenant`'s rejection suite
+    // already proved every path needs (D3) -- installed once, here, over
+    // the merged router rather than any one part of it.
     let router = billing_router::<DemoTenant>(state.clone())
         .merge(webhook_router(state))
+        .merge(token_router)
         .layer(Extension(decoder));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "serving billing_router and webhook_router");
+    tracing::info!(%addr, "serving billing_router, webhook_router and /demo/token");
     axum::serve(listener, router).await?;
     Ok(())
 }

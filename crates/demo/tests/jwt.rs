@@ -19,12 +19,15 @@ use axum::extract::Extension;
 use axum::http::{Request, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use common::unused_state;
+use common::{CapturedLogs, unused_state};
 use demo::jwt::{Claims, DemoTenant, JwtDecoder};
-use jsonwebtoken::{Algorithm, EncodingKey, Header as JwtHeader, encode};
+use demo::token::demo_token_router;
+use jsonwebtoken::{
+    Algorithm, DecodingKey, EncodingKey, Header as JwtHeader, Validation, decode, encode,
+};
 use secrecy::SecretString;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use time::{Duration, OffsetDateTime};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -81,6 +84,32 @@ async fn call(
         request = request.header(header::AUTHORIZATION, value);
     }
     let response = app.oneshot(request.body(Body::empty())?).await?;
+
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+    let body = serde_json::from_slice(&bytes)?;
+    Ok((status, body))
+}
+
+/// `/whoami` (behind `DemoTenant`) merged with the real `/demo/token` mint
+/// route over the same secret -- the composition `main` builds (Task 5/6),
+/// so a round-trip test here exercises the actual seam rather than a stand-in.
+fn mounted_app(secret: &SecretString) -> Router {
+    Router::new()
+        .route("/whoami", get(whoami))
+        .with_state(unused_state())
+        .merge(demo_token_router(secret))
+        .layer(Extension(JwtDecoder::new(secret)))
+}
+
+/// Posts `body` as JSON to `/demo/token` and returns the parsed response.
+async fn post_token(app: Router, body: Value) -> Result<(StatusCode, Value), Box<dyn Error>> {
+    let request = Request::builder()
+        .method("POST")
+        .uri("/demo/token")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&body)?))?;
+    let response = app.oneshot(request).await?;
 
     let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await?;
@@ -279,4 +308,110 @@ async fn jwt_rejection_is_problem_json_with_www_authenticate_bearer() {
             .and_then(|v| v.to_str().ok()),
         Some("Bearer")
     );
+}
+
+#[tokio::test]
+async fn token_mint_returns_a_token_and_expiry_about_one_hour_ahead() -> Result<(), Box<dyn Error>>
+{
+    let secret = SecretString::from(SECRET.to_string());
+    let tenant = Uuid::new_v4();
+
+    let (status, body) = post_token(
+        mounted_app(&secret),
+        json!({ "tenant_id": tenant.to_string() }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let token = body["token"].as_str().ok_or("missing token")?;
+    assert!(!token.is_empty());
+    assert!(body["expires_at"].as_str().is_some_and(|s| !s.is_empty()));
+
+    // "About one hour ahead": decode the token's own `exp` and check it
+    // against `now + 1h` within a generous tolerance, rather than trying to
+    // parse `expires_at` back out of RFC 3339 with no `time` parsing feature
+    // in the workspace.
+    let claims = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(SECRET.as_bytes()),
+        &Validation::new(Algorithm::HS256),
+    )?
+    .claims;
+    let expected = (OffsetDateTime::now_utc() + Duration::hours(1)).unix_timestamp();
+    let actual = claims.exp as i64;
+    assert!(
+        (actual - expected).abs() < 30,
+        "expected exp near {expected}, got {actual}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn token_malformed_tenant_id_is_400_not_500() -> Result<(), Box<dyn Error>> {
+    let secret = SecretString::from(SECRET.to_string());
+
+    let (status, body) =
+        post_token(mounted_app(&secret), json!({ "tenant_id": "not-a-uuid" })).await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["status"], 400);
+    Ok(())
+}
+
+#[tokio::test]
+async fn token_round_trip_is_accepted_by_demo_tenant() -> Result<(), Box<dyn Error>> {
+    let secret = SecretString::from(SECRET.to_string());
+    let tenant = Uuid::new_v4();
+
+    let (mint_status, minted) = post_token(
+        mounted_app(&secret),
+        json!({ "tenant_id": tenant.to_string() }),
+    )
+    .await?;
+    assert_eq!(mint_status, StatusCode::OK);
+    let token = minted["token"].as_str().ok_or("missing token")?;
+
+    let response = mounted_app(&secret)
+        .oneshot(
+            Request::builder()
+                .uri("/whoami")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+    assert_eq!(String::from_utf8_lossy(&bytes), tenant.to_string());
+    Ok(())
+}
+
+#[tokio::test]
+async fn token_never_logs_the_minted_token() -> Result<(), Box<dyn Error>> {
+    let secret = SecretString::from(SECRET.to_string());
+    let tenant = Uuid::new_v4();
+
+    let logs = CapturedLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(logs.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .finish();
+    let (status, body) = {
+        let _guard = tracing::subscriber::set_default(subscriber);
+        post_token(
+            mounted_app(&secret),
+            json!({ "tenant_id": tenant.to_string() }),
+        )
+        .await?
+    };
+
+    assert_eq!(status, StatusCode::OK);
+    let token = body["token"].as_str().ok_or("missing token")?;
+    let logged = logs.contents();
+    assert!(
+        !logged.contains(token),
+        "the minted token must never reach a log line; captured: {logged}"
+    );
+    Ok(())
 }
