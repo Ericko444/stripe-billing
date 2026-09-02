@@ -2,6 +2,14 @@
 resolver = "3"
 members = ["crates/*"]
 
+# `jsonwebtoken`'s `rust_crypto` backend (Phase 4d) pulls in enough extra
+# crates (rsa, ed25519-dalek, p256/p384, curve25519-dalek...) that linking
+# `demo`'s full debug info on Windows/MSVC overflows the linker's PDB
+# database (LNK1140). Line tables are enough for `RUST_BACKTRACE=1`; full
+# type/variable debug info is not needed for `cargo test`/`cargo build`.
+[profile.dev]
+debug = "line-tables-only"
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
@@ -50,7 +58,15 @@ dotenvy = "0.15.7"
 # `sha2` 0.11; 0.12 tracks `digest` 0.10 and will not accept this `Sha256`.
 hex = "0.4"
 hmac = "0.13"
-jsonwebtoken = "11.0.0"
+# `rust_crypto`, not the default `use_pem`: demo's HS256 tokens use a raw
+# shared secret (`DecodingKey`/`EncodingKey::from_secret`), never a PEM key,
+# and `rust_crypto` keeps the dependency pure-Rust rather than pulling in
+# `aws-lc-rs`'s native build. Its own `hmac`/`sha2` versions differ from the
+# ones pinned above for the webhook signature (Phase 3) -- Cargo compiles
+# both; the two never interact.
+jsonwebtoken = { version = "11.0.0", default-features = false, features = [
+    "rust_crypto",
+] }
 secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
