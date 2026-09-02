@@ -53,7 +53,7 @@ running Docker daemon. Webhooks can be exercised locally with
 
 ### Running the demo
 
-`cargo run -p demo` reads and validates six environment variables at
+`cargo run -p demo` reads and validates seven environment variables at
 startup (all required; a missing one exits non-zero with a message naming
 it):
 
@@ -64,10 +64,39 @@ it):
 | `STRIPE_SECRET_KEY` | the `sk_…` secret API key the write path's `BillingProvider` uses; wrapped in `SecretString` on read |
 | `CHECKOUT_SUCCESS_URL` | where Stripe returns the customer after a completed Checkout Session; host config, never a request field |
 | `CHECKOUT_CANCEL_URL` | where Stripe returns the customer if they abandon Checkout |
-| `PORT` | TCP port the `POST /webhooks/stripe` listener binds |
+| `PORT` | TCP port the server binds |
+| `BILLING_JWT_SECRET` | HS256 secret `demo`'s own `JwtDecoder`/`POST /demo/token` sign and verify tokens with; `api` has no use for it (Phase 4d, D1) |
 
 `RUST_LOG` tunes tracing output. A `docs/walkthrough/phase-4a-webhook.md`
-records an end-to-end run against real Stripe traffic.
+records an end-to-end run against real Stripe traffic; a full authenticated
+walkthrough of every route is in
+`docs/walkthrough/phase-4d-verification.md`.
+
+#### Seeding two demo tenants
+
+`cargo run -p demo -- seed` creates two fixed-id tenants to switch between,
+each with a Stripe customer, two local plans, and one subscription. It needs
+four more variables, read only by the seed itself (never required to serve):
+
+| Variable | Purpose |
+|----------|---------|
+| `SEED_PLAN_A_STRIPE_PRICE_ID` / `SEED_PLAN_A_STRIPE_PRODUCT_ID` | the first plan's Stripe price/product ids |
+| `SEED_PLAN_B_STRIPE_PRICE_ID` / `SEED_PLAN_B_STRIPE_PRODUCT_ID` | the second plan's |
+
+Point these at any two prices in your own Stripe test-mode account — the
+seed doesn't create or verify them, only mirrors them locally, so a wrong id
+here is a display-only mistake, never a broken write path. Re-running the
+seed is a no-op: it finds the same two tenants and creates nothing new.
+
+**Both subscriptions seed `incomplete`, not `active` — this is expected.**
+`BillingProvider` has no way to attach a payment method (that has only ever
+happened through Stripe's own hosted UI or a confirmed SetupIntent), so a
+subscription created for a customer with no card stays `incomplete` until
+one is attached. Call `POST /payment-methods/setup-intent` and confirm it
+with a test card, or run the Checkout Session flow, to watch a seeded
+subscription go `active` — that write path, the webhook it triggers, and the
+mirror update are the thing this module actually demonstrates. See
+`docs/walkthrough/phase-4d-verification.md` for a full run.
 
 ## Routes
 
@@ -106,22 +135,38 @@ with no call made (§7.4):
 |--------|------|------|
 | POST | `/webhooks/stripe` | verify signature, dedup, apply to the mirror; no tenant context |
 
-**Pending (Phase 4d):** `POST /demo/token`, the `demo` route that issues a
-JWT and lets `demo` mount `billing_router` behind the `jwt-auth` feature.
-Until then the eleven tenant-scoped routes are exercised in `api`'s router
-and tenancy tests, and against real Stripe test mode in
-`docs/walkthrough/phase-4c-stripe-rehearsal.md`.
+**Demo scaffolding (Phase 4d), `demo` only:**
+
+| Method | Path | Does |
+|--------|------|------|
+| POST | `/demo/token` | mints a token for any `tenant_id` given to it — **not authentication**, no identity check of any kind. Scaffolding so a reviewer without a real host's login flow can still drive the tenant-scoped routes above; `demo` logs a warning naming this route at every startup |
+
+All thirteen routes are mounted together in `demo`: the eleven tenant-scoped
+routes behind `demo`'s own `DemoTenant` (a ~70-line JWT extractor a real host
+replaces with its own — see `billing_router`'s rustdoc for the ~20-line
+middleware-adapter shape), the webhook route verified by signature instead,
+and `/demo/token` with no auth of its own. Exercised end to end — real
+Postgres, real Stripe test mode, both seeded tenants, all thirteen routes —
+in `docs/walkthrough/phase-4d-verification.md`.
 
 ## Status
 
-Phase 4c complete (pending the manual Stripe rehearsal, Task 18): the six
-write routes above, `BillingProvider` expanded with SetupIntent, Checkout
-Session and payment-method set-default/detach, all going through the Phase 2
-idempotency ledger; `service`'s `Writes` use cases enforcing §7.4's
-orderings; `AppState` carrying the host-supplied `CheckoutUrls`. Phase 4b
-delivered the five read routes, the generic tenant extractor, `api`-owned
-DTOs, and keyset invoice pagination (migration `0013`). Phase 4a delivered
-the `service` webhook processor (every `init-spec.md` §10.4 event type), the
-`persistence` adapters, `POST /webhooks/stripe`, and the `demo` composition
-root. The `jwt-auth` demo wiring (`POST /demo/token`) and the frontend are
-still later phases.
+Phase 4d complete: `demo` mounts the real `billing_router::<DemoTenant>`
+alongside `webhook_router` and `POST /demo/token`; `api` gained
+`ApiError::Unauthorized` (401, `WWW-Authenticate: Bearer`, one coarse detail
+for every cause) and lost the empty `jwt-auth` feature — authentication is
+the host's job, and `api` is complete without knowing what fills it (D1).
+`cargo run -p demo -- seed` gives the tenant switcher two tenants, each with
+a Stripe customer, two plans and one (`incomplete`, by design — see
+"Seeding two demo tenants" above) subscription.
+
+Phase 4c delivered the six write routes above, `BillingProvider` expanded
+with SetupIntent, Checkout Session and payment-method set-default/detach,
+all going through the Phase 2 idempotency ledger; `service`'s `Writes` use
+cases enforcing §7.4's orderings; `AppState` carrying the host-supplied
+`CheckoutUrls`. Phase 4b delivered the five read routes, the generic tenant
+extractor, `api`-owned DTOs, and keyset invoice pagination (migration
+`0013`). Phase 4a delivered the `service` webhook processor (every
+`init-spec.md` §10.4 event type), the `persistence` adapters, `POST
+/webhooks/stripe`, and the `demo` composition root. The frontend is still a
+later phase.

@@ -117,7 +117,7 @@ pub fn webhook_router(state: AppState) -> Router {
 /// use api::{ApiError, AppState, billing_router};
 /// use axum::extract::FromRequestParts;
 /// use axum::http::request::Parts;
-/// use domain::{DomainError, TenantId};
+/// use domain::TenantId;
 ///
 /// // The host's adapter: pull the `TenantId` its middleware inserted.
 /// struct HostTenant(TenantId);
@@ -134,8 +134,7 @@ pub fn webhook_router(state: AppState) -> Router {
 ///             .get::<TenantId>()
 ///             .copied()
 ///             .map(HostTenant)
-///             // any 4xx `ApiError` the host prefers for "not authenticated"
-///             .ok_or(ApiError::from(DomainError::NotFound))
+///             .ok_or(ApiError::Unauthorized)
 ///     }
 /// }
 ///

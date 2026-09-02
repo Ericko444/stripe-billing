@@ -8,16 +8,22 @@ use uuid::Uuid;
 /// Errors this crate's route handlers can produce, mapped to
 /// `application/problem+json` (RFC 9457) by `IntoResponse` below.
 ///
-/// Two variants only: a `domain` failure, and the one error this crate
-/// itself can produce before ever reaching `domain` -- a request missing a
-/// header a route requires. Both map to a status; neither leaks internals
-/// to the caller (`init-spec.md` §5.5).
+/// Three variants: a `domain` failure, the one error this crate itself can
+/// produce before ever reaching `domain` -- a request missing a header a
+/// route requires -- and `Unauthorized`, for a host's tenant extractor to
+/// reject with. All three map to a status; none leaks internals to the
+/// caller (`init-spec.md` §5.5).
 #[derive(Debug)]
 pub enum ApiError {
     /// A failure surfaced by `domain` or a use case built on it.
     Domain(DomainError),
     /// The `Stripe-Signature` header was absent from the request.
     MissingSignatureHeader,
+    /// A host's [`TenantExtractor`](crate::TenantExtractor) could not
+    /// authenticate the request. The one variant this crate defines for a
+    /// host to reject with rather than derive from `DomainError` -- there is
+    /// no domain concept of "not authenticated", only ports and tenants.
+    Unauthorized,
 }
 
 impl From<DomainError> for ApiError {
@@ -58,6 +64,15 @@ impl IntoResponse for ApiError {
                 StatusCode::BAD_REQUEST,
                 "Missing signature header",
                 "The Stripe-Signature header was not present on the request.",
+            ),
+            // A host's tenant extractor rejected the request. One `detail`
+            // shared by every cause (D5) -- no token, a malformed header, a
+            // bad signature and an expired token are all the same response,
+            // so the body itself cannot be used to probe which is which.
+            ApiError::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "Not authenticated",
+                "The request could not be authenticated.",
             ),
             // A client-supplied value that did not parse -- a pagination
             // cursor, in practice. The caller's mistake, so 400, not the
@@ -137,6 +152,11 @@ impl IntoResponse for ApiError {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/problem+json"),
         );
+        if matches!(self, ApiError::Unauthorized) {
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+        }
         response
     }
 }
@@ -151,6 +171,7 @@ impl std::fmt::Display for DisplayError<'_> {
         match self.0 {
             ApiError::Domain(err) => write!(f, "{err}"),
             ApiError::MissingSignatureHeader => write!(f, "missing Stripe-Signature header"),
+            ApiError::Unauthorized => write!(f, "request not authenticated"),
         }
     }
 }
@@ -265,6 +286,20 @@ mod tests {
         assert!(!rendered.contains("customers_pkey"));
         assert!(!rendered.contains("billing.customers"));
         assert!(!rendered.contains("constraint"));
+    }
+
+    #[tokio::test]
+    async fn unauthorized_maps_to_401_with_www_authenticate_bearer() {
+        let response = ApiError::Unauthorized.into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::WWW_AUTHENTICATE)
+                .and_then(|v| v.to_str().ok()),
+            Some("Bearer")
+        );
     }
 
     #[tokio::test]

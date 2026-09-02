@@ -7,10 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
-[features]
-default = []
-jwt-auth = ["dep:jsonwebtoken"]
-
 [dependencies]
 domain.workspace = true
 service.workspace = true
@@ -19,7 +15,6 @@ axum.workspace = true
 # it is already a workspace dependency (Phase 3's webhook signatures), and
 # the cursor only needs to be opaque, not compact.
 hex.workspace = true
-jsonwebtoken = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

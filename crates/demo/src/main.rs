@@ -5,27 +5,30 @@
 //! Postgres pool, runs migrations, wires the Postgres repositories, the
 //! Stripe webhook verifier and a logging [`BillingEventSink`] into a
 //! [`WebhookProcessor`], builds the read and write services `api`'s
-//! tenant-scoped router will need, and serves `api`'s `webhook_router`.
-//!
-//! The write service (`service::WriteService`) is wired from the same
-//! Postgres repositories plus a `stripe_adapter::StripeBillingProvider`,
-//! even though `billing_router` -- the router that would call it -- is not
-//! mounted until the demo gains a concrete tenant extractor in Phase 4d.
-//! Wiring it now keeps `AppState` complete and proves the seam compiles
-//! end to end.
+//! tenant-scoped router needs, and serves `billing_router::<DemoTenant>`
+//! merged with `webhook_router` and [`token::demo_token_router`] --
+//! thirteen routes in one process, guarded by `demo`'s own
+//! [`JwtDecoder`](jwt::JwtDecoder) except for the webhook route (verified by
+//! signature instead) and `/demo/token` itself, which has no auth of its
+//! own and exists only to mint tokens the others accept (Phase 4d).
 //!
 //! The workspace denies `unwrap`, `expect` and `panic`; the one documented
 //! exception (`init-spec.md` §5.5) is startup config parsing, and even here
 //! it is an explicit early return naming the missing variable, never a bare
 //! `unwrap`.
 
+mod seed;
+
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use api::{AppState, CheckoutUrls, webhook_router};
+use api::{AppState, CheckoutUrls, billing_router, webhook_router};
 use async_trait::async_trait;
+use axum::extract::Extension;
+use demo::jwt::{DemoTenant, JwtDecoder};
+use demo::token::demo_token_router;
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgOutboundRequestRepository,
@@ -59,6 +62,9 @@ struct Config {
     checkout_cancel_url: String,
     /// TCP port the webhook listener binds.
     port: u16,
+    /// The HS256 secret `demo`'s own `JwtDecoder` signs and verifies
+    /// `/demo/token` tokens with (Phase 4d, D1) -- `api` has no use for it.
+    billing_jwt_secret: SecretString,
 }
 
 /// Why startup configuration could not be assembled. Each variant names the
@@ -75,7 +81,7 @@ enum ConfigError {
 
 impl Config {
     /// Assembles config from a lookup function (`std::env::var` in `main`, a
-    /// fixture map in tests). All six values are required: a missing one is
+    /// fixture map in tests). All seven values are required: a missing one is
     /// a hard startup failure, not a defaulted value.
     fn from_env<F>(get: F) -> Result<Self, ConfigError>
     where
@@ -96,6 +102,7 @@ impl Config {
         let port = port_raw
             .parse::<u16>()
             .map_err(|_| ConfigError::InvalidPort(port_raw))?;
+        let billing_jwt_secret = required("BILLING_JWT_SECRET")?;
 
         Ok(Config {
             database_url,
@@ -104,6 +111,7 @@ impl Config {
             checkout_success_url,
             checkout_cancel_url,
             port,
+            billing_jwt_secret: SecretString::from(billing_jwt_secret),
         })
     }
 }
@@ -192,20 +200,31 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         cancel: config.checkout_cancel_url,
     };
 
-    // The tenant-scoped `billing_router` is not mounted here until the demo
-    // gains `POST /demo/token` and the `jwt-auth` feature (Phase 4d); for now
-    // the composition root serves only the webhook route it already had.
-    let router = webhook_router(AppState::new(
-        verifier,
-        handler,
-        reads,
-        writes,
-        checkout_urls,
-    ));
+    let state = AppState::new(verifier, handler, reads, writes, checkout_urls);
+    let decoder = JwtDecoder::new(&config.billing_jwt_secret);
+    let token_router = demo_token_router(&config.billing_jwt_secret);
+
+    // Scaffolding, said loudly and every time: `/demo/token` mints a token
+    // for whatever tenant id it is given, no authentication of its own.
+    // Never expose this route, or this binary, outside a local demo.
+    tracing::warn!(
+        "POST /demo/token is unauthenticated scaffolding -- it mints a token for any tenant id given to it"
+    );
+
+    // The eleven tenant-scoped routes, guarded by `demo`'s own extractor,
+    // merged with the webhook route (which authenticates by signature and
+    // needs no token) and the token mint (which has no auth of its own).
+    // `Extension(decoder)` is the layer `DemoTenant`'s rejection suite
+    // already proved every path needs (D3) -- installed once, here, over
+    // the merged router rather than any one part of it.
+    let router = billing_router::<DemoTenant>(state.clone())
+        .merge(webhook_router(state))
+        .merge(token_router)
+        .layer(Extension(decoder));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "serving POST /webhooks/stripe");
+    tracing::info!(%addr, "serving billing_router, webhook_router and /demo/token");
     axum::serve(listener, router).await?;
     Ok(())
 }
@@ -222,19 +241,37 @@ async fn main() -> ExitCode {
     // Load `.env` if present; real environment always wins.
     dotenvy::dotenv().ok();
 
-    let config = match Config::from_env(|key| std::env::var(key).ok()) {
-        Ok(config) => config,
-        Err(err) => {
-            eprintln!("startup configuration error: {err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    match run(config).await {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("fatal: {err}");
+    // `demo` has no argument parsing and must not gain a dependency for it
+    // (F1): two arms, `seed` and everything else, on the one argument this
+    // binary ever takes.
+    match std::env::args().nth(1).as_deref() {
+        Some("seed") => match seed::run_seed().await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("seed failed: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        Some(other) => {
+            eprintln!("usage: demo [seed]\nunknown argument: {other}");
             ExitCode::FAILURE
+        }
+        None => {
+            let config = match Config::from_env(|key| std::env::var(key).ok()) {
+                Ok(config) => config,
+                Err(err) => {
+                    eprintln!("startup configuration error: {err}");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match run(config).await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("fatal: {err}");
+                    ExitCode::FAILURE
+                }
+            }
         }
     }
 }
@@ -263,6 +300,7 @@ mod tests {
         ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
         ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
         ("PORT", "8080"),
+        ("BILLING_JWT_SECRET", "test-signing-secret"),
     ];
 
     #[test]
@@ -278,7 +316,18 @@ mod tests {
                     && c.stripe_secret_key.expose_secret() == "sk_test_abc123"
                     && c.checkout_success_url == "https://app.example/done"
                     && c.checkout_cancel_url == "https://app.example/billing"
+                    && c.billing_jwt_secret.expose_secret() == "test-signing-secret"
         ));
+    }
+
+    #[test]
+    fn debug_redacts_every_secret() {
+        let config = Config::from_env(getter(FULL_ENV));
+        let rendered = format!("{config:?}");
+
+        assert!(!rendered.contains("whsec_abc123"));
+        assert!(!rendered.contains("sk_test_abc123"));
+        assert!(!rendered.contains("test-signing-secret"));
     }
 
     #[test]
@@ -344,6 +393,23 @@ mod tests {
         ]));
 
         assert!(matches!(result, Err(ConfigError::Missing("PORT"))));
+    }
+
+    #[test]
+    fn missing_billing_jwt_secret_is_named() {
+        let result = Config::from_env(getter(&[
+            ("DATABASE_URL", "postgres://localhost/billing"),
+            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
+            ("STRIPE_SECRET_KEY", "sk_test_abc123"),
+            ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
+            ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
+            ("PORT", "8080"),
+        ]));
+
+        assert!(matches!(
+            result,
+            Err(ConfigError::Missing("BILLING_JWT_SECRET"))
+        ));
     }
 
     #[test]
