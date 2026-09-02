@@ -23,5 +23,9 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# Only the `write_routes` example (Phase 4c Task 18 scaffolding) needs this.
+[dev-dependencies]
+uuid.workspace = true
+
 [lints]
 workspace = true
