@@ -53,7 +53,12 @@ describe("SubscriptionPanel", () => {
   });
 
   test("shows the no-subscription call to action for a null subscription", async () => {
-    mockedApiRequest.mockResolvedValue(null);
+    // The no-subscription branch also renders a plan choice (`/plans`), so
+    // the mock must distinguish endpoints rather than resolve every call
+    // the same way.
+    mockedApiRequest.mockImplementation((path: string) =>
+      Promise.resolve(path === "/plans" ? [] : null),
+    );
     renderPanel();
     expect(await screen.findByText(/don't have a subscription yet/i)).toBeInTheDocument();
   });

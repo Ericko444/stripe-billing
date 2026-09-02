@@ -13,6 +13,35 @@ export type TenantId = keyof typeof SEEDED_TENANTS;
 
 const DEFAULT_TENANT: TenantId = "00000000-0000-0000-0000-000000000001";
 
+/** Checkout is a full-page redirect to Stripe and back -- the SPA remounts
+ * from scratch on return, so the in-memory tenant selection (§11.6: the
+ * token itself is never persisted) would otherwise silently reset to
+ * `DEFAULT_TENANT` even if a different tenant started the session. Not a
+ * credential, so `sessionStorage` for this one value doesn't undermine
+ * §11.6 -- it's which tenant to resume as, not proof of who they are. */
+const RETURN_TENANT_KEY = "billing-demo:return-tenant";
+
+function isSeededTenant(value: string): value is TenantId {
+  return value in SEEDED_TENANTS;
+}
+
+/** Called before redirecting to Stripe, so the tenant survives the round
+ * trip through `CheckoutReturn`. */
+export function rememberTenantForReturn(tenantId: TenantId): void {
+  sessionStorage.setItem(RETURN_TENANT_KEY, tenantId);
+}
+
+function initialTenant(): TenantId {
+  const stored = sessionStorage.getItem(RETURN_TENANT_KEY);
+  if (stored !== null) {
+    sessionStorage.removeItem(RETURN_TENANT_KEY);
+    if (isSeededTenant(stored)) {
+      return stored;
+    }
+  }
+  return DEFAULT_TENANT;
+}
+
 interface MintTokenResponse {
   token: string;
   expires_at: string;
@@ -49,12 +78,12 @@ async function mintToken(tenantId: TenantId): Promise<MintTokenResponse> {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [state, setState] = useState<AuthState>({
-    tenantId: DEFAULT_TENANT,
+  const [state, setState] = useState<AuthState>(() => ({
+    tenantId: initialTenant(),
     token: null,
     isMinting: true,
     error: null,
-  });
+  }));
 
   // `tokenRef` is kept current synchronously during render, not in an
   // effect: a descendant's query can fire in the same commit that flips

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../host/auth/AuthContext";
-import { cancelSubscription, getSubscription } from "../api/endpoints";
+import { cancelSubscription, getSubscription, startCheckoutSession } from "../api/endpoints";
 import { billingKeys } from "../api/keys";
 
 export function useSubscription() {
@@ -21,5 +21,15 @@ export function useCancelSubscription() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: billingKeys.subscription(tenantId) });
     },
+  });
+}
+
+/** No `onSuccess` invalidation here -- the caller redirects the browser to
+ * `data.url` (Stripe's hosted page) before any refetch would matter. The
+ * subscription this creates does not exist locally until the webhook
+ * mirrors it, which `CheckoutReturn`'s pending poll waits out. */
+export function useStartCheckoutSession() {
+  return useMutation({
+    mutationFn: (planId: string) => startCheckoutSession({ plan_id: planId }),
   });
 }

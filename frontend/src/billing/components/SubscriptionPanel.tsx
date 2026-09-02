@@ -1,10 +1,67 @@
 import { ApiProblem } from "../../host/api/apiClient";
-import { useCancelSubscription, useSubscription } from "../hooks/useSubscription";
+import {
+  useCancelSubscription,
+  useStartCheckoutSession,
+  useSubscription,
+} from "../hooks/useSubscription";
+import { usePlans } from "../hooks/usePlans";
 import { PlanSelector } from "./PlanSelector";
+import { formatMoney } from "../../money";
+import { rememberTenantForReturn, useAuth } from "../../host/auth/AuthContext";
+
+/** The no-subscription state's plan choice, starting a Checkout Session.
+ * Redirects to Stripe's hosted page on success -- there is nothing to show
+ * locally afterward until `CheckoutReturn`'s poll confirms the webhook. */
+function StartSubscription() {
+  const { tenantId } = useAuth();
+  const plansQuery = usePlans();
+  const startCheckout = useStartCheckoutSession();
+
+  if (plansQuery.isPending) {
+    return <p>Loading plans…</p>;
+  }
+  if (plansQuery.isError) {
+    const detail =
+      plansQuery.error instanceof ApiProblem ? plansQuery.error.detail : "Something went wrong.";
+    return <p role="alert">Could not load plans: {detail}</p>;
+  }
+
+  return (
+    <ul>
+      {plansQuery.data.map((plan) => (
+        <li key={plan.id}>
+          {plan.name} — {formatMoney(plan.amount)}
+          <button
+            type="button"
+            disabled={startCheckout.isPending}
+            onClick={() =>
+              startCheckout.mutate(plan.id, {
+                onSuccess: (data) => {
+                  rememberTenantForReturn(tenantId);
+                  window.location.href = data.url;
+                },
+              })
+            }
+          >
+            Subscribe
+          </button>
+        </li>
+      ))}
+      {startCheckout.isError && (
+        <p role="alert">
+          Could not start checkout:{" "}
+          {startCheckout.error instanceof ApiProblem
+            ? startCheckout.error.detail
+            : "Something went wrong."}
+        </p>
+      )}
+    </ul>
+  );
+}
 
 /** U1, D3's five-way state table. `incomplete` offers cancel directly here
- * (D2's demo path depends on it); `active` renders `PlanSelector` (U2).
- * Starting Checkout for the no-subscription state is wired in Task 9. */
+ * (D2's demo path depends on it); `active` renders `PlanSelector` (U2);
+ * no-subscription offers a plan choice that starts Checkout. */
 export function SubscriptionPanel() {
   const query = useSubscription();
   const cancelSubscription = useCancelSubscription();
@@ -25,6 +82,7 @@ export function SubscriptionPanel() {
     return (
       <section>
         <p>You don't have a subscription yet.</p>
+        <StartSubscription />
       </section>
     );
   }
