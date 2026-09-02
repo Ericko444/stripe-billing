@@ -27,8 +27,16 @@ pub async fn create_setup_intent<R: OutboundRequestRepository>(
         .reserve(tenant_id, "create_setup_intent", &request_fingerprint)
         .await?;
 
+    // Scoped to `card` deliberately, not left to automatic payment methods:
+    // the frontend's `PaymentElement` confirms inline with no `return_url`
+    // (Phase 5 D4), which only holds for a payment method that never
+    // redirects. Left unset, Stripe's default "automatic payment methods"
+    // surfaced wallets like Naver Pay first in this account's test mode --
+    // discovered live, not predicted -- which `confirmSetup` has no
+    // redirect landing page to come back to.
     let setup_intent = CreateSetupIntent::new()
         .customer(stripe_customer_id)
+        .payment_method_types(["card".to_string()])
         .customize()
         .request_strategy(RequestStrategy::Idempotent(idempotency_key(&reservation)?))
         .send(client)
