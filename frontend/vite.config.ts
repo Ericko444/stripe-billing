@@ -7,6 +7,11 @@ import react from "@vitejs/plugin-react";
 // the module -- CORS policy is host policy, and this keeps it out.
 export default defineConfig({
   plugins: [react()],
+  // Vite loads `.env` from its own project root by default; the real one
+  // (VITE_STRIPE_PUBLISHABLE_KEY, and everything `dotenvy` reads for
+  // `demo`) lives at the repo root, one directory up. Pointing here rather
+  // than duplicating a second `frontend/.env` keeps one source of truth.
+  envDir: "..",
   server: {
     port: 5173,
     proxy: {
