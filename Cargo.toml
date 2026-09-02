@@ -28,11 +28,18 @@ async-stripe = { version = "=1.0.0-rc.8", default-features = false, features = [
 # feature set. "subscription" brings the create/update/cancel request builders
 # Tasks 18-20 need; the SubscriptionItem response type is ungated.
 async-stripe-billing = { version = "=1.0.0-rc.8", features = ["subscription"] }
+# Checkout Session (subscription mode) for POST /subscriptions/checkout-session
+# (Phase 4c). default-features off, same rustls discipline as every line here.
+async-stripe-checkout = { version = "=1.0.0-rc.8", default-features = false, features = ["checkout_session"] }
 async-stripe-client-core = "=1.0.0-rc.8"
 # async-stripe-core defines no default feature set at all -- each resource
-# (customer, subscription, ...) is opt-in. "customer" is what Task 15 needs;
-# later tasks add their own resource features here as they need them.
-async-stripe-core = { version = "=1.0.0-rc.8", features = ["customer"] }
+# (customer, subscription, ...) is opt-in. "customer" is Phase 2's; Phase 4c
+# adds "setup_intent" (SetupIntent lives in core, NOT in async-stripe-payment
+# -- checked against the registry). Later tasks add their own resource features.
+async-stripe-core = { version = "=1.0.0-rc.8", features = ["customer", "setup_intent"] }
+# PaymentMethod detach + attach metadata for the payment-method routes
+# (Phase 4c). default-features off, same discipline as the lines above.
+async-stripe-payment = { version = "=1.0.0-rc.8", default-features = false, features = ["payment_method"] }
 async-trait = "0.1.92"
 axum = "0.8.9"
 dotenvy = "0.15.7"

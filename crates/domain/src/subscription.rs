@@ -214,6 +214,37 @@ pub trait SubscriptionRepository {
         cancel_at_period_end: bool,
         event_created_at: OffsetDateTime,
     ) -> impl Future<Output = Result<EventApplication, DomainError>> + Send;
+
+    /// Repoints a subscription at a different local plan.
+    ///
+    /// **Deliberately separate from [`apply_event`](Self::apply_event), and
+    /// deliberately *not* guarded by §10.2's ordering rule.** The two write
+    /// disjoint columns for different reasons:
+    ///
+    /// - `apply_event` writes what *Stripe* reported (status, period bounds,
+    ///   `cancel_at_period_end`), so it must be ordered against other Stripe
+    ///   events, and it cannot accept a `plan_id` — a webhook payload names a
+    ///   Stripe *price*, and the `updated` path has no local plan to write.
+    /// - `plan_id` is the one column no webhook ever writes. Its only source
+    ///   is a caller who explicitly asked for *this* local plan
+    ///   (`POST /subscriptions/{id}/change-plan`), so there is no older or
+    ///   newer event to lose a race against, and an ordering predicate would
+    ///   only be able to reject the write that is by definition authoritative.
+    ///
+    /// Call it **after** the corresponding Stripe call has succeeded (§7.4:
+    /// Stripe is authoritative, the local table is a cache). Concurrent plan
+    /// changes are last-write-wins, which is what Stripe itself does.
+    ///
+    /// **Precondition:** the row identified by `(tenant_id, id)` exists and
+    /// is not soft-deleted — callers reach this after a tenant-scoped `find`,
+    /// the same precondition `apply_event` documents. A row that does not
+    /// match is silently not updated rather than an error, for that reason.
+    fn set_plan(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        plan_id: PlanId,
+    ) -> impl Future<Output = Result<(), DomainError>> + Send;
 }
 
 #[cfg(test)]

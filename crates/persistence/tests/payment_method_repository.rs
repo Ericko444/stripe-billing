@@ -345,3 +345,103 @@ async fn detach_event_soft_deletes_and_the_guard_still_applies() -> Result<(), B
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn set_default_moves_the_flag_atomically_across_the_customer() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgPaymentMethodRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+
+    let old = repo
+        .create(
+            tenant,
+            customer_id,
+            "pm_old".into(),
+            "visa".into(),
+            "1111".into(),
+            true,
+        )
+        .await?;
+    let new = repo
+        .create(
+            tenant,
+            customer_id,
+            "pm_new".into(),
+            "visa".into(),
+            "2222".into(),
+            false,
+        )
+        .await?;
+
+    repo.set_default(tenant, customer_id, new.id).await?;
+
+    let rows = repo.list(tenant).await?;
+    let defaults: Vec<Uuid> = rows
+        .iter()
+        .filter(|p| p.is_default)
+        .map(|p| p.id.as_uuid())
+        .collect();
+    assert_eq!(
+        defaults,
+        vec![new.id.as_uuid()],
+        "exactly the new row is default; the old one was cleared in the same statement"
+    );
+    let _ = old;
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_default_is_scoped_to_the_tenant_and_customer() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgPaymentMethodRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_a = seed_customer(&db.pool, tenant).await?;
+    let customer_b = seed_customer(&db.pool, tenant).await?;
+
+    // customer_a has a default; a set_default naming customer_b's row must
+    // not touch customer_a's.
+    let a_default = repo
+        .create(
+            tenant,
+            customer_a,
+            "pm_a".into(),
+            "visa".into(),
+            "1111".into(),
+            true,
+        )
+        .await?;
+    let b_card = repo
+        .create(
+            tenant,
+            customer_b,
+            "pm_b".into(),
+            "visa".into(),
+            "2222".into(),
+            false,
+        )
+        .await?;
+
+    repo.set_default(tenant, customer_b, b_card.id).await?;
+
+    let a_after = repo
+        .find(tenant, a_default.id)
+        .await?
+        .ok_or("a row exists")?;
+    assert!(
+        a_after.is_default,
+        "another customer's default must be untouched"
+    );
+    let b_after = repo.find(tenant, b_card.id).await?.ok_or("b row exists")?;
+    assert!(b_after.is_default);
+
+    // And another tenant naming the same customer id changes nothing.
+    let intruder = TenantId::new(Uuid::new_v4());
+    repo.set_default(intruder, customer_a, a_default.id).await?;
+    let a_still = repo
+        .find(tenant, a_default.id)
+        .await?
+        .ok_or("a row exists")?;
+    assert!(a_still.is_default);
+    Ok(())
+}

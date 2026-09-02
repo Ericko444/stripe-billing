@@ -53,7 +53,7 @@ running Docker daemon. Webhooks can be exercised locally with
 
 ### Running the demo
 
-`cargo run -p demo` reads and validates three environment variables at
+`cargo run -p demo` reads and validates six environment variables at
 startup (all required; a missing one exits non-zero with a message naming
 it):
 
@@ -61,15 +61,23 @@ it):
 |----------|---------|
 | `DATABASE_URL` | Postgres connection string for the mirror and ledger tables |
 | `STRIPE_WEBHOOK_SIGNING_SECRET` | the `whsec_…` printed by `stripe listen`; wrapped in `SecretString` on read |
+| `STRIPE_SECRET_KEY` | the `sk_…` secret API key the write path's `BillingProvider` uses; wrapped in `SecretString` on read |
+| `CHECKOUT_SUCCESS_URL` | where Stripe returns the customer after a completed Checkout Session; host config, never a request field |
+| `CHECKOUT_CANCEL_URL` | where Stripe returns the customer if they abandon Checkout |
 | `PORT` | TCP port the `POST /webhooks/stripe` listener binds |
 
 `RUST_LOG` tunes tracing output. A `docs/walkthrough/phase-4a-webhook.md`
 records an end-to-end run against real Stripe traffic.
 
-## Read routes
+## Routes
 
-`api::billing_router` mounts five tenant-scoped `GET` routes, each reading
-only the local mirror (no outbound Stripe call):
+`api::billing_router` mounts eleven tenant-scoped routes; `api::webhook_router`
+serves `POST /webhooks/stripe` alone (no tenant). `billing_router` is generic
+over a host-supplied tenant extractor (`TenantExtractor`) — the tenant never
+crosses the wire as input, and ids in a path or body are always **local**
+uuids, resolved to Stripe ids server-side.
+
+**Read (Phase 4b)** — local mirror only, no outbound Stripe call:
 
 | Method | Path | Returns |
 |--------|------|---------|
@@ -79,19 +87,41 @@ only the local mirror (no outbound Stripe call):
 | GET | `/invoices/{id}` | one invoice; unknown id and another tenant's id both 404 |
 | GET | `/payment-methods` | the tenant's stored cards (brand / last4 / default only) |
 
-`billing_router` is generic over a host-supplied tenant extractor
-(`TenantExtractor`); the tenant never crosses the wire as input. `demo`
-does not mount these yet — they need `POST /demo/token` and the `jwt-auth`
-feature, scheduled for Phase 4d — so for now they are exercised in `api`'s
-router tests only. `POST /webhooks/stripe` is served separately by
-`api::webhook_router`, which takes no tenant.
+**Write (Phase 4c)** — each calls Stripe through the idempotency ledger;
+ownership is checked before the outbound call, so a cross-tenant id is a 404
+with no call made (§7.4):
+
+| Method | Path | Does |
+|--------|------|------|
+| POST | `/subscriptions/checkout-session` | Checkout Session (`subscription` mode); returns the hosted `url` |
+| POST | `/subscriptions/{id}/change-plan` | change plan, prorated; snapshot applied through the §10.2 guard |
+| POST | `/subscriptions/{id}/cancel` | cancel at period end (`at_period_end` absent ⇒ `true`) or immediately |
+| POST | `/payment-methods/setup-intent` | SetupIntent → `client_secret` for the frontend |
+| POST | `/payment-methods/{id}/default` | set default (Stripe first, then the mirror in one statement) |
+| DELETE | `/payment-methods/{id}` | detach at Stripe, then soft-delete the mirror; 204 |
+
+**Webhook (Phase 4a):**
+
+| Method | Path | Does |
+|--------|------|------|
+| POST | `/webhooks/stripe` | verify signature, dedup, apply to the mirror; no tenant context |
+
+**Pending (Phase 4d):** `POST /demo/token`, the `demo` route that issues a
+JWT and lets `demo` mount `billing_router` behind the `jwt-auth` feature.
+Until then the eleven tenant-scoped routes are exercised in `api`'s router
+and tenancy tests, and against real Stripe test mode in
+`docs/walkthrough/phase-4c-stripe-rehearsal.md`.
 
 ## Status
 
-Phase 4b complete: the five read routes above, the generic tenant
-extractor, `api`-owned DTOs, and keyset invoice pagination (migration
-`0013`). Phase 4a delivered the `service` webhook processor (every
-`init-spec.md` §10.4 event type), the `persistence` adapters, `POST
-/webhooks/stripe`, and the `demo` composition root. `stripe-adapter`'s
-outbound `BillingProvider`, the `jwt-auth` demo wiring, and the frontend
-are still later phases.
+Phase 4c complete (pending the manual Stripe rehearsal, Task 18): the six
+write routes above, `BillingProvider` expanded with SetupIntent, Checkout
+Session and payment-method set-default/detach, all going through the Phase 2
+idempotency ledger; `service`'s `Writes` use cases enforcing §7.4's
+orderings; `AppState` carrying the host-supplied `CheckoutUrls`. Phase 4b
+delivered the five read routes, the generic tenant extractor, `api`-owned
+DTOs, and keyset invoice pagination (migration `0013`). Phase 4a delivered
+the `service` webhook processor (every `init-spec.md` §10.4 event type), the
+`persistence` adapters, `POST /webhooks/stripe`, and the `demo` composition
+root. The `jwt-auth` demo wiring (`POST /demo/token`) and the frontend are
+still later phases.

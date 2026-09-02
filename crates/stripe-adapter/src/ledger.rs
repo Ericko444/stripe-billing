@@ -1,8 +1,11 @@
 use domain::{
     DomainError, OutboundRequest, OutboundRequestId, OutboundRequestRepository, TenantId,
 };
+use stripe::IdempotencyKey;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
+
+use crate::StripeError;
 
 /// How long a persisted idempotency key is trusted to still be live at
 /// Stripe. Stripe documents roughly 24 hours; this stays a little under
@@ -19,6 +22,22 @@ pub struct Reservation {
     pub id: OutboundRequestId,
     /// The key to send to Stripe on this attempt.
     pub idempotency_key: String,
+}
+
+/// Turns a reservation's key string into the SDK's [`IdempotencyKey`].
+///
+/// Fallible on purpose: the key came from the ledger, which mints a v4 uuid
+/// and so is always valid in practice -- but the ledger's key column is
+/// plain `TEXT`, so a malformed value stays a typed error rather than an
+/// `unwrap` (which the workspace lints deny anyway).
+///
+/// Lives here, next to [`Reservation`], rather than in one adapter module:
+/// every module that sends a mutating call needs it (Phase 4c Task 4 moved
+/// it out of `subscriptions.rs`).
+pub(crate) fn idempotency_key(reservation: &Reservation) -> Result<IdempotencyKey, DomainError> {
+    IdempotencyKey::new(&reservation.idempotency_key)
+        .map_err(|err| StripeError::Config(err.to_string()))
+        .map_err(DomainError::from)
 }
 
 /// The idempotency ledger's reserve/complete state machine. Knows nothing

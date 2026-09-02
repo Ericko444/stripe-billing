@@ -16,7 +16,7 @@ use api::{AppState, webhook_router};
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use common::StubReads;
+use common::{StubReads, UnusedWrites, checkout_urls};
 use domain::{DomainError, VerifiedEvent, WebhookEventId, WebhookReceipt, WebhookVerifier};
 use serde_json::json;
 use service::{EventOutcome, NotAppliedReason, WebhookHandler};
@@ -111,6 +111,8 @@ fn app_state(verifier: Arc<StubVerifier>, outcome: EventOutcome) -> AppState {
         verifier,
         Arc::new(StubHandler { outcome }),
         Arc::new(StubReads::default()),
+        Arc::new(UnusedWrites),
+        checkout_urls(),
     )
 }
 

@@ -3,18 +3,33 @@
 // setup for the router-level tests.
 #![allow(dead_code)]
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::io;
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use api::{ApiError, AppState};
+use time::OffsetDateTime;
+
+use api::{ApiError, AppState, CheckoutUrls};
 use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use domain::{
-    DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, PaymentMethod, Plan, Subscription,
-    SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
+    CheckoutSessionSnapshot, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
+    PaymentMethod, PaymentMethodId, Plan, PlanId, SetupIntentSnapshot, Subscription,
+    SubscriptionId, SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
-use service::{EventOutcome, Reads, WebhookHandler};
+use service::{EventOutcome, Reads, WebhookHandler, Writes};
+use tracing_subscriber::fmt::MakeWriter;
 use uuid::Uuid;
+
+/// Locks a `Mutex`, recovering from poisoning rather than panicking -- the
+/// workspace lints deny `unwrap`/`expect`, and a poisoned test double is
+/// still readable.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Test tenant extractor: reads the tenant from an `x-tenant` header. Stands
 /// in for the host's real (authenticated) extractor -- all `billing_router`
@@ -162,12 +177,369 @@ impl WebhookHandler for UnusedHandler {
     }
 }
 
+/// A `Writes` the read-route and webhook tests never reach. Every method
+/// returns an error, so a regression that routes a read through the write
+/// path fails loudly rather than silently passing.
+pub struct UnusedWrites;
+
+#[async_trait]
+impl Writes for UnusedWrites {
+    async fn ensure_customer(&self, _tenant: TenantId) -> Result<String, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+
+    async fn create_setup_intent(
+        &self,
+        _tenant: TenantId,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+
+    async fn change_plan(
+        &self,
+        _tenant: TenantId,
+        _subscription_id: SubscriptionId,
+        _plan_id: PlanId,
+    ) -> Result<Subscription, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+
+    async fn cancel_subscription(
+        &self,
+        _tenant: TenantId,
+        _subscription_id: SubscriptionId,
+        _at_period_end: bool,
+    ) -> Result<Subscription, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+
+    async fn set_default_payment_method(
+        &self,
+        _tenant: TenantId,
+        _payment_method_id: PaymentMethodId,
+    ) -> Result<PaymentMethod, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+
+    async fn remove_payment_method(
+        &self,
+        _tenant: TenantId,
+        _payment_method_id: PaymentMethodId,
+    ) -> Result<(), DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+
+    async fn start_checkout_session(
+        &self,
+        _tenant: TenantId,
+        _plan_id: PlanId,
+        _success_url: &str,
+        _cancel_url: &str,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        Err(DomainError::Provider(
+            "UnusedWrites: the write path is not exercised by this test".to_string(),
+        ))
+    }
+}
+
+/// A `Writes` fake for the write-route tests. Mimics `WriteService`'s
+/// tenant->customer bookkeeping in memory: `ensure_customer` links a tenant
+/// to a fresh `cus_...` on first call and returns the same id after;
+/// `create_setup_intent` resolves the customer first, then hands back a
+/// `client_secret` derived from it so a test can tell two tenants' intents
+/// apart. `change_plan` and `cancel_subscription` look a seeded subscription
+/// up tenant-scoped (via `seed_subscription`), exactly the way
+/// `WriteService` does, so a cross-tenant id 404s here too. Every reached
+/// call is recorded for assertions -- a call that 404s before mutation is
+/// **not** recorded, mirroring "the provider is never called" for a wrong
+/// tenant.
+#[derive(Default)]
+pub struct StubWrites {
+    customers: Mutex<HashMap<TenantId, String>>,
+    subscriptions: Mutex<Vec<Subscription>>,
+    payment_methods: Mutex<Vec<PaymentMethod>>,
+    plans: Mutex<Vec<Plan>>,
+    pub ensure_customer_calls: Mutex<Vec<TenantId>>,
+    pub setup_intent_calls: Mutex<Vec<(TenantId, String)>>,
+    pub change_plan_calls: Mutex<Vec<(TenantId, SubscriptionId, PlanId)>>,
+    pub cancel_calls: Mutex<Vec<(TenantId, SubscriptionId, bool)>>,
+    pub set_default_calls: Mutex<Vec<(TenantId, PaymentMethodId)>>,
+    pub remove_calls: Mutex<Vec<(TenantId, PaymentMethodId)>>,
+    pub checkout_calls: Mutex<Vec<(TenantId, PlanId)>>,
+}
+
+impl StubWrites {
+    /// The `(tenant, stripe_customer_id)` pairs passed through
+    /// `create_setup_intent`, in call order.
+    pub fn setup_intent_calls(&self) -> Vec<(TenantId, String)> {
+        lock(&self.setup_intent_calls).clone()
+    }
+
+    /// The `(tenant, subscription_id, plan_id)` triples for which
+    /// `change_plan` actually reached its "provider" call, in order.
+    pub fn change_plan_calls(&self) -> Vec<(TenantId, SubscriptionId, PlanId)> {
+        lock(&self.change_plan_calls).clone()
+    }
+
+    /// The `(tenant, subscription_id, at_period_end)` triples for which
+    /// `cancel_subscription` actually reached its "provider" call, in order.
+    pub fn cancel_calls(&self) -> Vec<(TenantId, SubscriptionId, bool)> {
+        lock(&self.cancel_calls).clone()
+    }
+
+    /// Seeds a subscription row `change_plan`/`cancel_subscription` can find.
+    pub fn seed_subscription(&self, subscription: Subscription) {
+        lock(&self.subscriptions).push(subscription);
+    }
+
+    /// Seeds a payment-method row `set_default_payment_method` /
+    /// `remove_payment_method` can find.
+    pub fn seed_payment_method(&self, payment_method: PaymentMethod) {
+        lock(&self.payment_methods).push(payment_method);
+    }
+
+    /// Seeds a plan row `start_checkout_session` can resolve.
+    pub fn seed_plan(&self, plan: Plan) {
+        lock(&self.plans).push(plan);
+    }
+
+    /// The `(tenant, plan_id)` pairs for which `start_checkout_session`
+    /// actually reached its "provider" call, in order.
+    pub fn checkout_calls(&self) -> Vec<(TenantId, PlanId)> {
+        lock(&self.checkout_calls).clone()
+    }
+
+    /// The `(tenant, payment_method_id)` pairs for which
+    /// `set_default_payment_method` actually reached mutation, in order.
+    pub fn set_default_calls(&self) -> Vec<(TenantId, PaymentMethodId)> {
+        lock(&self.set_default_calls).clone()
+    }
+
+    /// The `(tenant, payment_method_id)` pairs for which
+    /// `remove_payment_method` actually reached mutation, in order.
+    pub fn remove_calls(&self) -> Vec<(TenantId, PaymentMethodId)> {
+        lock(&self.remove_calls).clone()
+    }
+}
+
+#[async_trait]
+impl Writes for StubWrites {
+    async fn ensure_customer(&self, tenant: TenantId) -> Result<String, DomainError> {
+        lock(&self.ensure_customer_calls).push(tenant);
+        Ok(lock(&self.customers)
+            .entry(tenant)
+            .or_insert_with(|| format!("cus_{}", tenant.as_uuid().simple()))
+            .clone())
+    }
+
+    async fn create_setup_intent(
+        &self,
+        tenant: TenantId,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        let customer = self.ensure_customer(tenant).await?;
+        lock(&self.setup_intent_calls).push((tenant, customer.clone()));
+        Ok(SetupIntentSnapshot {
+            client_secret: format!("seti_{customer}_secret_test"),
+        })
+    }
+
+    async fn change_plan(
+        &self,
+        tenant: TenantId,
+        subscription_id: SubscriptionId,
+        plan_id: PlanId,
+    ) -> Result<Subscription, DomainError> {
+        let mut subscriptions = lock(&self.subscriptions);
+        let subscription = subscriptions
+            .iter_mut()
+            .find(|s| s.tenant_id == tenant && s.id == subscription_id)
+            .ok_or(DomainError::NotFound)?;
+        lock(&self.change_plan_calls).push((tenant, subscription_id, plan_id));
+        subscription.plan_id = plan_id;
+        subscription.status = SubscriptionStatus::Active;
+        Ok(subscription.clone())
+    }
+
+    async fn cancel_subscription(
+        &self,
+        tenant: TenantId,
+        subscription_id: SubscriptionId,
+        at_period_end: bool,
+    ) -> Result<Subscription, DomainError> {
+        let mut subscriptions = lock(&self.subscriptions);
+        let subscription = subscriptions
+            .iter_mut()
+            .find(|s| s.tenant_id == tenant && s.id == subscription_id)
+            .ok_or(DomainError::NotFound)?;
+        if subscription.status == SubscriptionStatus::Canceled {
+            return Ok(subscription.clone());
+        }
+        lock(&self.cancel_calls).push((tenant, subscription_id, at_period_end));
+        if at_period_end {
+            subscription.cancel_at_period_end = true;
+        } else {
+            subscription.status = SubscriptionStatus::Canceled;
+        }
+        Ok(subscription.clone())
+    }
+
+    async fn set_default_payment_method(
+        &self,
+        tenant: TenantId,
+        payment_method_id: PaymentMethodId,
+    ) -> Result<PaymentMethod, DomainError> {
+        let mut payment_methods = lock(&self.payment_methods);
+        // Ownership check first: an unknown or cross-tenant id 404s here the
+        // same way `WriteService` does, and never records a call.
+        let customer_id = payment_methods
+            .iter()
+            .find(|pm| {
+                pm.tenant_id == tenant && pm.id == payment_method_id && pm.deleted_at.is_none()
+            })
+            .map(|pm| pm.customer_id)
+            .ok_or(DomainError::NotFound)?;
+
+        lock(&self.set_default_calls).push((tenant, payment_method_id));
+        for pm in payment_methods
+            .iter_mut()
+            .filter(|pm| pm.tenant_id == tenant && pm.customer_id == customer_id)
+        {
+            pm.is_default = pm.id == payment_method_id;
+        }
+        payment_methods
+            .iter()
+            .find(|pm| pm.id == payment_method_id)
+            .cloned()
+            .ok_or(DomainError::NotFound)
+    }
+
+    async fn remove_payment_method(
+        &self,
+        tenant: TenantId,
+        payment_method_id: PaymentMethodId,
+    ) -> Result<(), DomainError> {
+        let mut payment_methods = lock(&self.payment_methods);
+        let row = payment_methods
+            .iter_mut()
+            .find(|pm| {
+                pm.tenant_id == tenant && pm.id == payment_method_id && pm.deleted_at.is_none()
+            })
+            .ok_or(DomainError::NotFound)?;
+        lock(&self.remove_calls).push((tenant, payment_method_id));
+        row.deleted_at = Some(OffsetDateTime::now_utc());
+        Ok(())
+    }
+
+    async fn start_checkout_session(
+        &self,
+        tenant: TenantId,
+        plan_id: PlanId,
+        _success_url: &str,
+        _cancel_url: &str,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        // Resolve the plan tenant-scoped first, like `WriteService` -- a
+        // cross-tenant or unknown id 404s here and records no call.
+        let price_id = lock(&self.plans)
+            .iter()
+            .find(|p| p.tenant_id == tenant && p.id == plan_id)
+            .map(|p| p.stripe_price_id.clone())
+            .ok_or(DomainError::NotFound)?;
+        let customer = self.ensure_customer(tenant).await?;
+        lock(&self.checkout_calls).push((tenant, plan_id));
+        Ok(CheckoutSessionSnapshot {
+            url: format!("https://checkout.stripe.com/c/pay/cs_{customer}_{price_id}"),
+            stripe_session_id: "cs_stub".to_string(),
+        })
+    }
+}
+
+/// A `tracing` sink that appends every formatted line to a shared buffer, so
+/// a test can install it with `tracing::subscriber::set_default` and assert
+/// on what was (not) logged during a request.
+#[derive(Clone, Default)]
+pub struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+impl CapturedLogs {
+    /// Everything logged through this sink so far, as a lossy UTF-8 string.
+    pub fn contents(&self) -> String {
+        String::from_utf8_lossy(&lock(&self.0)).into_owned()
+    }
+}
+
+impl io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        lock(&self.0).extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> MakeWriter<'a> for CapturedLogs {
+    type Writer = CapturedLogs;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// Fixed Checkout redirect URLs for the router tests -- `AppState` needs a
+/// [`CheckoutUrls`], and no test asserts on their value except the
+/// checkout-session route's own.
+pub fn checkout_urls() -> CheckoutUrls {
+    CheckoutUrls {
+        success: "https://test.example/checkout/ok".to_string(),
+        cancel: "https://test.example/checkout/cancelled".to_string(),
+    }
+}
+
 /// `AppState` wired for a tenant-scoped route test: real reads, inert webhook
-/// deps.
+/// and write deps.
 pub fn app_state(reads: StubReads) -> AppState {
     AppState::new(
         Arc::new(UnusedVerifier),
         Arc::new(UnusedHandler),
         Arc::new(reads),
+        Arc::new(UnusedWrites),
+        checkout_urls(),
+    )
+}
+
+/// `AppState` for the write-route tests: inert webhook and read deps, a real
+/// (caller-supplied) `Writes`.
+pub fn app_state_writes(writes: Arc<dyn Writes>) -> AppState {
+    AppState::new(
+        Arc::new(UnusedVerifier),
+        Arc::new(UnusedHandler),
+        Arc::new(StubReads::default()),
+        writes,
+        checkout_urls(),
+    )
+}
+
+/// `AppState` with **both** a real read stub and a real write stub -- the
+/// whole-surface tenancy suite drives read and write routes through one
+/// state.
+pub fn app_state_full(reads: StubReads, writes: Arc<dyn Writes>) -> AppState {
+    AppState::new(
+        Arc::new(UnusedVerifier),
+        Arc::new(UnusedHandler),
+        Arc::new(reads),
+        writes,
+        checkout_urls(),
     )
 }

@@ -5,17 +5,20 @@
 //! directly rather than through `create` -- these tests exercise lookups
 //! and the ordering guard, not insertion mechanics.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use domain::{
-    BillingEvent, BillingEventSink, Customer, CustomerId, CustomerRepository, DomainError,
-    EventApplication, Invoice, InvoiceCursor, InvoiceId, InvoicePage, InvoiceRepository,
-    InvoiceStatus, Money, PaymentMethod, PaymentMethodId, PaymentMethodRepository, Plan, PlanId,
-    PlanRepository, SinkError, Subscription, SubscriptionId, SubscriptionRepository,
-    SubscriptionStatus, TenantId, WebhookEvent, WebhookEventId, WebhookEventRepository,
+    BillingEvent, BillingEventSink, BillingProvider, CancellationTiming, CheckoutSessionParams,
+    CheckoutSessionSnapshot, CreateCustomerParams, Customer, CustomerId, CustomerRepository,
+    CustomerSnapshot, DomainError, EventApplication, Invoice, InvoiceCursor, InvoiceId,
+    InvoicePage, InvoiceRepository, InvoiceStatus, Money, PaymentMethod, PaymentMethodId,
+    PaymentMethodRepository, Plan, PlanId, PlanRepository, SetupIntentSnapshot, SinkError,
+    Subscription, SubscriptionId, SubscriptionRepository, SubscriptionSnapshot, SubscriptionStatus,
+    TenantId, UpdateCustomerParams, WebhookEvent, WebhookEventId, WebhookEventRepository,
 };
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 /// Locks `mutex`, recovering from poisoning rather than panicking -- these
@@ -26,6 +29,12 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+/// A shared, ordered record of *which* double was reached, so the
+/// `init-spec.md` §7.4 tests can assert "the provider ran before the
+/// repository." Both [`StubBillingProvider`] and [`InMemoryPaymentMethods`]
+/// push into the same one -- `"provider"` and `"repository"` respectively.
+pub(crate) type CallLog = Arc<Mutex<Vec<&'static str>>>;
 
 #[derive(Default)]
 pub(crate) struct InMemoryCustomers {
@@ -201,6 +210,23 @@ impl SubscriptionRepository for InMemorySubscriptions {
         row.last_event_created_at = Some(event_created_at);
         Ok(EventApplication::Applied)
     }
+
+    async fn set_plan(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        plan_id: PlanId,
+    ) -> Result<(), DomainError> {
+        // Mirrors the SQL exactly: tenant-scoped, no ordering predicate, and
+        // a non-matching row is silently not updated.
+        if let Some(row) = lock(&self.rows)
+            .iter_mut()
+            .find(|s| s.tenant_id == tenant_id && s.id == id && s.deleted_at.is_none())
+        {
+            row.plan_id = plan_id;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -364,11 +390,27 @@ impl InvoiceRepository for InMemoryInvoices {
 #[derive(Default)]
 pub(crate) struct InMemoryPaymentMethods {
     rows: Mutex<Vec<PaymentMethod>>,
+    call_log: Option<CallLog>,
 }
 
 impl InMemoryPaymentMethods {
     pub(crate) fn seed(&self, payment_method: PaymentMethod) {
         lock(&self.rows).push(payment_method);
+    }
+
+    /// Like `default()`, but `set_default` and `detach_event` push
+    /// `"repository"` into `log` when reached -- the §7.4 ordering tests.
+    pub(crate) fn with_call_log(log: CallLog) -> Self {
+        Self {
+            rows: Mutex::default(),
+            call_log: Some(log),
+        }
+    }
+
+    fn record(&self) {
+        if let Some(log) = &self.call_log {
+            lock(log).push("repository");
+        }
     }
 }
 
@@ -482,12 +524,30 @@ impl PaymentMethodRepository for InMemoryPaymentMethods {
         }
     }
 
+    async fn set_default(
+        &self,
+        tenant_id: TenantId,
+        customer_id: CustomerId,
+        id: PaymentMethodId,
+    ) -> Result<(), DomainError> {
+        self.record();
+        // Mirror the SQL: is_default = (id == target) across the customer's
+        // live rows, in one pass -- no "two defaults or none" window.
+        for row in lock(&self.rows).iter_mut().filter(|p| {
+            p.tenant_id == tenant_id && p.customer_id == customer_id && p.deleted_at.is_none()
+        }) {
+            row.is_default = row.id == id;
+        }
+        Ok(())
+    }
+
     async fn detach_event(
         &self,
         tenant_id: TenantId,
         stripe_payment_method_id: &str,
         event_created_at: OffsetDateTime,
     ) -> Result<EventApplication, DomainError> {
+        self.record();
         let mut rows = lock(&self.rows);
         let Some(row) = rows.iter_mut().find(|p| {
             p.tenant_id == tenant_id
@@ -663,5 +723,229 @@ impl BillingEventSink for InMemorySink {
         }
         lock(&self.events).push(event);
         Ok(())
+    }
+}
+
+/// A [`BillingProvider`] double for the write-path use-case tests.
+///
+/// Counts `create_customer` calls so a test can assert the provider was
+/// **not** reached (the "already linked" path of `ensure_customer`), and
+/// records the inputs passed to `create_setup_intent`, `change_plan` and
+/// `cancel_subscription` so a test can assert what the use case actually
+/// sent. Returns deterministic snapshots -- `create_subscription` and
+/// `update_customer` have no caller among the use cases wired so far, and
+/// return a `Provider` error rather than panic, which the workspace lints
+/// deny.
+#[derive(Default)]
+pub(crate) struct StubBillingProvider {
+    create_customer_calls: AtomicUsize,
+    setup_intent_customers: Mutex<Vec<String>>,
+    change_plan_calls: Mutex<Vec<(String, String, String)>>,
+    cancel_calls: Mutex<Vec<(String, CancellationTiming)>>,
+    set_default_calls: Mutex<Vec<(String, String)>>,
+    detach_calls: Mutex<Vec<String>>,
+    checkout_calls: Mutex<Vec<(String, String)>>,
+    call_log: Option<CallLog>,
+    fail_payment_method_ops: bool,
+}
+
+impl StubBillingProvider {
+    /// A double for the §7.4 ordering tests: pushes `"provider"` into `log`
+    /// when a payment-method call is reached, and -- when `fail` -- returns a
+    /// `Provider` error from it. Pairing this (`fail = true`) with a check
+    /// that the mirror did not move is what catches a reversed
+    /// (mirror-first) implementation.
+    pub(crate) fn for_ordering_test(log: CallLog, fail: bool) -> Self {
+        Self {
+            call_log: Some(log),
+            fail_payment_method_ops: fail,
+            ..Self::default()
+        }
+    }
+
+    /// The `(stripe_customer_id, stripe_payment_method_id)` pairs passed to
+    /// `set_default_payment_method`, in order. Empty if it was never reached.
+    pub(crate) fn set_default_calls(&self) -> Vec<(String, String)> {
+        lock(&self.set_default_calls).clone()
+    }
+
+    /// The `stripe_payment_method_id`s passed to `detach_payment_method`, in
+    /// order. Empty if it was never reached.
+    pub(crate) fn detach_calls(&self) -> Vec<String> {
+        lock(&self.detach_calls).clone()
+    }
+
+    /// The `(stripe_customer_id, stripe_price_id)` pairs passed to
+    /// `create_checkout_session`, in order. Empty if it was never reached.
+    pub(crate) fn checkout_calls(&self) -> Vec<(String, String)> {
+        lock(&self.checkout_calls).clone()
+    }
+
+    /// How many times `create_customer` has been called on this double.
+    pub(crate) fn create_customer_calls(&self) -> usize {
+        self.create_customer_calls.load(Ordering::SeqCst)
+    }
+
+    /// The `stripe_customer_id`s passed to `create_setup_intent`, in order.
+    pub(crate) fn setup_intent_customers(&self) -> Vec<String> {
+        lock(&self.setup_intent_customers).clone()
+    }
+
+    /// The `(stripe_subscription_id, stripe_subscription_item_id,
+    /// new_stripe_price_id)` triples passed to `change_plan`, in order.
+    pub(crate) fn change_plan_calls(&self) -> Vec<(String, String, String)> {
+        lock(&self.change_plan_calls).clone()
+    }
+
+    /// The `(stripe_subscription_id, timing)` pairs passed to
+    /// `cancel_subscription`, in order.
+    pub(crate) fn cancel_calls(&self) -> Vec<(String, CancellationTiming)> {
+        lock(&self.cancel_calls).clone()
+    }
+}
+
+#[async_trait]
+impl BillingProvider for StubBillingProvider {
+    async fn create_customer(
+        &self,
+        _tenant_id: TenantId,
+        _params: CreateCustomerParams,
+    ) -> Result<CustomerSnapshot, DomainError> {
+        let n = self.create_customer_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(CustomerSnapshot {
+            stripe_customer_id: format!("cus_stub_{n}"),
+        })
+    }
+
+    async fn update_customer(
+        &self,
+        _tenant_id: TenantId,
+        _stripe_customer_id: &str,
+        _params: UpdateCustomerParams,
+    ) -> Result<CustomerSnapshot, DomainError> {
+        Err(DomainError::Provider(
+            "update_customer not stubbed".to_string(),
+        ))
+    }
+
+    async fn create_subscription(
+        &self,
+        _tenant_id: TenantId,
+        _stripe_customer_id: &str,
+        _stripe_price_id: &str,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        Err(DomainError::Provider(
+            "create_subscription not stubbed".to_string(),
+        ))
+    }
+
+    async fn change_plan(
+        &self,
+        _tenant_id: TenantId,
+        stripe_subscription_id: &str,
+        stripe_subscription_item_id: &str,
+        new_stripe_price_id: &str,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        lock(&self.change_plan_calls).push((
+            stripe_subscription_id.to_string(),
+            stripe_subscription_item_id.to_string(),
+            new_stripe_price_id.to_string(),
+        ));
+        Ok(SubscriptionSnapshot {
+            stripe_subscription_id: stripe_subscription_id.to_string(),
+            stripe_subscription_item_id: stripe_subscription_item_id.to_string(),
+            status: SubscriptionStatus::Active,
+            current_period_start: OffsetDateTime::now_utc(),
+            current_period_end: OffsetDateTime::now_utc() + Duration::days(30),
+            cancel_at_period_end: false,
+        })
+    }
+
+    async fn cancel_subscription(
+        &self,
+        _tenant_id: TenantId,
+        stripe_subscription_id: &str,
+        timing: CancellationTiming,
+    ) -> Result<SubscriptionSnapshot, DomainError> {
+        lock(&self.cancel_calls).push((stripe_subscription_id.to_string(), timing));
+        let (status, cancel_at_period_end) = match timing {
+            CancellationTiming::AtPeriodEnd => (SubscriptionStatus::Active, true),
+            CancellationTiming::Immediate => (SubscriptionStatus::Canceled, false),
+        };
+        Ok(SubscriptionSnapshot {
+            stripe_subscription_id: stripe_subscription_id.to_string(),
+            stripe_subscription_item_id: "si_stub".to_string(),
+            status,
+            current_period_start: OffsetDateTime::now_utc(),
+            current_period_end: OffsetDateTime::now_utc() + Duration::days(30),
+            cancel_at_period_end,
+        })
+    }
+
+    async fn create_setup_intent(
+        &self,
+        _tenant_id: TenantId,
+        stripe_customer_id: &str,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        lock(&self.setup_intent_customers).push(stripe_customer_id.to_string());
+        Ok(SetupIntentSnapshot {
+            client_secret: format!("seti_for_{stripe_customer_id}_secret_stub"),
+        })
+    }
+
+    async fn set_default_payment_method(
+        &self,
+        _tenant_id: TenantId,
+        stripe_customer_id: &str,
+        stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError> {
+        if let Some(log) = &self.call_log {
+            lock(log).push("provider");
+        }
+        lock(&self.set_default_calls).push((
+            stripe_customer_id.to_string(),
+            stripe_payment_method_id.to_string(),
+        ));
+        if self.fail_payment_method_ops {
+            return Err(DomainError::Provider(
+                "simulated Stripe failure".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn detach_payment_method(
+        &self,
+        _tenant_id: TenantId,
+        stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError> {
+        if let Some(log) = &self.call_log {
+            lock(log).push("provider");
+        }
+        lock(&self.detach_calls).push(stripe_payment_method_id.to_string());
+        if self.fail_payment_method_ops {
+            return Err(DomainError::Provider(
+                "simulated Stripe failure".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn create_checkout_session(
+        &self,
+        _tenant_id: TenantId,
+        params: CheckoutSessionParams,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        lock(&self.checkout_calls).push((
+            params.stripe_customer_id.clone(),
+            params.stripe_price_id.clone(),
+        ));
+        Ok(CheckoutSessionSnapshot {
+            url: format!(
+                "https://checkout.stripe.com/c/pay/cs_stub_{}",
+                params.stripe_price_id
+            ),
+            stripe_session_id: "cs_stub".to_string(),
+        })
     }
 }

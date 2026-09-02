@@ -49,6 +49,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -135,6 +136,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-stripe-checkout"
+version = "1.0.0-rc.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6630dbba85de2b1000a005b4e6f205b09e0cfdbd72fd0ee2676e55938bc731a8"
+dependencies = [
+ "async-stripe-client-core",
+ "async-stripe-shared",
+ "async-stripe-types",
+ "miniserde",
+ "serde",
+ "smol_str",
+ "tracing",
+]
+
+[[package]]
 name = "async-stripe-client-core"
 version = "1.0.0-rc.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -157,6 +173,21 @@ name = "async-stripe-core"
 version = "1.0.0-rc.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d71c7d42ab20f94af44ec5fd49a7e17d5a07e0a89e50ede3a915d1a027b5cad"
+dependencies = [
+ "async-stripe-client-core",
+ "async-stripe-shared",
+ "async-stripe-types",
+ "miniserde",
+ "serde",
+ "smol_str",
+ "tracing",
+]
+
+[[package]]
+name = "async-stripe-payment"
+version = "1.0.0-rc.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26938d973656c60c321c3218f590f64051bbab747817a9d9fcb7115d4b412ffc"
 dependencies = [
  "async-stripe-client-core",
  "async-stripe-shared",
@@ -629,6 +660,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -2512,8 +2544,10 @@ version = "0.1.0"
 dependencies = [
  "async-stripe",
  "async-stripe-billing",
+ "async-stripe-checkout",
  "async-stripe-client-core",
  "async-stripe-core",
+ "async-stripe-payment",
  "async-trait",
  "domain",
  "hex",

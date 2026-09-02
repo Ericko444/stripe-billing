@@ -223,4 +223,30 @@ impl PaymentMethodRepository for PgPaymentMethodRepository {
             Ok(EventApplication::Applied)
         }
     }
+
+    async fn set_default(
+        &self,
+        tenant_id: TenantId,
+        customer_id: CustomerId,
+        id: PaymentMethodId,
+    ) -> Result<(), DomainError> {
+        // One statement: is_default becomes true for exactly the target row
+        // and false for every sibling, atomically -- no "two defaults or
+        // none" window. No ordering predicate: this column, chosen this way,
+        // has no webhook writer to race (see the port's rustdoc).
+        sqlx::query(
+            "UPDATE billing.payment_methods \
+                SET is_default = (id = $3) \
+              WHERE tenant_id = $1 AND customer_id = $2 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(customer_id.as_uuid())
+        .bind(id.as_uuid())
+        .execute(&self.pool)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        Ok(())
+    }
 }

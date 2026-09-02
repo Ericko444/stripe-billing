@@ -1,11 +1,15 @@
 use async_trait::async_trait;
 use domain::{
-    BillingProvider, CancellationTiming, CreateCustomerParams, CustomerSnapshot, DomainError,
-    OutboundRequestRepository, SubscriptionSnapshot, TenantId, UpdateCustomerParams,
+    BillingProvider, CancellationTiming, CheckoutSessionParams, CheckoutSessionSnapshot,
+    CreateCustomerParams, CustomerSnapshot, DomainError, OutboundRequestRepository,
+    SetupIntentSnapshot, SubscriptionSnapshot, TenantId, UpdateCustomerParams,
 };
 
 use crate::ledger::Ledger;
-use crate::{StripeConfig, StripeError, build_client, customers, subscriptions};
+use crate::{
+    StripeConfig, StripeError, build_client, checkout, customers, payment_methods, setup_intents,
+    subscriptions,
+};
 
 /// Stripe-backed implementation of `domain::BillingProvider`: fingerprint
 /// every mutating call, reserve and persist an idempotency key through
@@ -122,6 +126,66 @@ impl<R: OutboundRequestRepository> StripeBillingProvider<R> {
         )
         .await
     }
+
+    /// Creates a SetupIntent for an existing Stripe customer. Same signature
+    /// as `BillingProvider::create_setup_intent`.
+    pub async fn create_setup_intent(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        setup_intents::create_setup_intent(
+            &self.client,
+            &self.ledger,
+            tenant_id,
+            stripe_customer_id,
+        )
+        .await
+    }
+
+    /// Sets a customer's default payment method. Same signature as
+    /// `BillingProvider::set_default_payment_method`.
+    pub async fn set_default_payment_method(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+        stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError> {
+        payment_methods::set_default_payment_method(
+            &self.client,
+            &self.ledger,
+            tenant_id,
+            stripe_customer_id,
+            stripe_payment_method_id,
+        )
+        .await
+    }
+
+    /// Detaches a payment method from its customer. Same signature as
+    /// `BillingProvider::detach_payment_method`.
+    pub async fn detach_payment_method(
+        &self,
+        tenant_id: TenantId,
+        stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError> {
+        payment_methods::detach_payment_method(
+            &self.client,
+            &self.ledger,
+            tenant_id,
+            stripe_payment_method_id,
+        )
+        .await
+    }
+
+    /// Creates a `subscription`-mode Checkout Session. Same signature as
+    /// `BillingProvider::create_checkout_session`.
+    pub async fn create_checkout_session(
+        &self,
+        tenant_id: TenantId,
+        params: CheckoutSessionParams,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        checkout::create_checkout_session(&self.client, &self.ledger, tenant_id, params).await
+    }
 }
 
 /// The port impl a host wires behind `dyn BillingProvider`. Each method is a
@@ -187,5 +251,45 @@ impl<R: OutboundRequestRepository + Send + Sync> BillingProvider for StripeBilli
     ) -> Result<SubscriptionSnapshot, DomainError> {
         StripeBillingProvider::cancel_subscription(self, tenant_id, stripe_subscription_id, timing)
             .await
+    }
+
+    async fn create_setup_intent(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+    ) -> Result<SetupIntentSnapshot, DomainError> {
+        StripeBillingProvider::create_setup_intent(self, tenant_id, stripe_customer_id).await
+    }
+
+    async fn set_default_payment_method(
+        &self,
+        tenant_id: TenantId,
+        stripe_customer_id: &str,
+        stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError> {
+        StripeBillingProvider::set_default_payment_method(
+            self,
+            tenant_id,
+            stripe_customer_id,
+            stripe_payment_method_id,
+        )
+        .await
+    }
+
+    async fn detach_payment_method(
+        &self,
+        tenant_id: TenantId,
+        stripe_payment_method_id: &str,
+    ) -> Result<(), DomainError> {
+        StripeBillingProvider::detach_payment_method(self, tenant_id, stripe_payment_method_id)
+            .await
+    }
+
+    async fn create_checkout_session(
+        &self,
+        tenant_id: TenantId,
+        params: CheckoutSessionParams,
+    ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        StripeBillingProvider::create_checkout_session(self, tenant_id, params).await
     }
 }

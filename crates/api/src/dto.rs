@@ -12,8 +12,8 @@
 //! to parse a locale back out). Timestamps are RFC 3339 UTC strings.
 
 use domain::{
-    Currency, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, Money, PaymentMethod,
-    Plan, Subscription,
+    CheckoutSessionSnapshot, Currency, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
+    Money, PaymentMethod, Plan, SetupIntentSnapshot, Subscription,
 };
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcOffset};
@@ -99,6 +99,61 @@ impl From<Subscription> for SubscriptionDto {
     }
 }
 
+/// Request body for `POST /subscriptions/{id}/change-plan`. `plan_id` is the
+/// **local** plan id (a uuid), resolved to a Stripe price id server-side --
+/// never a Stripe id itself, consistent with `SubscriptionDto.plan_id` and
+/// with 4b's wire rule that ids in bodies are local.
+#[derive(Debug, Deserialize)]
+pub struct ChangePlanRequest {
+    /// The local id of the plan to change to.
+    pub plan_id: String,
+}
+
+/// Request body for `POST /subscriptions/{id}/cancel`.
+///
+/// `at_period_end` absent defaults to `true` -- the safer of the two: a
+/// client that forgets the field gets "cancels at the period boundary," not
+/// "cancels immediately." `#[serde(deny_unknown_fields)]` is deliberately
+/// not used (§9 decision 6): an extra key, such as a spoofed `tenant_id`,
+/// must stay inert rather than fail the request.
+#[derive(Debug, Deserialize)]
+pub struct CancelRequest {
+    /// Whether the subscription ends at the current period's boundary
+    /// (`true`) or immediately (`false`).
+    #[serde(default = "default_at_period_end")]
+    pub at_period_end: bool,
+}
+
+fn default_at_period_end() -> bool {
+    true
+}
+
+/// Request body for `POST /subscriptions/checkout-session`. `plan_id` is the
+/// **local** plan id, resolved server-side. The success/cancel URLs are
+/// **not** here -- they are host config (P4), so a caller cannot redirect a
+/// customer anywhere after payment.
+#[derive(Debug, Deserialize)]
+pub struct CheckoutSessionRequest {
+    /// The local id of the plan to subscribe to.
+    pub plan_id: String,
+}
+
+/// Response to `POST /subscriptions/checkout-session`: the hosted Checkout
+/// page URL, and nothing else -- the frontend just redirects there. The
+/// `url` is browser-destined and appears **only** in this body, never a log
+/// line (§9), the same rule as `SetupIntentDto.client_secret`.
+#[derive(Debug, Serialize)]
+pub struct CheckoutSessionDto {
+    /// `https://checkout.stripe.com/...`.
+    pub url: String,
+}
+
+impl From<CheckoutSessionSnapshot> for CheckoutSessionDto {
+    fn from(snapshot: CheckoutSessionSnapshot) -> Self {
+        Self { url: snapshot.url }
+    }
+}
+
 /// A stored card on the wire. Display metadata only -- `brand`, `last4`,
 /// `is_default`, plus id and creation time. No card number, no expiry, no
 /// token: §7.4 keeps card data in Stripe and the mirror table never held
@@ -126,6 +181,28 @@ impl From<PaymentMethod> for PaymentMethodDto {
             last4: payment_method.last4,
             is_default: payment_method.is_default,
             created_at: rfc3339_utc(payment_method.created_at),
+        }
+    }
+}
+
+/// The response to `POST /payment-methods/setup-intent`: the SetupIntent's
+/// `client_secret`, and nothing else.
+///
+/// The `client_secret` is browser-destined and bearer-ish -- whoever holds
+/// it can attach a payment method to that customer. It belongs in this body
+/// and in no log line (§9; see `domain::SetupIntentSnapshot`'s own docs).
+/// The DTO carries only it on purpose: there is nothing else about the
+/// SetupIntent a caller of this route needs.
+#[derive(Debug, Serialize)]
+pub struct SetupIntentDto {
+    /// The SetupIntent `client_secret` (`seti_..._secret_...`).
+    pub client_secret: String,
+}
+
+impl From<SetupIntentSnapshot> for SetupIntentDto {
+    fn from(snapshot: SetupIntentSnapshot) -> Self {
+        Self {
+            client_secret: snapshot.client_secret,
         }
     }
 }
