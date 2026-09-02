@@ -59,6 +59,9 @@ struct Config {
     checkout_cancel_url: String,
     /// TCP port the webhook listener binds.
     port: u16,
+    /// The HS256 secret `demo`'s own `JwtDecoder` signs and verifies
+    /// `/demo/token` tokens with (Phase 4d, D1) -- `api` has no use for it.
+    billing_jwt_secret: SecretString,
 }
 
 /// Why startup configuration could not be assembled. Each variant names the
@@ -75,7 +78,7 @@ enum ConfigError {
 
 impl Config {
     /// Assembles config from a lookup function (`std::env::var` in `main`, a
-    /// fixture map in tests). All six values are required: a missing one is
+    /// fixture map in tests). All seven values are required: a missing one is
     /// a hard startup failure, not a defaulted value.
     fn from_env<F>(get: F) -> Result<Self, ConfigError>
     where
@@ -96,6 +99,7 @@ impl Config {
         let port = port_raw
             .parse::<u16>()
             .map_err(|_| ConfigError::InvalidPort(port_raw))?;
+        let billing_jwt_secret = required("BILLING_JWT_SECRET")?;
 
         Ok(Config {
             database_url,
@@ -104,6 +108,7 @@ impl Config {
             checkout_success_url,
             checkout_cancel_url,
             port,
+            billing_jwt_secret: SecretString::from(billing_jwt_secret),
         })
     }
 }
@@ -263,6 +268,7 @@ mod tests {
         ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
         ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
         ("PORT", "8080"),
+        ("BILLING_JWT_SECRET", "test-signing-secret"),
     ];
 
     #[test]
@@ -278,7 +284,18 @@ mod tests {
                     && c.stripe_secret_key.expose_secret() == "sk_test_abc123"
                     && c.checkout_success_url == "https://app.example/done"
                     && c.checkout_cancel_url == "https://app.example/billing"
+                    && c.billing_jwt_secret.expose_secret() == "test-signing-secret"
         ));
+    }
+
+    #[test]
+    fn debug_redacts_every_secret() {
+        let config = Config::from_env(getter(FULL_ENV));
+        let rendered = format!("{config:?}");
+
+        assert!(!rendered.contains("whsec_abc123"));
+        assert!(!rendered.contains("sk_test_abc123"));
+        assert!(!rendered.contains("test-signing-secret"));
     }
 
     #[test]
@@ -344,6 +361,23 @@ mod tests {
         ]));
 
         assert!(matches!(result, Err(ConfigError::Missing("PORT"))));
+    }
+
+    #[test]
+    fn missing_billing_jwt_secret_is_named() {
+        let result = Config::from_env(getter(&[
+            ("DATABASE_URL", "postgres://localhost/billing"),
+            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
+            ("STRIPE_SECRET_KEY", "sk_test_abc123"),
+            ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
+            ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
+            ("PORT", "8080"),
+        ]));
+
+        assert!(matches!(
+            result,
+            Err(ConfigError::Missing("BILLING_JWT_SECRET"))
+        ));
     }
 
     #[test]
