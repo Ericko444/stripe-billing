@@ -1,23 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../host/auth/AuthContext";
-import { cancelSubscription, getSubscription } from "../api/endpoints";
+import { changePlan, getPlans } from "../api/endpoints";
 import { billingKeys } from "../api/keys";
 
-export function useSubscription() {
+export function usePlans() {
   const { tenantId, token } = useAuth();
   return useQuery({
-    queryKey: billingKeys.subscription(tenantId),
-    queryFn: getSubscription,
+    queryKey: billingKeys.plans(tenantId),
+    queryFn: getPlans,
     enabled: token !== null,
   });
 }
 
-export function useCancelSubscription() {
+export function useChangePlan(subscriptionId: string) {
   const { tenantId } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (subscriptionId: string) =>
-      cancelSubscription(subscriptionId, { at_period_end: false }),
+    mutationFn: (planId: string) => changePlan(subscriptionId, { plan_id: planId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: billingKeys.subscription(tenantId) });
     },
