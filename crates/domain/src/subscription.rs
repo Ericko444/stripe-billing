@@ -274,6 +274,7 @@ mod tests {
             SubscriptionStatus::PastDue,
             SubscriptionStatus::Canceled,
             SubscriptionStatus::Incomplete,
+            SubscriptionStatus::IncompleteExpired,
         ] {
             assert_eq!(SubscriptionStatus::try_from(status.as_str()), Ok(status));
         }
