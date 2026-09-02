@@ -153,12 +153,14 @@ where
 /// notification). Not spec-mandated -- the spec fixes `BillingEvent`'s
 /// shape and the ordering around calling the sink, not which event each
 /// status produces -- so the mapping is deliberately the smallest one that
-/// covers the three variants `service` currently defines: `Active` becomes
+/// covers the four variants `service` currently defines: `Active` becomes
 /// `SubscriptionActivated` (a new subscriber, or a recovery from
-/// `past_due`/`incomplete`); `Canceled` becomes `SubscriptionCanceled`;
-/// everything else (a period rollover, a `cancel_at_period_end` flip with
-/// no status change, `PastDue`, `Incomplete`) falls to the catch-all
-/// `SubscriptionUpdated`.
+/// `past_due`/`incomplete`); `Canceled` and `IncompleteExpired` both become
+/// `SubscriptionCanceled` -- both are terminal, and the host has no
+/// use case that distinguishes "ended after being active" from "never
+/// collected its first payment"; everything else (a period rollover, a
+/// `cancel_at_period_end` flip with no status change, `PastDue`,
+/// `Incomplete`) falls to the catch-all `SubscriptionUpdated`.
 fn billing_event_for(
     tenant_id: TenantId,
     subscription_id: SubscriptionId,
@@ -169,10 +171,12 @@ fn billing_event_for(
             tenant_id,
             subscription_id,
         },
-        SubscriptionStatus::Canceled => BillingEvent::SubscriptionCanceled {
-            tenant_id,
-            subscription_id,
-        },
+        SubscriptionStatus::Canceled | SubscriptionStatus::IncompleteExpired => {
+            BillingEvent::SubscriptionCanceled {
+                tenant_id,
+                subscription_id,
+            }
+        }
         SubscriptionStatus::PastDue | SubscriptionStatus::Incomplete => {
             BillingEvent::SubscriptionUpdated {
                 tenant_id,
