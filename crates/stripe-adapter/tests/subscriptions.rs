@@ -160,6 +160,11 @@ async fn create_subscription_returns_a_full_snapshot() -> Result<(), Box<dyn Err
         body.contains("items[0][price]=price_created"),
         "the price must be sent as the first item's price: {body}"
     );
+    assert!(
+        body.contains("payment_behavior=default_incomplete"),
+        "a customer with no payment method must get an incomplete \
+         subscription, not a rejected request: {body}"
+    );
 
     Ok(())
 }

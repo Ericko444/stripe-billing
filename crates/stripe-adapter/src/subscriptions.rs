@@ -4,9 +4,9 @@ use domain::{
 };
 use stripe::{RequestStrategy, StripeRequest};
 use stripe_billing::subscription::{
-    CancelSubscription, CreateSubscription, CreateSubscriptionItems, UpdateSubscription,
-    UpdateSubscriptionItems, UpdateSubscriptionPaymentBehavior,
-    UpdateSubscriptionProrationBehavior,
+    CancelSubscription, CreateSubscription, CreateSubscriptionItems,
+    CreateSubscriptionPaymentBehavior, UpdateSubscription, UpdateSubscriptionItems,
+    UpdateSubscriptionPaymentBehavior, UpdateSubscriptionProrationBehavior,
 };
 use time::OffsetDateTime;
 
@@ -21,6 +21,14 @@ use crate::{StripeError, fingerprint};
 ///
 /// Both inputs -- the customer id and the price id -- vary the request body,
 /// so both are in the fingerprint.
+///
+/// `payment_behavior: default_incomplete` is deliberate, not Stripe's
+/// unstated default: without it, a customer with no payment method makes
+/// Stripe **reject the request outright** ("no attached payment source")
+/// rather than create the subscription `incomplete` -- confirmed against a
+/// real test-mode account while building Phase 4d's seed (Plan 4d, P4),
+/// which depends on exactly the `incomplete`-not-rejected behavior this line
+/// guarantees.
 pub async fn create_subscription<R: OutboundRequestRepository>(
     client: &stripe::Client,
     ledger: &Ledger<R>,
@@ -44,6 +52,7 @@ pub async fn create_subscription<R: OutboundRequestRepository>(
     let subscription = CreateSubscription::new()
         .customer(stripe_customer_id)
         .items(items)
+        .payment_behavior(CreateSubscriptionPaymentBehavior::DefaultIncomplete)
         .customize()
         .request_strategy(RequestStrategy::Idempotent(idempotency_key(&reservation)?))
         .send(client)
