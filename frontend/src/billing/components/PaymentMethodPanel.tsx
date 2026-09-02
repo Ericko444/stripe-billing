@@ -2,7 +2,13 @@ import { useEffect, useState, type FormEvent } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { ApiProblem } from "../../host/api/apiClient";
-import { useCreateSetupIntent, usePaymentMethods } from "../hooks/usePaymentMethods";
+import {
+  useCreateSetupIntent,
+  usePaymentMethods,
+  useRemovePaymentMethod,
+  useSetDefaultPaymentMethod,
+} from "../hooks/usePaymentMethods";
+import type { PaymentMethodDto } from "../api/types";
 
 // F3: only the publishable key crosses into the bundle -- the VITE_ prefix
 // is what Vite inlines, and nothing carrying a secret may use it.
@@ -62,8 +68,52 @@ function AddCardForm({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-/** U4. Only the SetupIntent/Element flow and its pending poll (D4/D5) --
- * set-default and detach are Task 11. */
+/** One card row: set-default and detach, the latter gated by an in-page
+ * confirm step rather than `window.confirm` (Task 11). */
+function PaymentMethodRow({ pm }: { pm: PaymentMethodDto }) {
+  const setDefault = useSetDefaultPaymentMethod();
+  const removeMethod = useRemovePaymentMethod();
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  return (
+    <li>
+      {pm.brand} •••• {pm.last4}
+      {pm.is_default ? (
+        " (default)"
+      ) : (
+        <button type="button" disabled={setDefault.isPending} onClick={() => setDefault.mutate(pm.id)}>
+          Make default
+        </button>
+      )}
+      {confirmingRemove ? (
+        <>
+          {" "}
+          Remove this card?{" "}
+          <button
+            type="button"
+            disabled={removeMethod.isPending}
+            onClick={() =>
+              removeMethod.mutate(pm.id, { onSettled: () => setConfirmingRemove(false) })
+            }
+          >
+            Confirm
+          </button>{" "}
+          <button type="button" onClick={() => setConfirmingRemove(false)}>
+            Cancel
+          </button>
+        </>
+      ) : (
+        <button type="button" onClick={() => setConfirmingRemove(true)}>
+          Remove
+        </button>
+      )}
+      {setDefault.isError && <span role="alert"> Could not set default.</span>}
+      {removeMethod.isError && <span role="alert"> Could not remove.</span>}
+    </li>
+  );
+}
+
+/** U4. */
 export function PaymentMethodPanel() {
   const query = usePaymentMethods();
   const createSetupIntent = useCreateSetupIntent();
@@ -116,10 +166,7 @@ export function PaymentMethodPanel() {
       ) : (
         <ul>
           {query.data.map((pm) => (
-            <li key={pm.id}>
-              {pm.brand} •••• {pm.last4}
-              {pm.is_default ? " (default)" : ""}
-            </li>
+            <PaymentMethodRow key={pm.id} pm={pm} />
           ))}
         </ul>
       )}
