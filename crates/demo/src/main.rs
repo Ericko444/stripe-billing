@@ -17,6 +17,8 @@
 //! it is an explicit early return naming the missing variable, never a bare
 //! `unwrap`.
 
+mod seed;
+
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -239,19 +241,37 @@ async fn main() -> ExitCode {
     // Load `.env` if present; real environment always wins.
     dotenvy::dotenv().ok();
 
-    let config = match Config::from_env(|key| std::env::var(key).ok()) {
-        Ok(config) => config,
-        Err(err) => {
-            eprintln!("startup configuration error: {err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    match run(config).await {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("fatal: {err}");
+    // `demo` has no argument parsing and must not gain a dependency for it
+    // (F1): two arms, `seed` and everything else, on the one argument this
+    // binary ever takes.
+    match std::env::args().nth(1).as_deref() {
+        Some("seed") => match seed::run_seed().await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("seed failed: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        Some(other) => {
+            eprintln!("usage: demo [seed]\nunknown argument: {other}");
             ExitCode::FAILURE
+        }
+        None => {
+            let config = match Config::from_env(|key| std::env::var(key).ok()) {
+                Ok(config) => config,
+                Err(err) => {
+                    eprintln!("startup configuration error: {err}");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match run(config).await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("fatal: {err}");
+                    ExitCode::FAILURE
+                }
+            }
         }
     }
 }
