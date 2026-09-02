@@ -5,14 +5,10 @@
 //! Postgres pool, runs migrations, wires the Postgres repositories, the
 //! Stripe webhook verifier and a logging [`BillingEventSink`] into a
 //! [`WebhookProcessor`], builds the read and write services `api`'s
-//! tenant-scoped router will need, and serves `api`'s `webhook_router`.
-//!
-//! The write service (`service::WriteService`) is wired from the same
-//! Postgres repositories plus a `stripe_adapter::StripeBillingProvider`,
-//! even though `billing_router` -- the router that would call it -- is not
-//! mounted until the demo gains a concrete tenant extractor in Phase 4d.
-//! Wiring it now keeps `AppState` complete and proves the seam compiles
-//! end to end.
+//! tenant-scoped router needs, and serves `billing_router::<DemoTenant>`
+//! merged with `webhook_router` -- twelve routes in one process, guarded by
+//! `demo`'s own [`JwtDecoder`](jwt::JwtDecoder) except for the webhook route,
+//! which authenticates by signature instead (Phase 4d).
 //!
 //! The workspace denies `unwrap`, `expect` and `panic`; the one documented
 //! exception (`init-spec.md` §5.5) is startup config parsing, and even here
@@ -24,8 +20,10 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use api::{AppState, CheckoutUrls, webhook_router};
+use api::{AppState, CheckoutUrls, billing_router, webhook_router};
 use async_trait::async_trait;
+use axum::extract::Extension;
+use demo::jwt::{DemoTenant, JwtDecoder};
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgOutboundRequestRepository,
@@ -197,20 +195,21 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         cancel: config.checkout_cancel_url,
     };
 
-    // The tenant-scoped `billing_router` is not mounted here until the demo
-    // gains `POST /demo/token` and the `jwt-auth` feature (Phase 4d); for now
-    // the composition root serves only the webhook route it already had.
-    let router = webhook_router(AppState::new(
-        verifier,
-        handler,
-        reads,
-        writes,
-        checkout_urls,
-    ));
+    let state = AppState::new(verifier, handler, reads, writes, checkout_urls);
+    let decoder = JwtDecoder::new(&config.billing_jwt_secret);
+
+    // The eleven tenant-scoped routes, guarded by `demo`'s own extractor,
+    // merged with the webhook route (which authenticates by signature and
+    // needs no token). `Extension(decoder)` is the layer `DemoTenant`'s
+    // rejection suite already proved every path needs (D3) -- installed
+    // once, here, over the merged router rather than either half alone.
+    let router = billing_router::<DemoTenant>(state.clone())
+        .merge(webhook_router(state))
+        .layer(Extension(decoder));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "serving POST /webhooks/stripe");
+    tracing::info!(%addr, "serving billing_router and webhook_router");
     axum::serve(listener, router).await?;
     Ok(())
 }
