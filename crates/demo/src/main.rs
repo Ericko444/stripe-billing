@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use api::{AppState, CheckoutUrls, billing_router, webhook_router};
 use async_trait::async_trait;
+use axum::Router;
 use axum::extract::Extension;
 use demo::jwt::{DemoTenant, JwtDecoder};
 use demo::token::demo_token_router;
@@ -221,6 +222,13 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         .merge(webhook_router(state))
         .merge(token_router)
         .layer(Extension(decoder));
+
+    // The base path from §9. Every route moves together -- one rule beats a
+    // rule plus a carve-out -- so `/webhooks/stripe` moves too. Its
+    // signature is computed over the body, never the path, so the forward
+    // URL is the only thing that changes: `stripe listen --forward-to
+    // localhost:PORT/api/v1/webhooks/stripe`.
+    let router = Router::new().nest("/api/v1", router);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = TcpListener::bind(addr).await?;
