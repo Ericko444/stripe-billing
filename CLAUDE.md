@@ -7,9 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A standalone billing / subscriptions module — Rust workspace (Axum) plus a React/TS
 demo host.
 
-Current state: **workspace skeleton only**. Crate boundaries,
-dependency direction, lint policy and migration numbering exist; the domain
-model, adapters, API and frontend do not.
+Current state: **backend complete through Phase 4d.** The domain model, both
+adapters, the service layer, the Axum router and the demo composition root all
+exist and are tested — thirteen migrations, thirteen live routes (eleven
+tenant-scoped, plus the Stripe webhook and the demo token mint), served under
+`/api/v1`. The frontend (Phase 5) is merged — a React 19 / TypeScript / Vite
+demo host, ~1,545 lines under `frontend/src`, driving eleven of the thirteen
+routes from a browser.
 
 ## Commands
 
