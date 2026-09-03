@@ -3,13 +3,13 @@ import { ApiProblem } from "../../host/api/apiClient";
 import { useInvoices } from "../hooks/useInvoices";
 import { formatMoney } from "../../money";
 import { formatDate } from "../../format";
-import { Alert, Badge, Button, Card, EmptyState, Loading, Row } from "../../ui/primitives";
+import { Alert, Badge, Button, Card, EmptyState, Loading } from "../../ui/primitives";
 import type { InvoiceStatus } from "../api/types";
 
-const STATUS_TONE: Record<InvoiceStatus, "green" | "amber" | "red"> = {
-  paid: "green",
-  open: "amber",
-  failed: "red",
+const STATUS_TONE: Record<InvoiceStatus, "positive" | "caution" | "negative"> = {
+  paid: "positive",
+  open: "caution",
+  failed: "negative",
 };
 
 /** U3, 4b's keyset pagination -- pages by `next`, never an offset. "Load
@@ -49,24 +49,22 @@ export function InvoiceList() {
 
   return (
     <Card title="Invoices">
-      <div className="space-y-3">
-        <ul className="space-y-2">
+      <div className="stack">
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {page.items.map((invoice) => (
-            <li key={invoice.id}>
-              <Row>
-                <div>
-                  <p className="font-medium tabular-nums text-slate-900">
-                    {formatMoney(invoice.amount)}
-                  </p>
-                  <p className="mt-0.5 text-xs text-slate-500">{formatDate(invoice.created_at)}</p>
-                </div>
-                <Badge tone={STATUS_TONE[invoice.status]}>{invoice.status}</Badge>
-              </Row>
+            <li key={invoice.id} className="row">
+              <span className="mono">{formatMoney(invoice.amount)}</span>
+              <span className="muted">{formatDate(invoice.created_at)}</span>
+              <Badge tone={STATUS_TONE[invoice.status]}>{invoice.status}</Badge>
             </li>
           ))}
         </ul>
         {page.next !== undefined && (
-          <Button variant="ghost" onClick={() => setAfter(page.next)}>
+          <Button
+            variant="secondary"
+            style={{ alignSelf: "flex-start" }}
+            onClick={() => setAfter(page.next)}
+          >
             Load more
           </Button>
         )}

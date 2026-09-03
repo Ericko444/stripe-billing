@@ -27,43 +27,32 @@ export function PlanSelector({
   }
 
   return (
-    <div className="space-y-3">
-      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Plan</h3>
-      <ul className="grid gap-3 sm:grid-cols-2">
+    <div className="stack">
+      <span className="panel-label">Plan</span>
+      <div className="plan-grid">
         {plansQuery.data.map((plan) => {
           const isCurrent = plan.id === currentPlanId;
           return (
-            <li key={plan.id}>
-              <div
-                className={`flex h-full flex-col justify-between gap-4 rounded-xl border p-4 transition-colors ${
-                  isCurrent
-                    ? "border-indigo-300 bg-indigo-50/60 ring-1 ring-indigo-200"
-                    : "border-slate-200 hover:border-indigo-300"
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="font-medium text-slate-900">{plan.name}</p>
-                    {isCurrent && <Badge tone="green">current plan</Badge>}
-                  </div>
-                  <p className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-900">
-                    {formatMoney(plan.amount)}
-                  </p>
-                </div>
-                {!isCurrent && (
-                  <Button
-                    variant="secondary"
-                    disabled={changePlan.isPending}
-                    onClick={() => changePlan.mutate(plan.id)}
-                  >
-                    {changePlan.isPending ? "Switching…" : `Switch to ${plan.name}`}
-                  </Button>
-                )}
+            <div key={plan.id} className={`plan-card${isCurrent ? " is-current" : ""}`}>
+              <div className="plan-card-head">
+                <span className="plan-name">{plan.name}</span>
+                {isCurrent && <Badge tone="accent">current plan</Badge>}
               </div>
-            </li>
+              <div className="plan-price">{formatMoney(plan.amount)}</div>
+              {!isCurrent && (
+                <Button
+                  variant="secondary"
+                  block
+                  disabled={changePlan.isPending}
+                  onClick={() => changePlan.mutate(plan.id)}
+                >
+                  {changePlan.isPending ? "Switching…" : `Switch to ${plan.name}`}
+                </Button>
+              )}
+            </div>
           );
         })}
-      </ul>
+      </div>
       {changePlan.isError && (
         <Alert>
           Could not change plan:{" "}
@@ -73,7 +62,7 @@ export function PlanSelector({
         </Alert>
       )}
       {changePlan.isSuccess && (
-        <p className="text-sm font-medium text-emerald-700">Plan changed.</p>
+        <span style={{ fontSize: "13px", color: "var(--color-positive)" }}>Plan changed.</span>
       )}
     </div>
   );

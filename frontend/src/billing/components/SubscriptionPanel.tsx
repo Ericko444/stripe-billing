@@ -9,16 +9,18 @@ import { PlanSelector } from "./PlanSelector";
 import { formatMoney } from "../../money";
 import { formatDate } from "../../format";
 import { rememberTenantForReturn, useAuth } from "../../host/auth/AuthContext";
-import { Alert, Badge, Button, Card, EmptyState, Loading, Row } from "../../ui/primitives";
+import { Alert, Badge, Button, Card, Loading } from "../../ui/primitives";
 import type { SubscriptionStatus } from "../api/types";
 
-const STATUS_TONE: Record<SubscriptionStatus, "green" | "amber" | "slate" | "red"> = {
-  active: "green",
-  past_due: "red",
-  incomplete: "amber",
-  incomplete_expired: "slate",
-  canceled: "slate",
+const STATUS_TONE: Record<SubscriptionStatus, "positive" | "caution" | "negative"> = {
+  active: "positive",
+  past_due: "caution",
+  incomplete: "caution",
+  incomplete_expired: "negative",
+  canceled: "negative",
 };
+
+const SUBTITLE = "Live mirror of this tenant's Stripe subscription";
 
 /** The no-subscription state's plan choice, starting a Checkout Session.
  * Redirects to Stripe's hosted page on success -- there is nothing to show
@@ -38,35 +40,32 @@ function StartSubscription() {
   }
 
   return (
-    <div className="space-y-3">
-      <ul className="grid gap-3 sm:grid-cols-2">
+    <div className="stack">
+      <div className="plan-grid">
         {plansQuery.data.map((plan) => (
-          <li key={plan.id}>
-            <div className="flex h-full flex-col justify-between gap-4 rounded-xl border border-slate-200 p-4 transition-colors hover:border-indigo-300">
-              <div>
-                <p className="font-medium text-slate-900">{plan.name}</p>
-                <p className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-900">
-                  {formatMoney(plan.amount)}
-                </p>
-              </div>
-              <Button
-                variant="primary"
-                disabled={startCheckout.isPending}
-                onClick={() =>
-                  startCheckout.mutate(plan.id, {
-                    onSuccess: (data) => {
-                      rememberTenantForReturn(tenantId);
-                      window.location.href = data.url;
-                    },
-                  })
-                }
-              >
-                {startCheckout.isPending ? "Starting…" : "Subscribe"}
-              </Button>
+          <div key={plan.id} className="plan-card" style={{ boxShadow: "var(--shadow-sm)" }}>
+            <div className="plan-card-head">
+              <span className="plan-name">{plan.name}</span>
             </div>
-          </li>
+            <div className="plan-price">{formatMoney(plan.amount)}</div>
+            <Button
+              variant="primary"
+              block
+              disabled={startCheckout.isPending}
+              onClick={() =>
+                startCheckout.mutate(plan.id, {
+                  onSuccess: (data) => {
+                    rememberTenantForReturn(tenantId);
+                    window.location.href = data.url;
+                  },
+                })
+              }
+            >
+              {startCheckout.isPending ? "Starting…" : "Subscribe"}
+            </Button>
+          </div>
         ))}
-      </ul>
+      </div>
       {startCheckout.isError && (
         <Alert>
           Could not start checkout:{" "}
@@ -88,7 +87,7 @@ export function SubscriptionPanel() {
 
   if (query.isPending) {
     return (
-      <Card title="Subscription">
+      <Card title="Subscription" subtitle={SUBTITLE} prominent>
         <Loading>Loading your subscription…</Loading>
       </Card>
     );
@@ -98,7 +97,7 @@ export function SubscriptionPanel() {
     const detail =
       query.error instanceof ApiProblem ? query.error.detail : "Something went wrong.";
     return (
-      <Card title="Subscription">
+      <Card title="Subscription" subtitle={SUBTITLE} prominent>
         <Alert>Could not load your subscription: {detail}</Alert>
       </Card>
     );
@@ -108,9 +107,10 @@ export function SubscriptionPanel() {
 
   if (subscription === null) {
     return (
-      <Card title="Subscription" subtitle="Pick a plan to start a Stripe Checkout session">
-        <div className="space-y-4">
-          <EmptyState>You don't have a subscription yet.</EmptyState>
+      <Card title="Subscription" subtitle={SUBTITLE} prominent>
+        <div className="stack" style={{ gap: "12px" }}>
+          <p style={{ margin: 0, fontSize: "14px" }}>You don't have a subscription yet.</p>
+          <span className="panel-sub">Pick a plan to start a Stripe Checkout session</span>
           <StartSubscription />
         </div>
       </Card>
@@ -119,18 +119,21 @@ export function SubscriptionPanel() {
 
   if (subscription.status === "incomplete") {
     return (
-      <Card title="Subscription" action={<Badge tone="amber">incomplete</Badge>}>
-        <div className="space-y-4">
-          <p className="text-sm text-slate-600">
+      <Card title="Subscription" subtitle={SUBTITLE} prominent>
+        <div className="stack">
+          <Badge tone="caution">incomplete</Badge>
+          <p style={{ margin: 0, fontSize: "14px" }}>
             Your subscription was created but never paid for.
           </p>
-          <Button
-            variant="danger"
-            disabled={cancelSubscription.isPending}
-            onClick={() => cancelSubscription.mutate(subscription.id)}
-          >
-            {cancelSubscription.isPending ? "Cancelling…" : "Cancel"}
-          </Button>
+          <div>
+            <Button
+              variant="destructive"
+              disabled={cancelSubscription.isPending}
+              onClick={() => cancelSubscription.mutate(subscription.id)}
+            >
+              {cancelSubscription.isPending ? "Cancelling…" : "Cancel"}
+            </Button>
+          </div>
           {cancelSubscription.isError && (
             <Alert>
               Could not cancel:{" "}
@@ -145,23 +148,27 @@ export function SubscriptionPanel() {
   }
 
   return (
-    <Card
-      title="Subscription"
-      action={<Badge tone={STATUS_TONE[subscription.status]}>{subscription.status}</Badge>}
-    >
-      <div className="space-y-5">
-        <Row>
-          <div>
-            <p className="text-xs uppercase tracking-wide text-slate-400">Current period</p>
-            <p className="mt-0.5 text-sm font-medium text-slate-800">
-              {formatDate(subscription.current_period_start)} –{" "}
-              {formatDate(subscription.current_period_end)}
-            </p>
+    <Card title="Subscription" subtitle={SUBTITLE} prominent>
+      <div className="stack" style={{ gap: "14px" }}>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <Badge tone={STATUS_TONE[subscription.status]}>{subscription.status}</Badge>
+          {subscription.cancel_at_period_end && <Badge tone="caution">cancels at period end</Badge>}
+        </div>
+        <div>
+          <div className="field-label">Current period</div>
+          <div style={{ fontSize: "14px" }}>
+            {formatDate(subscription.current_period_start)} –{" "}
+            {formatDate(subscription.current_period_end)}
           </div>
-          {subscription.cancel_at_period_end && <Badge tone="amber">cancels at period end</Badge>}
-        </Row>
+        </div>
         {subscription.status === "active" && (
-          <PlanSelector subscriptionId={subscription.id} currentPlanId={subscription.plan_id} />
+          <>
+            <div className="hr" />
+            <PlanSelector
+              subscriptionId={subscription.id}
+              currentPlanId={subscription.plan_id}
+            />
+          </>
         )}
       </div>
     </Card>
