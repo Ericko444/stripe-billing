@@ -33,11 +33,16 @@ type AddCardPhase =
  * needed. `onSaved` hands control back to the panel, which owns the
  * pending poll (the card does not exist in this API until the webhook
  * mirrors it, same reasoning as `CheckoutReturn`). */
-function AddCardForm({ onSaved }: { onSaved: () => void }) {
+function AddCardForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => void }) {
   const stripe = useStripe();
   const elements = useElements();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The Element can fail to mount for reasons the API call never sees --
+  // most often a `client_secret` for a SetupIntent Stripe already
+  // settled (an idempotent replay of a spent key). Without this the
+  // form is a blank box with a dead Save button, F2's worst case.
+  const [elementFailed, setElementFailed] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -60,10 +65,27 @@ function AddCardForm({ onSaved }: { onSaved: () => void }) {
 
   return (
     <form onSubmit={handleSubmit} className="pe-box">
-      <PaymentElement />
+      {elementFailed ? (
+        <Alert>
+          The card form could not load. This usually means the setup session was already
+          used -- try again in a moment, or reseed the demo database.
+        </Alert>
+      ) : (
+        <PaymentElement
+          onLoadError={() => {
+            setError(null);
+            setElementFailed(true);
+          }}
+        />
+      )}
       <div className="pe-actions">
-        <Button type="submit" variant="primary" disabled={!stripe || saving}>
-          {saving ? "Saving…" : "Save card"}
+        {!elementFailed && (
+          <Button type="submit" variant="primary" disabled={!stripe || saving}>
+            {saving ? "Saving…" : "Save card"}
+          </Button>
+        )}
+        <Button type="button" variant="secondary" onClick={onCancel}>
+          Cancel
         </Button>
       </div>
       {error && (
@@ -240,6 +262,7 @@ export function PaymentMethodPanel() {
           >
             <AddCardForm
               onSaved={() => setPhase({ kind: "pending", countBefore: query.data.length })}
+              onCancel={() => setPhase({ kind: "idle" })}
             />
           </Elements>
         )}
