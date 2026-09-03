@@ -9,6 +9,7 @@ import {
   useSetDefaultPaymentMethod,
 } from "../hooks/usePaymentMethods";
 import type { PaymentMethodDto } from "../api/types";
+import { Alert, Badge, Button, Card, EmptyState, Loading, Notice, Row } from "../../ui/primitives";
 
 // F3: only the publishable key crosses into the bundle -- the VITE_ prefix
 // is what Vite inlines, and nothing carrying a secret may use it.
@@ -58,12 +59,15 @@ function AddCardForm({ onSaved }: { onSaved: () => void }) {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form
+      onSubmit={handleSubmit}
+      className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4"
+    >
       <PaymentElement />
-      <button type="submit" disabled={!stripe || saving}>
+      <Button type="submit" variant="primary" disabled={!stripe || saving}>
         {saving ? "Saving…" : "Save card"}
-      </button>
-      {error && <p role="alert">{error}</p>}
+      </Button>
+      {error && <Alert>{error}</Alert>}
     </form>
   );
 }
@@ -77,38 +81,65 @@ function PaymentMethodRow({ pm }: { pm: PaymentMethodDto }) {
 
   return (
     <li>
-      {pm.brand} •••• {pm.last4}
-      {pm.is_default ? (
-        " (default)"
-      ) : (
-        <button type="button" disabled={setDefault.isPending} onClick={() => setDefault.mutate(pm.id)}>
-          Make default
-        </button>
-      )}
-      {confirmingRemove ? (
-        <>
-          {" "}
-          Remove this card?{" "}
-          <button
-            type="button"
-            disabled={removeMethod.isPending}
-            onClick={() =>
-              removeMethod.mutate(pm.id, { onSettled: () => setConfirmingRemove(false) })
-            }
-          >
-            Confirm
-          </button>{" "}
-          <button type="button" onClick={() => setConfirmingRemove(false)}>
-            Cancel
-          </button>
-        </>
-      ) : (
-        <button type="button" onClick={() => setConfirmingRemove(true)}>
-          Remove
-        </button>
-      )}
-      {setDefault.isError && <span role="alert"> Could not set default.</span>}
-      {removeMethod.isError && <span role="alert"> Could not remove.</span>}
+      <Row>
+        <div className="flex items-center gap-3">
+          <span className="flex h-8 w-12 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-600">
+            {pm.brand}
+          </span>
+          <span className="font-medium tabular-nums text-slate-900">•••• {pm.last4}</span>
+          {pm.is_default && <Badge tone="green">default</Badge>}
+        </div>
+
+        <div className="ml-auto flex items-center gap-1">
+          {!pm.is_default && (
+            <Button
+              variant="ghost"
+              disabled={setDefault.isPending}
+              onClick={() => setDefault.mutate(pm.id)}
+            >
+              Make default
+            </Button>
+          )}
+          {!confirmingRemove && (
+            <Button variant="ghost" onClick={() => setConfirmingRemove(true)}>
+              Remove
+            </Button>
+          )}
+        </div>
+
+        {/* Its own full-width line inside the wrapping row: in the narrow
+            column the gate would otherwise reflow the card identity. */}
+        {confirmingRemove && (
+          <div className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg bg-red-50 px-3 py-2">
+            <span className="text-sm font-medium text-red-800">Remove this card?</span>
+            <span className="flex items-center gap-1">
+              <Button
+                variant="danger"
+                disabled={removeMethod.isPending}
+                onClick={() =>
+                  removeMethod.mutate(pm.id, { onSettled: () => setConfirmingRemove(false) })
+                }
+              >
+                Confirm
+              </Button>
+              <Button variant="ghost" onClick={() => setConfirmingRemove(false)}>
+                Cancel
+              </Button>
+            </span>
+          </div>
+        )}
+
+        {setDefault.isError && (
+          <span role="alert" className="text-sm text-red-700">
+            Could not set default.
+          </span>
+        )}
+        {removeMethod.isError && (
+          <span role="alert" className="text-sm text-red-700">
+            Could not remove.
+          </span>
+        )}
+      </Row>
     </li>
   );
 }
@@ -142,13 +173,21 @@ export function PaymentMethodPanel() {
   }, [phase, attempts, query.data]);
 
   if (query.isPending) {
-    return <section aria-busy="true">Loading payment methods…</section>;
+    return (
+      <Card title="Payment methods">
+        <Loading>Loading payment methods…</Loading>
+      </Card>
+    );
   }
 
   if (query.isError) {
     const detail =
       query.error instanceof ApiProblem ? query.error.detail : "Something went wrong.";
-    return <section role="alert">Could not load payment methods: {detail}</section>;
+    return (
+      <Card title="Payment methods">
+        <Alert>Could not load payment methods: {detail}</Alert>
+      </Card>
+    );
   }
 
   function startAddCard() {
@@ -160,34 +199,60 @@ export function PaymentMethodPanel() {
   }
 
   return (
-    <section>
-      {query.data.length === 0 ? (
-        <p>No payment methods yet.</p>
-      ) : (
-        <ul>
-          {query.data.map((pm) => (
-            <PaymentMethodRow key={pm.id} pm={pm} />
-          ))}
-        </ul>
-      )}
+    <Card
+      title="Payment methods"
+      action={
+        phase.kind === "idle" ? (
+          <Button variant="secondary" onClick={startAddCard}>
+            Add a card
+          </Button>
+        ) : undefined
+      }
+    >
+      <div className="space-y-4">
+        {query.data.length === 0 ? (
+          <EmptyState>No payment methods yet.</EmptyState>
+        ) : (
+          <ul className="space-y-2">
+            {query.data.map((pm) => (
+              <PaymentMethodRow key={pm.id} pm={pm} />
+            ))}
+          </ul>
+        )}
 
-      {phase.kind === "idle" && (
-        <button type="button" onClick={startAddCard}>
-          Add a card
-        </button>
-      )}
-      {phase.kind === "creating-intent" && <p aria-busy="true">Loading payment form…</p>}
-      {phase.kind === "form" && (
-        <Elements stripe={stripePromise} options={{ clientSecret: phase.clientSecret }}>
-          <AddCardForm
-            onSaved={() => setPhase({ kind: "pending", countBefore: query.data.length })}
-          />
-        </Elements>
-      )}
-      {phase.kind === "pending" && <p aria-busy="true">Confirming your card…</p>}
-      {phase.kind === "capped" && (
-        <p role="alert">Still waiting for Stripe to confirm. Is `stripe listen` running?</p>
-      )}
-    </section>
+        {phase.kind === "creating-intent" && <Loading>Loading payment form…</Loading>}
+        {/* F2: the setup-intent call has its own error surface. Without it a
+            failed mutation resets `phase` to idle and the button silently
+            does nothing, which is the one outcome a demo cannot explain. */}
+        {phase.kind === "idle" && createSetupIntent.isError && (
+          <Alert>
+            Could not start adding a card:{" "}
+            {createSetupIntent.error instanceof ApiProblem
+              ? createSetupIntent.error.detail
+              : "Something went wrong."}
+          </Alert>
+        )}
+        {/* `locale` pinned for the same reason D10 pins `formatMoney`'s: left
+            to the browser, the Element renders in whatever language the
+            machine happens to be set to, and the demo is in English.
+            Predictability beats politeness for something shown live. */}
+        {phase.kind === "form" && (
+          <Elements
+            stripe={stripePromise}
+            options={{ clientSecret: phase.clientSecret, locale: "en" }}
+          >
+            <AddCardForm
+              onSaved={() => setPhase({ kind: "pending", countBefore: query.data.length })}
+            />
+          </Elements>
+        )}
+        {phase.kind === "pending" && <Notice busy>Confirming your card…</Notice>}
+        {phase.kind === "capped" && (
+          <Notice>
+            Still waiting for Stripe to confirm. Is <code>stripe listen</code> running?
+          </Notice>
+        )}
+      </div>
+    </Card>
   );
 }
