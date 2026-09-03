@@ -1,22 +1,548 @@
-@import "tailwindcss";
+/*
+ * Nocturne — the design system from the "Billing Demo UI Spec" canvas
+ * (claude.ai/design project 23ae8de2). Adapted to a LIGHT ground for
+ * reviewer legibility, exactly as the spec's `.bd-light` block does; the
+ * base dark values are kept in a comment at the end for the documented
+ * token swap. Plain CSS on the tokens — no utility framework.
+ */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
-/* The demo is shown on a projector or a screen share, so the base sizes are
-   a notch larger than a typical dashboard and the contrast is high. */
-@layer base {
-  html {
-    -webkit-font-smoothing: antialiased;
+:root {
+  color-scheme: light;
+
+  --color-bg: #f6f6fa;
+  --color-surface: #ffffff;
+  --color-text: #1c1d29;
+  --color-accent: #5d5294; /* the spec's deepened blurple — 4.5:1 on white */
+  --color-accent-2: #5c5783;
+  --color-divider: color-mix(in srgb, #1c1d29 14%, transparent);
+
+  /* Light ground inverts the ramp: low steps read dark, high steps light. */
+  --color-neutral-100: #292b31;
+  --color-neutral-200: #3f424d;
+  --color-neutral-300: #595d6c;
+  --color-neutral-400: #75798c;
+  --color-neutral-500: #9397ab;
+  --color-neutral-600: #b2b6ca;
+  --color-neutral-700: #cfd3e5;
+  --color-neutral-800: #e4e7f5;
+  --color-neutral-900: #f3f5fe;
+
+  --color-accent-100: #2b2741;
+  --color-accent-200: #423a6a;
+  --color-accent-300: #5d5294;
+  --color-accent-400: #796cbf;
+  --color-accent-500: #968ae0;
+  --color-accent-600: #b5abfc;
+  --color-accent-700: #d2cefd;
+  --color-accent-800: #e7e5fe;
+  --color-accent-900: #f5f4ff;
+
+  /* Status roles — not in base Nocturne; added by the spec for billing. */
+  --color-positive: #216b4c;
+  --color-positive-bg: #e2f2e9;
+  --color-caution: #8a5c17;
+  --color-caution-bg: #faf0da;
+  --color-negative: #a13327;
+  --color-negative-bg: #fbe6e3;
+
+  --shadow-sm: 0 0 0 1px #e4e7f5;
+  --shadow-md: 0 0 0 1px #e4e7f5, 0 6px 18px rgba(30, 30, 55, 0.08);
+  --shadow-lg: 0 0 0 1px #cfd3e5, 0 20px 48px rgba(30, 30, 55, 0.16);
+
+  --font-heading: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Density 0.70× — the spec's compact scale. */
+  --space-1: 2.8px;
+  --space-2: 5.6px;
+  --space-3: 8.4px;
+  --space-4: 11.2px;
+  --space-6: 16.8px;
+  --space-8: 22.4px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-heading);
+  font-weight: 500; /* never bolder — hierarchy is size and space (readme) */
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-neutral-800);
+  color: var(--color-neutral-200);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+}
+
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* ── Rules ──────────────────────────────────────────────────────────────
+   Nocturne signature: fade to transparent over 48px at each end. */
+.hr {
+  height: 1px;
+  border: 0;
+  margin: 0;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px),
+    transparent
+  );
+}
+
+/* ── Buttons — the primary is an accent OUTLINE, never a fill ───────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  font-family: var(--font-heading);
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 1.2;
+  color: var(--color-text);
+  background: transparent;
+  border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-primary {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+.btn-primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+.btn-secondary {
+  border-color: var(--color-divider);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text) 7%, transparent);
+}
+.btn-secondary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text) 14%, transparent);
+}
+.btn-ghost {
+  color: var(--color-accent);
+  padding-inline: var(--space-1);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+.btn-ghost:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+.btn-destructive {
+  color: var(--color-negative);
+  border-color: var(--color-negative);
+}
+.btn-destructive:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-negative) 10%, transparent);
+}
+.btn-destructive:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-negative) 18%, transparent);
+}
+.btn-block {
+  width: 100%;
+}
+.btn-sm {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
+/* ── Form control ─────────────────────────────────────────────────────── */
+.input {
+  min-height: 36px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--color-text);
+  caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+}
+.input:hover {
+  border-color: color-mix(in srgb, var(--color-text) 40%, transparent);
+}
+.input:focus-visible {
+  border-color: var(--color-accent);
+  outline-offset: 0;
+}
+select.input {
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235d5294' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────── */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.elev-sm {
+  box-shadow: var(--shadow-sm);
+}
+.elev-md {
+  box-shadow: var(--shadow-md);
+}
+.elev-lg {
+  box-shadow: var(--shadow-lg);
+}
+
+/* ── Tags / badges ───────────────────────────────────────────────────── */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  border-radius: 6px;
+}
+.tag-neutral {
+  background: var(--color-neutral-800);
+  color: var(--color-neutral-100);
+}
+.tag-accent {
+  background: var(--color-accent-800);
+  color: var(--color-accent-200);
+}
+.tag-outline {
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+}
+.tag-positive {
+  background: var(--color-positive-bg);
+  color: var(--color-positive);
+}
+.tag-caution {
+  background: var(--color-caution-bg);
+  color: var(--color-caution);
+}
+.tag-negative {
+  background: var(--color-negative-bg);
+  color: var(--color-negative);
+}
+
+/* ── Navigation ──────────────────────────────────────────────────────── */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-neutral-800);
+}
+.nav-brand {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  font-size: 16px;
+  line-height: 1.2;
+}
+.nav-sub {
+  font-size: 11px;
+  color: var(--color-neutral-400);
+  line-height: 1.2;
+}
+
+/* ── App layout ──────────────────────────────────────────────────────── */
+.app {
+  min-height: 100vh;
+}
+.app-main {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+@media (max-width: 860px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
   }
-
-  body {
-    @apply bg-slate-50 text-slate-900 antialiased;
-    font-family:
-      ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-      "Helvetica Neue", Arial, sans-serif;
-  }
-
-  /* Stripe's Element renders in its own iframe and brings its own styles;
-     this only affects the box we give it. */
-  code {
-    @apply rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.9em] text-slate-700;
+  .nav {
+    flex-wrap: wrap;
   }
 }
+
+/* ── Panel primitives ────────────────────────────────────────────────── */
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.panel-title {
+  font-size: 16px;
+  margin: 0 0 2px;
+}
+.panel-title.is-prominent {
+  font-size: 18px;
+}
+.panel-sub {
+  font-size: 12px;
+  color: var(--color-neutral-400);
+}
+.panel-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-neutral-300);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.field-label {
+  font-size: 11px;
+  color: var(--color-neutral-400);
+  margin-bottom: 2px;
+}
+.muted {
+  color: var(--color-neutral-400);
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Feedback surfaces ───────────────────────────────────────────────── */
+.alert,
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  margin: 0;
+}
+.alert {
+  background: var(--color-negative-bg);
+  color: var(--color-negative);
+}
+.notice {
+  background: var(--color-caution-bg);
+  color: var(--color-caution);
+}
+.alert svg,
+.notice svg {
+  flex: none;
+  margin-top: 1px;
+}
+.loading-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-neutral-300);
+}
+.pending-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-accent-300);
+  padding: 4px 0;
+}
+.empty-line {
+  font-size: 13px;
+  color: var(--color-neutral-400);
+  margin: 6px 0;
+}
+
+/* ── List rows ───────────────────────────────────────────────────────── */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 9px 0;
+  border-bottom: 1px solid var(--color-divider);
+  font-size: 13px;
+}
+.row:last-child {
+  border-bottom: 0;
+}
+.row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Plan grid ───────────────────────────────────────────────────────── */
+.plan-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: 12px;
+}
+@media (max-width: 520px) {
+  .plan-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+}
+.plan-card.is-current {
+  border-color: var(--color-accent);
+  background: var(--color-accent-900);
+}
+.plan-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.plan-name {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  font-size: 15px;
+}
+.plan-price {
+  font-size: 13px;
+  color: var(--color-neutral-400);
+}
+
+/* ── Stripe Payment Element frame ────────────────────────────────────── */
+.pe-box {
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  background: var(--color-neutral-900);
+  padding: 14px;
+}
+.pe-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* ── Checkout return screen ──────────────────────────────────────────── */
+.checkout-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 64px var(--space-6);
+}
+.checkout-card {
+  width: 100%;
+  max-width: 420px;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 24px;
+}
+.checkout-card .lead {
+  font-size: 15px;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────── */
+@keyframes bd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: bd-spin 0.9s linear infinite;
+  display: inline-block;
+}
+
+/*
+ * Documented dark swap — base Nocturne (styles.css :root). To ship dark,
+ * move these onto :root (or a [data-theme="dark"] block) in place of the
+ * light values above:
+ *   --color-bg #161826  --color-surface #232532  --color-text #e9e9ed
+ *   --color-accent #9184d9  --color-accent-2 #a7a1db
+ *   neutral 100..900: #f3f5fe #e4e7f5 #cfd3e5 #b2b6ca #9397ab #75798c
+ *                     #595d6c #3f424d #292b31   (i.e. the ramp un-inverted)
+ *   accent 100..900:  #f5f4ff #e7e5fe #d2cefd #b5abfc #968ae0 #796cbf
+ *                     #5d5294 #423a6a #2b2741
+ *   --shadow-sm 0 0 0 1px #3f424d
+ *   --shadow-md 0 0 0 1px #595d6c, 0 6px 18px rgba(0,0,0,0.55)
+ *   --shadow-lg 0 0 0 1px #9397ab, 0 16px 40px rgba(0,0,0,0.65)
+ * Status roles stay as-is. The component classes below need no change.
+ */
