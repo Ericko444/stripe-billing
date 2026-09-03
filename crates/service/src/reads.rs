@@ -34,10 +34,10 @@ pub trait Reads: Send + Sync {
     /// subscribed -- a normal state, not an error and not a 404 at the route.
     ///
     /// "Current" is the most recently created subscription that is **not**
-    /// `Canceled`. `billing.subscriptions` has no "one active per tenant"
-    /// constraint and the repository returns every row; enforcing that
-    /// invariant is a §7 concern this phase does not take on (Open
-    /// Question 2).
+    /// terminal (`Canceled` or `IncompleteExpired`). `billing.subscriptions`
+    /// has no "one active per tenant" constraint and the repository returns
+    /// every row; enforcing that invariant is a §7 concern this phase does
+    /// not take on (Open Question 2).
     async fn get_current_subscription(
         &self,
         tenant: TenantId,
@@ -112,7 +112,12 @@ where
         tenant: TenantId,
     ) -> Result<Option<Subscription>, DomainError> {
         let mut subscriptions = self.subscriptions.list(tenant).await?;
-        subscriptions.retain(|s| s.status != SubscriptionStatus::Canceled);
+        subscriptions.retain(|s| {
+            !matches!(
+                s.status,
+                SubscriptionStatus::Canceled | SubscriptionStatus::IncompleteExpired
+            )
+        });
         subscriptions.sort_by_key(|s| s.created_at);
         Ok(subscriptions.pop())
     }

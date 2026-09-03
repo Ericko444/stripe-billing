@@ -82,6 +82,15 @@ async fn sends_the_customer_and_returns_the_client_secret() -> Result<(), Box<dy
         body.contains("customer=cus_target"),
         "the customer id must be in the form body: {body}"
     );
+    // D4: the Element confirms inline with no `return_url`, which only holds
+    // while the intent is scoped to cards. Unset, this account's automatic
+    // payment methods put a redirect-based wallet first. Asserted here
+    // because the scoping is load-bearing for the frontend, not cosmetic --
+    // and because it is also a fingerprint input (see `PAYMENT_METHOD_TYPES`).
+    assert!(
+        body.contains("payment_method_types[0]=card"),
+        "the intent must be scoped to card: {body}"
+    );
 
     // The ledger row is complete and carries the SetupIntent's id.
     let (object_id, completed): (Option<String>, bool) = sqlx::query_as(

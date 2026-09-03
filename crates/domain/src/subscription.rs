@@ -38,6 +38,13 @@ pub enum SubscriptionStatus {
     /// Created but the first invoice hasn't been paid yet — Stripe's status
     /// immediately after `create_subscription`.
     Incomplete,
+    /// The first invoice was never paid within Stripe's window (23 hours by
+    /// default) and Stripe closed the subscription on its own. Terminal, the
+    /// same as `Canceled` — the tenant is never billed and nothing here can
+    /// revive it. A cancel issued against an already-`Incomplete`
+    /// subscription lands here rather than `Canceled` — Stripe's own
+    /// distinction between "never collected" and "was active, then ended".
+    IncompleteExpired,
 }
 
 impl SubscriptionStatus {
@@ -48,6 +55,7 @@ impl SubscriptionStatus {
             SubscriptionStatus::PastDue => "past_due",
             SubscriptionStatus::Canceled => "canceled",
             SubscriptionStatus::Incomplete => "incomplete",
+            SubscriptionStatus::IncompleteExpired => "incomplete_expired",
         }
     }
 }
@@ -67,6 +75,7 @@ impl TryFrom<&str> for SubscriptionStatus {
             "past_due" => Ok(SubscriptionStatus::PastDue),
             "canceled" => Ok(SubscriptionStatus::Canceled),
             "incomplete" => Ok(SubscriptionStatus::Incomplete),
+            "incomplete_expired" => Ok(SubscriptionStatus::IncompleteExpired),
             other => Err(DomainError::Repository(format!(
                 "unknown subscription status: {other:?}"
             ))),
@@ -265,6 +274,7 @@ mod tests {
             SubscriptionStatus::PastDue,
             SubscriptionStatus::Canceled,
             SubscriptionStatus::Incomplete,
+            SubscriptionStatus::IncompleteExpired,
         ] {
             assert_eq!(SubscriptionStatus::try_from(status.as_str()), Ok(status));
         }

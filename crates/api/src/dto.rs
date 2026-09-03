@@ -73,7 +73,8 @@ pub struct SubscriptionDto {
     pub id: String,
     /// The local plan id this subscription is for.
     pub plan_id: String,
-    /// Lifecycle state: `active`, `past_due`, `canceled` or `incomplete`.
+    /// Lifecycle state: `active`, `past_due`, `canceled`, `incomplete` or
+    /// `incomplete_expired`.
     pub status: String,
     /// Start of the current billing period, RFC 3339 UTC.
     pub current_period_start: String,

@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+/* The demo is shown on a projector or a screen share, so the base sizes are
+   a notch larger than a typical dashboard and the contrast is high. */
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+  }
+
+  /* Stripe's Element renders in its own iframe and brings its own styles;
+     this only affects the box we give it. */
+  code {
+    @apply rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.9em] text-slate-700;
+  }
+}
