@@ -159,6 +159,32 @@ them.
 If a step hangs, both pending states poll for twenty seconds and then ask
 whether `stripe listen` is running — the most likely cause.
 
+### What it looks like
+
+The demo host is one page: the tenant switcher in the nav, the subscription
+panel, then payment methods and invoices side by side. Both screenshots below
+are the same build against the same database — only the selected tenant
+differs.
+
+**Tenant A**, after running the demo path above: an `active` subscription on
+Pro, the card that paid for it plus a second one, and the invoice Stripe
+raised. Every value on the page came from the local mirror, not from a live
+Stripe call.
+
+![Tenant A: an active Pro subscription, two saved cards, one paid invoice](docs/screenshots/tenant-a.jpg)
+
+**Tenant B**, one select away: no subscription, no cards, no invoices. Nothing
+about the request changed except the tenant in the token — the module reads
+the tenant from a host-supplied extractor and every repository method is scoped
+by it, so this is the isolation the tests assert, shown rather than claimed.
+
+![Tenant B: no subscription, no payment methods, no invoices](docs/screenshots/tenant-b.jpg)
+
+Amounts render from `{amount_minor, currency}` — `49.00 USD` is `4900` and
+`"USD"` on the wire, formatted in the browser, because formatting is a
+presentation concern and a pre-formatted string would bake a locale into the
+API.
+
 ### Commands
 
 ```bash
