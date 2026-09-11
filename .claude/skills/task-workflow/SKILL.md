@@ -8,9 +8,10 @@ description: Branch-verify-merge workflow for this repo. Use when starting a new
 Every unit of work is a branch off `dev`, verified before it lands, merged back
 into `dev` when green. `dev` is the integration branch and must always build.
 
-This repo has **no remotes** — everything is local. There is no push step, and
-no PR. `master` exists but is not part of this workflow; `dev` is where work
-integrates.
+Work integrates by local merge — there is no PR step. `origin` is a private
+GitHub repo, and `.github/workflows/ci.yml` runs on every pushed branch, so
+pushing a task branch gets the same gate run in CI. `master` exists but is not
+part of this workflow; `dev` is where work integrates.
 
 ## 1. Start: branch from dev
 
@@ -67,7 +68,7 @@ grep -E "sqlx|axum|stripe" crates/domain/Cargo.toml
 cargo fmt --all --check
 
 # 3. Lints (also compiles everything, including tests)
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
 
 # 4. Tests
 cargo test --workspace
@@ -94,13 +95,19 @@ If Docker is unavailable, say so plainly and run `cargo test -p domain`
 instead — but the gate is **not** satisfied, and that has to be stated rather
 than glossed. A task is not finished on an unverified persistence layer.
 
-### Known pre-existing noise
+### Warnings are errors
 
-`missing_docs` is set to `warn` workspace-wide, which also hits integration-test
-binaries and `demo`'s `main.rs` — neither has a crate-level doc comment. Those
-warnings predate this workflow. Do not treat them as a new break, and do not
-"fix" them by suppressing the lint; either add `//!` headers deliberately or
-narrow the lint's scope as its own task.
+The workspace is warning-free, and CI runs clippy with `-D warnings`, so any
+warning — `missing_docs` included — is a new break, not noise. Fix it; do not
+suppress the lint to get past it.
+
+### What CI adds
+
+CI runs these four steps and adds checks the local gate does not: the frontend
+build and tests, a `cargo check` on the declared `rust-version`, a guard that
+fails if a landed migration is edited, deleted or renamed, and dependency
+advisories (`cargo deny`, `npm audit`). A red advisories job with the other jobs
+green means a newly published advisory, not a break in the code.
 
 ## 4. Finish: merge into dev
 
@@ -120,7 +127,7 @@ Then confirm `dev` is genuinely green — the merge itself can introduce breakag
 that neither branch had:
 
 ```bash
-cargo clippy --workspace --all-targets && cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
 
 ## Rules
