@@ -23,13 +23,18 @@ cargo test --workspace
 cargo test -p domain            # one crate
 cargo test -p domain money::    # one test or module by name
 cargo test -p domain -- --nocapture
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
 
 `persistence` tests bring up a disposable Postgres via `testcontainers`
 and need a running Docker daemon. Webhook work uses
 `stripe listen --forward-to localhost:PORT/webhooks/stripe`.
+
+CI (`.github/workflows/ci.yml`) runs on every pushed branch: the same
+boundary/fmt/clippy/test gate, the frontend build and tests, the declared MSRV,
+an append-only check on `migrations/`, and dependency advisories. Warnings
+fail it (`-D warnings`).
 
 ## Architecture
 

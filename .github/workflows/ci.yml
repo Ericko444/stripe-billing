@@ -1,0 +1,145 @@
+# The same gate `.claude/skills/task-workflow` runs locally, plus the checks
+# only CI is placed to make: the declared MSRV, migration immutability and
+# dependency advisories. Nothing here needs a secret -- the Stripe tests run
+# against `wiremock` and Postgres comes from `testcontainers` on the runner's
+# own Docker.
+name: CI
+
+on:
+  # Every branch, so a task branch is verified before it is merged into dev.
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref supersedes the run in flight. The repo is
+# private, so every minute counts against the Actions quota.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (boundary, fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # The load-bearing invariant: `domain` never depends on sqlx, axum or a
+      # Stripe client. The grep is the documented local check over the
+      # manifest itself; `cargo tree` also catches one arriving transitively.
+      - name: Domain boundary
+        run: |
+          if grep -E "sqlx|axum|stripe" crates/domain/Cargo.toml; then
+            echo "::error file=crates/domain/Cargo.toml::domain must not depend on sqlx, axum or a Stripe client"
+            exit 1
+          fi
+          if cargo tree -p domain -e normal,build --prefix none --locked \
+              | grep -E "^(sqlx|axum|async-stripe|stripe)"; then
+            echo "::error::domain pulls in sqlx, axum or a Stripe client transitively"
+            exit 1
+          fi
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Read from Cargo.toml so the declared `rust-version` stays the one
+      # source of truth.
+      - name: Read rust-version
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Check on ${{ steps.msrv.outputs.version }}
+        run: cargo check --workspace --all-targets --locked
+
+  migrations:
+    name: Migrations are append-only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # sqlx records a checksum of every applied migration and refuses to run
+      # against a database whose history no longer matches. So a migration
+      # that has landed is frozen: fixes go in a new migration, never an edit.
+      # Compared against what this change builds on -- the PR base, the
+      # previous tip of the pushed branch, or dev for a brand-new branch.
+      - name: No landed migration modified, deleted or renamed
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="${PR_BASE:-$PUSH_BEFORE}"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+              || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git merge-base origin/dev HEAD)"
+          fi
+          echo "Comparing migrations/ against $base"
+          changed="$(git diff --name-only --diff-filter=MDR "$base" HEAD -- migrations/)"
+          if [ -n "$changed" ]; then
+            echo "$changed" | while read -r f; do
+              echo "::error file=$f::landed migration changed; add a new migration instead"
+            done
+            exit 1
+          fi
+
+  frontend:
+    name: Frontend (build, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # `build` runs `tsc --noEmit` before `vite build`, so it is the typecheck.
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+
+  # Kept apart from the build jobs: an advisory published overnight fails this
+  # job alone, without hiding whether the code itself still builds and passes.
+  advisories:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: cargo-deny advisories
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: npm audit
+        working-directory: frontend
+        run: npm audit --audit-level=high
