@@ -7,8 +7,7 @@ use domain::{
 
 use crate::{checkout_session, invoice_events, payment_method_events, subscription_lifecycle};
 
-/// The outcome of processing one verified webhook event (`init-spec.md`
-/// §10.2, spec decision 3).
+/// The outcome of processing one verified webhook event.
 ///
 /// `Applied` carries the [`BillingEvent`] the mirror write produced, rather
 /// than being a bare unit variant: the same reasoning as
@@ -28,7 +27,7 @@ pub enum EventOutcome {
 /// verified and been recorded.
 ///
 /// **None of these are errors.** Every one still returns 200 at the route
-/// (a later phase's `api`): collapsing them into `Ok(())` would make the
+/// in `api`: collapsing them into `Ok(())` would make the
 /// first production question -- "why isn't my subscription updating?" --
 /// unanswerable from logs. `UnknownCustomer` in particular is not a failure:
 /// it means the event concerns a Stripe customer this module does not own,
@@ -36,9 +35,9 @@ pub enum EventOutcome {
 /// exist here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotAppliedReason {
-    /// Older than the last event applied to this row (§10.2).
+    /// Older than the last event applied to this row.
     Stale,
-    /// No local customer row for the Stripe customer id (§10.3).
+    /// No local customer row for the Stripe customer id.
     UnknownCustomer,
     /// No local mirror row for the Stripe subscription id.
     UnknownSubscription,
@@ -46,20 +45,20 @@ pub enum NotAppliedReason {
     UnknownPaymentMethod,
     /// No local plan mirrors the Stripe price the subscription is on, so its
     /// mirror cannot be created (`billing.subscriptions.plan_id` is
-    /// `NOT NULL`). §10.4: a verified event still never 5xxes.
+    /// `NOT NULL`). A verified event still never 5xxes.
     UnknownPlan,
     /// The event type is handled, but this delivery carried nothing to
     /// mirror -- e.g. `setup_intent.succeeded`, which only confirms a flow
     /// finished. Distinct from `UnhandledType`: recognised, not ignored.
     Acknowledged,
-    /// No handler for this event type -- acknowledged, never rejected
-    /// (§10.4).
+    /// No handler for this event type -- acknowledged, never rejected, so a
+    /// new Stripe event type can never cause a failure.
     UnhandledType,
 }
 
 /// Object-safe handler for one verified, deduplicated webhook event.
 ///
-/// A later phase's `AppState` holds this as `Arc<dyn WebhookHandler>` rather
+/// `api`'s `AppState` holds this as `Arc<dyn WebhookHandler>` rather
 /// than the generic [`WebhookProcessor`] directly, so the router factory
 /// does not have to carry its port type parameters through its signature --
 /// the same trade `BillingProvider` and `WebhookVerifier` made.
@@ -76,8 +75,8 @@ pub trait WebhookHandler: Send + Sync {
 ///
 /// Generic over every port, matching `StripeBillingProvider<R>`: the compiler
 /// monomorphises the real wiring `demo` picks, and nothing is boxed on the
-/// hot path. Implements the object-safe [`WebhookHandler`] below so a later
-/// phase's `AppState` can hold it as `Arc<dyn WebhookHandler>` instead -- so
+/// hot path. Implements the object-safe [`WebhookHandler`] below so `api`'s
+/// `AppState` can hold it as `Arc<dyn WebhookHandler>` instead -- so
 /// the parameter count stays between `demo` and `new`, never reaching `api`.
 pub struct WebhookProcessor<C, S, I, P, L, W, K> {
     customers: C,
@@ -126,7 +125,7 @@ where
 {
     async fn handle(&self, event: VerifiedEvent) -> Result<EventOutcome, DomainError> {
         // No match on anything but the type string. An unrecognised type is
-        // acknowledged, never rejected (§10.4). The subscription lifecycle
+        // acknowledged, never rejected. The subscription lifecycle
         // events share one handler: same `data.object` shape, same
         // resolve-tenant -> mirror -> ordering-guard flow, `billing_event_for`
         // maps each status to the right `BillingEvent`. Only `created` may
@@ -204,7 +203,7 @@ where
 
         // The sink is a side effect: it runs after the mirror is a fact
         // (the match above already committed the write), and its failure
-        // does not undo the mirror (§8.3). It is never called for a
+        // does not undo the mirror. It is never called for a
         // NotApplied outcome -- there is nothing to notify the host about.
         if let EventOutcome::Applied(ref billing_event) = outcome
             && let Err(err) = self.sink.handle(billing_event.clone()).await
@@ -216,13 +215,13 @@ where
             );
             // processed_at stays NULL: processing did not finish, and that
             // is exactly what lets a later recovery sweep over processed_at
-            // IS NULL find this event again (decision 5).
+            // IS NULL find this event again.
             return Ok(outcome);
         }
 
         // Nothing further will ever happen to a NotApplied event -- of any
         // reason, including UnhandledType -- so it is marked processed even
-        // though nothing was applied (decision 5).
+        // though nothing was applied.
         self.webhook_events.mark_processed(event.id).await?;
         Ok(outcome)
     }
@@ -491,7 +490,7 @@ mod tests {
 
         assert!(matches!(outcome, Ok(EventOutcome::Applied(_))));
         // The mirror write already committed before the sink was ever
-        // called -- it is retained regardless of the sink's outcome (§8.3).
+        // called -- it is retained regardless of the sink's outcome.
         let found = processor
             .subscriptions
             .find(tenant_id, subscription_id)
@@ -501,11 +500,11 @@ mod tests {
             Ok(Some(ref s)) if s.status == domain::SubscriptionStatus::Active
         ));
         // processing did not finish, so processed_at stays NULL -- this is
-        // what makes a later recovery sweep able to find it (decision 5).
+        // what makes a later recovery sweep able to find it.
         assert_eq!(processor.webhook_events.processed_at(event.id), Some(None));
     }
 
-    // --- Task 16: customer.subscription.created / .deleted ---
+    // --- customer.subscription.created / .deleted ---
 
     #[tokio::test]
     async fn created_event_routes_through_and_applies() {
@@ -700,7 +699,7 @@ mod tests {
         ));
     }
 
-    // --- Task 18: invoice.paid / invoice.payment_failed ---
+    // --- invoice.paid / invoice.payment_failed ---
 
     /// Seeds a customer and returns its tenant id plus a `VerifiedEvent` of
     /// `event_type` for an invoice `in_applied` against it.
@@ -776,7 +775,7 @@ mod tests {
         assert_eq!(processor.sink.received().len(), 1);
     }
 
-    // --- Task 20: payment_method.* / setup_intent.succeeded ---
+    // --- payment_method.* / setup_intent.succeeded ---
 
     #[tokio::test]
     async fn payment_method_attached_routes_through_handle_and_notifies_the_sink_once() {

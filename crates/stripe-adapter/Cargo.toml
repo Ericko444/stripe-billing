@@ -27,7 +27,7 @@ uuid.workspace = true
 
 # `persistence` is a dev-only edge between two adapter crates: the ledger reuse
 # tests run the real adapter against a real Postgres. It never appears in the
-# production dependency graph, which stays strictly inward (init-spec.md §4).
+# production dependency graph, which stays strictly inward.
 [dev-dependencies]
 persistence.workspace = true
 sqlx.workspace = true

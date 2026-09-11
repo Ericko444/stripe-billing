@@ -196,7 +196,7 @@ async fn create_with_unknown_subscription_fails_on_fk() -> Result<(), Box<dyn Er
     Ok(())
 }
 
-// --- Task 17: find_by_stripe_invoice_id + apply_event ---
+// --- find_by_stripe_invoice_id + apply_event ---
 
 #[tokio::test]
 async fn find_by_stripe_invoice_id_is_scoped_to_tenant() -> Result<(), Box<dyn Error>> {
@@ -413,7 +413,7 @@ async fn apply_event_with_an_equal_timestamp_applies() -> Result<(), Box<dyn Err
     Ok(())
 }
 
-// --- list_page: keyset pagination (Phase 4b, Task 6) ---------------------
+// --- list_page: keyset pagination -------------------------------------
 
 /// Overwrites a row's `created_at`. `create` uses `DEFAULT now()`, so a test
 /// that needs a known ordering sets the timestamps itself afterwards.

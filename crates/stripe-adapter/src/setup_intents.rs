@@ -7,7 +7,7 @@ use crate::{StripeError, fingerprint};
 
 /// The payment method types this SetupIntent is scoped to. `card` only,
 /// deliberately, not left to automatic payment methods: the frontend's
-/// `PaymentElement` confirms inline with no `return_url` (Phase 5 D4), which
+/// `PaymentElement` confirms inline with no `return_url`, which
 /// only holds for a payment method that never redirects. Left unset,
 /// Stripe's default surfaced wallets like Naver Pay first in this account's
 /// test mode -- discovered live, not predicted -- which `confirmSetup` has no

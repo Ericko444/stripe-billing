@@ -153,7 +153,7 @@ async fn stripe_payment_method_id_can_be_reused_after_soft_delete() -> Result<()
     Ok(())
 }
 
-// --- Task 19: find_by_stripe_payment_method_id + apply_event + detach_event ---
+// --- find_by_stripe_payment_method_id + apply_event + detach_event ---
 
 #[tokio::test]
 async fn find_by_stripe_payment_method_id_is_scoped_to_tenant() -> Result<(), Box<dyn Error>> {

@@ -2,7 +2,7 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
-// D1: the only origin the browser ever talks to is this dev server.
+// The only origin the browser ever talks to is this dev server.
 // /api proxies straight through to `demo`, so no CORS layer is needed in
 // the module -- CORS policy is host policy, and this keeps it out.
 export default defineConfig({

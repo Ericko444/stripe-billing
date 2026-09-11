@@ -83,8 +83,9 @@ async fn mint_token(
     axum::Json(request): axum::Json<MintTokenRequest>,
 ) -> Result<axum::Json<MintTokenResponse>, ApiError> {
     // A malformed uuid is the caller's mistake -- 400, not the 500 an
-    // unhandled parse failure would give it (D5's "never leak the cause"
-    // logic doesn't apply here: this route has no auth to protect).
+    // unhandled parse failure would give it (the extractor's "never leak
+    // the cause" rule doesn't apply here: this route has no auth to
+    // protect).
     let tenant_id = Uuid::parse_str(&request.tenant_id).map_err(|_| {
         ApiError::from(DomainError::MalformedRequest(
             "tenant_id is not a valid uuid".to_string(),

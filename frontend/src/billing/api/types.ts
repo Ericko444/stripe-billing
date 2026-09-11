@@ -1,6 +1,6 @@
 /**
  * Wire types, hand-mirrored from `crates/api/src/dto.rs`. That file is the
- * source of truth (P2/D8) -- every interface here corresponds to one `*Dto`
+ * source of truth -- every interface here corresponds to one `*Dto`
  * struct or request body there, kept in this one file so a diff against it
  * is the whole surface.
  */

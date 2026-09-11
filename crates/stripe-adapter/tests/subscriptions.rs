@@ -1,4 +1,4 @@
-//! Tasks 18-20: the subscription methods against wiremock + a real Postgres
+//! The subscription methods against wiremock + a real Postgres
 //! ledger. Idempotency-ledger behaviour itself is covered generically in
 //! `idempotency.rs`; here we assert what is specific to each method -- the
 //! request bodies it sends and the snapshot it builds.
@@ -67,7 +67,7 @@ fn subscription_body(
 }
 
 /// The same fixture with an empty `items.data` -- the "no subscription item"
-/// case Task 18 must turn into an error rather than a blank id.
+/// case `create_subscription` must turn into an error rather than a blank id.
 fn subscription_body_without_items(
     sub_id: &str,
     status: &str,
@@ -108,7 +108,7 @@ fn key_of(req: &wiremock::Request) -> String {
         .to_string()
 }
 
-// --- Task 18: create_subscription ------------------------------------------
+// --- create_subscription ------------------------------------------
 
 #[tokio::test]
 async fn create_subscription_returns_a_full_snapshot() -> Result<(), Box<dyn Error>> {
@@ -202,7 +202,7 @@ async fn create_subscription_with_no_item_is_an_error_not_a_blank_id() -> Result
     Ok(())
 }
 
-// --- Task 19: change_plan ------------------------------------------------
+// --- change_plan ------------------------------------------------
 
 #[tokio::test]
 async fn change_plan_updates_the_stored_item_and_prorates() -> Result<(), Box<dyn Error>> {
@@ -253,7 +253,7 @@ async fn change_plan_updates_the_stored_item_and_prorates() -> Result<(), Box<dy
     Ok(())
 }
 
-// --- Task 20: cancel_subscription --------------------------------------
+// --- cancel_subscription --------------------------------------
 
 #[tokio::test]
 async fn cancel_at_period_end_updates_the_subscription_and_stays_live() -> Result<(), Box<dyn Error>>

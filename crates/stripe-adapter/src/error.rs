@@ -7,7 +7,7 @@ use thiserror::Error;
 ///
 /// Deliberately distinct from the SDK's own `stripe::StripeError` (this
 /// crate is named `stripe-adapter`, not `stripe`, precisely so `stripe::`
-/// unambiguously means the SDK -- see `docs/intent/phase-2.md`). Everything
+/// unambiguously means the SDK, whose lib name *is* `stripe`). Everything
 /// in this crate and its tests is written against `StripeError`, so a
 /// future SDK version reshaping its own error type only requires updating
 /// the `From` impl below, not every call site.
@@ -74,15 +74,14 @@ impl From<stripe::StripeError> for StripeError {
 /// Flattens a `StripeError` into `DomainError::Provider`. The rich type
 /// (`status`, `request_log_url`) stays inside `stripe-adapter` for logs;
 /// `domain` only ever sees the coarse string `StripeError`'s own `Display`
-/// produces (S1 -- `domain` must not depend on this crate's error type any
-/// more than it depends on `stripe` itself).
+/// produces (`domain` must not depend on this crate's error type any more
+/// than it depends on `stripe` itself).
 ///
 /// Deliberately coarse, and deliberately routed through `Display` rather
 /// than `Debug`: each variant's `#[error("...")]` format string names
 /// exactly which fields are safe to surface, so a field added to `Api` later
 /// (or to any variant) does not automatically leak into the domain-facing
-/// message the way a `{:?}` dump would (`init-spec.md` §5.5's warning that
-/// the mapping is where leaks happen).
+/// message the way a `{:?}` dump would -- the mapping is where leaks happen.
 impl From<StripeError> for DomainError {
     fn from(err: StripeError) -> Self {
         DomainError::Provider(err.to_string())

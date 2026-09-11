@@ -13,7 +13,7 @@ import type {
 } from "./types";
 
 /**
- * One function per billing route (P2, D8) -- eleven of §9's thirteen.
+ * One function per billing route -- eleven of the API's thirteen.
  * `POST /webhooks/stripe` has no frontend caller by design; `POST
  * /demo/token` is a host, not a billing, concern and stays in
  * `host/auth/AuthContext.tsx`, which already calls it directly for the

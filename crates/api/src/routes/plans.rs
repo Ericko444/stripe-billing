@@ -11,7 +11,7 @@ use crate::{ApiError, AppState};
 /// a reader sees the tenant before anything else and a handler missing one
 /// is obvious in review. The tenant is never read from a path, query, header
 /// or body -- the only way a `TenantId` reaches this function is out of `T`
-/// (§8.1: accepting `tenant_id` as a request parameter is textbook IDOR).
+/// (accepting `tenant_id` as a request parameter is textbook IDOR).
 pub(crate) async fn list_plans<T>(
     tenant: T,
     State(state): State<AppState>,

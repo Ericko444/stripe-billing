@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::webhook::{EventOutcome, NotAppliedReason};
 
 /// Applies `payment_method.attached`: resolves the tenant from
-/// `data.object.customer` (§10.3), then mirrors the card through
+/// `data.object.customer`, then mirrors the card through
 /// [`PaymentMethodRepository::apply_event`]'s upsert + ordering guard. Like
 /// the invoice handler this may *create* the local row -- `attached` is the
 /// first event the module sees for a card.

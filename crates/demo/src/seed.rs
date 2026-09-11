@@ -1,17 +1,17 @@
 //! `cargo run -p demo -- seed`: gives the tenant switcher two tenants to
-//! switch between (F1, Task 7/8).
+//! switch between.
 //!
 //! Per tenant: a Stripe customer plus its mirror row, two local `plans`
 //! rows against Stripe prices the operator names (`SEED_PLAN_*`, below),
 //! and one subscription. Tenant ids are **fixed**, not random -- a second
 //! run must find the same two tenants rather than minting new ones, which
-//! is what makes re-running idempotent (Task 8).
+//! is what makes re-running idempotent.
 //!
 //! No `billing.payment_methods` row is written. `BillingProvider` has no
 //! `attach_payment_method` -- attaching has only ever happened through
 //! Stripe's hosted UI -- so a subscription created here comes back
 //! `incomplete`, not `active`, until a reviewer runs checkout or a
-//! SetupIntent themselves (Plan 4d, P4/F2). That is the honest starting
+//! SetupIntent themselves. That is the honest starting
 //! state, not a bug.
 
 use std::error::Error;
@@ -49,8 +49,8 @@ fn required_env(name: &str) -> Result<String, Box<dyn Error>> {
 /// The two shared test-mode Stripe prices the seed's plans point at. Named
 /// by environment variable rather than hardcoded: unlike a Stripe secret
 /// key, a price/product id is not something this crate can verify, and a
-/// wrong hardcoded id would be exactly the mirror-row-pointing-at-nothing
-/// failure Plan 4d's F2 exists to avoid. Point these at any two prices in
+/// wrong hardcoded id would leave a mirror row pointing at nothing. Point
+/// these at any two prices in
 /// your own Stripe test-mode account.
 struct SeedPricing {
     plan_a_price_id: String,
@@ -171,7 +171,7 @@ async fn seed_tenant(
             .await?;
         // Stored as Stripe returned it, never coerced to `Active` -- a
         // subscription with no attached payment method comes back
-        // `incomplete`, and that is the honest state to mirror (P4).
+        // `incomplete`, and that is the honest state to mirror.
         subscriptions
             .create(
                 tenant,

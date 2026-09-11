@@ -1,5 +1,5 @@
 /**
- * S5: money crosses the wire and the UI as `{ amount_minor, currency }`,
+ * Money crosses the wire and the UI as `{ amount_minor, currency }`,
  * never a float. `formatMoney` divides by integer truncation and modulo --
  * no value with a fractional part is ever constructed.
  *

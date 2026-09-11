@@ -14,14 +14,14 @@ use crate::webhook_signature;
 /// Verifies inbound Stripe webhooks and records them in the dedup ledger,
 /// behind `domain::WebhookVerifier`.
 ///
-/// Holds the signing secret (inside [`WebhookConfig`]) so a caller — a later
-/// phase's `api`, reaching this through a `dyn WebhookVerifier` — never
-/// does, plus a `WebhookEventRepository` for the single ledger write.
+/// Holds the signing secret (inside [`WebhookConfig`]) so a caller — `api`,
+/// reaching this through a `dyn WebhookVerifier` — never does, plus a
+/// `WebhookEventRepository` for the single ledger write.
 /// Generic over `R` like `StripeBillingProvider<R>`, for the same reason:
 /// exactly one adapter implements the repository port, and `demo` picks it.
 ///
 /// Two orderings in [`verify_and_record`](Self::verify_and_record) carry the
-/// whole design, and the Phase F integration tests assert both:
+/// whole design, and the integration tests assert both:
 ///
 /// - **Verify before parse.** Nothing deserializes the body until the
 ///   signature has passed — the `serde_json::from_str` call sits *after*
@@ -48,7 +48,7 @@ impl<R: WebhookEventRepository + Send + Sync> WebhookVerifier for StripeWebhookV
         payload: &[u8],
         signature_header: &str,
     ) -> Result<WebhookReceipt, DomainError> {
-        // Bytes in at the port (spec §10.1); a non-UTF-8 body is a typed
+        // Bytes in at the port; a non-UTF-8 body is a typed
         // rejection here, never a panic.
         let body =
             std::str::from_utf8(payload).map_err(|e| WebhookError::Payload(e.to_string()))?;
@@ -64,15 +64,15 @@ impl<R: WebhookEventRepository + Send + Sync> WebhookVerifier for StripeWebhookV
 
         // Our own envelope read: the three fields the ledger needs, plus the
         // payload verbatim. No typed Stripe event and no match on the event
-        // type — an unrecognised type takes the identical path (spec §10.4).
+        // type — an unrecognised type takes the identical path.
         let envelope: Value =
             serde_json::from_str(body).map_err(|e| WebhookError::Payload(e.to_string()))?;
         let (stripe_event_id, event_type, created) = read_envelope(&envelope)?;
 
         // Insert-and-catch-conflict, not check-then-insert: the duplicate
         // signal is the unique-violation `Conflict` from `create`, which
-        // handles concurrent redelivery by construction (Task 7). `tenant_id`
-        // is None — §10.3 resolves it from the event after receipt, and
+        // handles concurrent redelivery by construction. `tenant_id` is
+        // None — `service` resolves it from the event after receipt, and
         // `WebhookEvent.tenant_id` is `Option` for exactly this.
         match self
             .repo

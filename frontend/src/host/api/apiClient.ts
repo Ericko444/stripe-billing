@@ -1,7 +1,7 @@
 import { ApiProblem, toApiProblem } from "./problem";
 
 /**
- * The only `fetch` in the app (F1). Every other module goes through
+ * The only `fetch` in the app. Every other module goes through
  * `apiRequest`.
  *
  * The token is read via a getter, not a value captured at import time --

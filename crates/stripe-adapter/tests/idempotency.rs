@@ -31,7 +31,7 @@ fn error_body(kind: &str, message: &str) -> serde_json::Value {
     serde_json::json!({ "error": { "type": kind, "message": message } })
 }
 
-// --- The named B6 deliverable -----------------------------------------
+// --- The core idempotency guarantee: a retry reuses the key -----------
 
 #[tokio::test]
 async fn retry_after_failure_reuses_the_same_idempotency_key() -> Result<(), Box<dyn Error>> {

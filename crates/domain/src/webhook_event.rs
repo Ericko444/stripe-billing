@@ -27,8 +27,8 @@ impl WebhookEventId {
 ///
 /// This is an append-only ledger: no soft delete, no tenant-scoped index,
 /// no `list`. `tenant_id` is optional because the tenant is resolved *from*
-/// the event by `service` code sometime after receipt (`init-spec.md` §10.3),
-/// not known at insert time.
+/// the event by `service` code sometime after receipt, not known at insert
+/// time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebhookEvent {
     /// The event's id.
@@ -39,13 +39,13 @@ pub struct WebhookEvent {
     pub stripe_event_id: String,
     /// The Stripe event type (e.g. `invoice.paid`).
     pub event_type: String,
-    /// The raw event body. Nothing parses it in Phase 1.
+    /// The raw event body, stored verbatim.
     pub payload: Value,
     /// When the event was received and stored.
     pub created_at: OffsetDateTime,
     /// When the event finished processing, if it has. Set by
     /// [`WebhookEventRepository::mark_processed`] once the mirror write and
-    /// the `BillingEventSink` call both succeed (`init-spec.md` §10.2) --
+    /// the `BillingEventSink` call both succeed --
     /// left `NULL` on a sink failure so a later recovery sweep over
     /// `processed_at IS NULL` can find it.
     pub processed_at: Option<OffsetDateTime>,
@@ -86,7 +86,7 @@ pub trait WebhookEventRepository {
     /// Marks a stored event as finished processing, setting `processed_at`
     /// to the current time. Idempotent: marking an already-processed event
     /// again is harmless (a later call simply advances the timestamp), which
-    /// matters because a later phase calls this even for an event its
+    /// matters because the webhook processor calls this even for an event its
     /// handler declined to act on -- nothing further will ever happen to
     /// that event, so leaving it `NULL` would give a later recovery sweep
     /// permanent false work.

@@ -19,7 +19,7 @@ fn parse_payment_method_id(raw: &str) -> Result<PaymentMethodId, ApiError> {
 /// `GET /payment-methods`. Every stored card for the calling tenant.
 ///
 /// Soft-deleted rows are already excluded by the repository. The DTO carries
-/// display metadata only (§7.4): brand, last4, default flag -- never card
+/// display metadata only: brand, last4, default flag -- never card
 /// data, which lives in Stripe.
 pub(crate) async fn list_payment_methods<T>(
     tenant: T,
@@ -46,7 +46,7 @@ where
 ///
 /// The response body carries a `client_secret` the frontend hands to
 /// Stripe.js. That value is bearer-ish and appears **only** in this body --
-/// this handler logs nothing, and the DTO is the one place it travels (§9).
+/// this handler logs nothing, and the DTO is the one place it travels.
 pub(crate) async fn create_setup_intent<T>(
     tenant: T,
     State(state): State<AppState>,
@@ -63,8 +63,8 @@ where
 ///
 /// Another tenant's id -- or an unknown one -- is a 404 identical to any
 /// other, and `Writes::set_default_payment_method` never reaches Stripe for
-/// it (§7.4: Stripe is only called after ownership is proven, and only then
-/// is the mirror reconciled).
+/// it (Stripe is only called after ownership is proven, and only then is
+/// the mirror reconciled).
 pub(crate) async fn set_default_payment_method<T>(
     tenant: T,
     State(state): State<AppState>,
@@ -82,9 +82,9 @@ where
 }
 
 /// `DELETE /payment-methods/{id}`. Detaches the card at Stripe, then
-/// soft-deletes the mirror row (§7.4, Stripe first).
+/// soft-deletes the mirror row (Stripe first).
 ///
-/// **204 No Content** (Plan 4c, Open Question 2): the resource is gone and
+/// **204 No Content**: the resource is gone and
 /// the caller already holds the id it deleted, so there is nothing useful to
 /// return. A second delete of the same id is a 404 -- the row is already
 /// gone. Another tenant's id is a 404 with no outbound call.

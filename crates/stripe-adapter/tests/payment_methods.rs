@@ -1,4 +1,4 @@
-//! Task 10: `set_default_payment_method` and `detach_payment_method` against
+//! `set_default_payment_method` and `detach_payment_method` against
 //! wiremock + a real Postgres ledger.
 //!
 //! The idempotency-ledger state machine is covered generically in

@@ -1,5 +1,4 @@
-//! The whole-surface tenant-isolation suite (Phase 4c Task 17, extended from
-//! 4b's `reads.rs`).
+//! The whole-surface tenant-isolation suite.
 //!
 //! Seeds two tenants with different data across every mirror table, drives
 //! **all eleven** tenant-scoped routes -- five read, six write -- as each,

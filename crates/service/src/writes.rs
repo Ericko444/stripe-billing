@@ -1,17 +1,16 @@
-//! The write use cases behind Phase 4c's six mutating routes
-//! (`docs/spec/phase-4c-write-routes.md`).
+//! The write use cases behind the six mutating routes.
 //!
 //! The mirror of [`reads`](crate::reads): where [`Reads`](crate::Reads) is a
 //! façade over the read repositories, [`Writes`] is the façade over the one
 //! [`BillingProvider`] and the four repositories a mutating call touches. It
-//! arrives with **no methods** and grows one per vertical slice -- the same
-//! discipline `Reads` followed across Phase 4b.
+//! grew one method per vertical slice -- the same discipline `Reads`
+//! followed.
 //!
-//! Kept a *second* port beside `Reads` rather than more methods on it (Plan
-//! 4c, P1): a host test that needs a read stub should not also have to stub
-//! six write methods it never calls, and the read path stays free of the
-//! provider -- a [`ReadService`](crate::ReadService) still needs no Stripe
-//! client, which is what keeps 4b's read tests running in a millisecond.
+//! Kept a *second* port beside `Reads` rather than more methods on it: a
+//! host test that needs a read stub should not also have to stub six write
+//! methods it never calls, and the read path stays free of the provider --
+//! a [`ReadService`](crate::ReadService) still needs no Stripe client, which
+//! is what keeps the read tests running in a millisecond.
 
 use async_trait::async_trait;
 use domain::{
@@ -26,7 +25,7 @@ use time::OffsetDateTime;
 ///
 /// `api`'s `AppState` holds this as `Arc<dyn Writes>`, next to
 /// `Arc<dyn Reads>` -- so `billing_router` still carries exactly one type
-/// parameter and `AppState` gains exactly one field (Plan 4c, P1).
+/// parameter, the host's tenant extractor.
 /// `#[async_trait]` for the same reason [`Reads`](crate::Reads) uses it: the
 /// trait must be dyn-compatible.
 ///
@@ -38,7 +37,7 @@ pub trait Writes: Send + Sync {
     /// Returns the tenant's Stripe customer id, creating the Stripe customer
     /// and the local `customers` row on first use.
     ///
-    /// Routeless (`docs/spec/phase-4c-write-routes.md` §8.2): the callers are
+    /// Routeless: the callers are
     /// other `Writes` methods -- `start_checkout_session` and
     /// `create_setup_intent` -- that must name a customer to Stripe.
     ///
@@ -46,7 +45,7 @@ pub trait Writes: Send + Sync {
     /// `stripe_customer_id`; that id is returned and the provider is **not**
     /// called. `CustomerRepository` has no update, so a row with
     /// `stripe_customer_id = None` cannot be upgraded in place -- nothing
-    /// creates such a row today (Plan 4c, Open Question 1), and changing that
+    /// creates such a row today, and changing that
     /// is a `domain` port change rather than a tweak here.
     async fn ensure_customer(&self, tenant: TenantId) -> Result<String, DomainError>;
 
@@ -56,7 +55,8 @@ pub trait Writes: Send + Sync {
     ///
     /// The returned [`SetupIntentSnapshot`] carries only the browser-destined
     /// `client_secret`. The route puts it in the response body and **nowhere
-    /// else** -- never a log line (`docs/spec/phase-4c-write-routes.md` §9).
+    /// else** -- never a log line: whoever holds it can attach a payment
+    /// method to the customer.
     async fn create_setup_intent(
         &self,
         tenant: TenantId,
@@ -78,7 +78,7 @@ pub trait Writes: Send + Sync {
     ///   *this caller* named. Unguarded: no webhook ever writes that column,
     ///   so there is no event to be stale against.
     /// - The snapshot Stripe returned goes through
-    ///   [`SubscriptionRepository::apply_event`]'s §10.2 ordering guard, so a
+    ///   [`SubscriptionRepository::apply_event`]'s ordering guard, so a
     ///   `customer.subscription.updated` webhook racing this call cannot be
     ///   regressed by it (or vice versa) -- this is the one place outside the
     ///   webhook path that writes those columns, and it borrows the webhook
@@ -118,7 +118,7 @@ pub trait Writes: Send + Sync {
     /// Ownership is checked first: an unknown or another tenant's payment
     /// method id is [`DomainError::NotFound`] with **no outbound call**.
     ///
-    /// **§7.4 ordering: Stripe first, mirror second.** Stripe's
+    /// **Ordering: Stripe first, mirror second.** Stripe's
     /// `invoice_settings.default_payment_method` update runs before
     /// [`PaymentMethodRepository::set_default`] touches the local
     /// `is_default` flags, so a Stripe failure leaves those flags exactly as
@@ -136,7 +136,7 @@ pub trait Writes: Send + Sync {
     /// Ownership is checked first: an unknown or another tenant's id is
     /// [`DomainError::NotFound`] with **no outbound call**.
     ///
-    /// **§7.4 ordering: Stripe first, mirror second.** The detach runs
+    /// **Ordering: Stripe first, mirror second.** The detach runs
     /// before [`PaymentMethodRepository::detach_event`] sets `deleted_at`,
     /// so a failed detach leaves the row present -- never a mirror that
     /// claims the card is gone while Stripe still has it attached and
@@ -219,13 +219,11 @@ async fn apply_subscription_snapshot<S: SubscriptionRepository + Send + Sync>(
 /// Generic over each port, matching [`ReadService`](crate::ReadService) and
 /// `WebhookProcessor`: `demo` monomorphises the concrete `stripe-adapter`
 /// and `persistence` types, and nothing is boxed on the write path. The
-/// `dyn` boundary is `Arc<dyn Writes>` on `AppState`, and nowhere else
-/// (Plan 4c, P2).
+/// `dyn` boundary is `Arc<dyn Writes>` on `AppState`, and nowhere else.
 ///
-/// All five dependencies are taken from the start, like `ReadService`'s
-/// four, so `AppState` and every host's wiring stay fixed as the trait
-/// fills in. `subscriptions`, `payment_methods` and `plans` stay unread
-/// until the slices that need them (Tasks 8-16).
+/// All five dependencies were taken from the start, like `ReadService`'s
+/// four, so `AppState` and every host's wiring stayed fixed as the trait
+/// filled in.
 #[allow(dead_code)]
 pub struct WriteService<P, C, S, M, L> {
     provider: P,
@@ -334,7 +332,7 @@ where
         // the new plan. Two separate writes because they answer to two
         // different authorities: `set_plan` records what *this caller* asked
         // for (unguarded -- no webhook writes `plan_id`), while the snapshot
-        // below records what *Stripe* reported and goes through §10.2's
+        // below records what *Stripe* reported and goes through the webhook
         // ordering guard. See `SubscriptionRepository::set_plan`'s rustdoc.
         self.subscriptions
             .set_plan(tenant, subscription_id, plan_id)
@@ -396,7 +394,7 @@ where
                 )
             })?;
 
-        // §7.4: Stripe first. `?` here returns before the mirror is touched,
+        // Stripe first. `?` here returns before the mirror is touched,
         // so the `is_default` flags stay exactly as they were.
         self.provider
             .set_default_payment_method(
@@ -429,7 +427,7 @@ where
             .await?
             .ok_or(DomainError::NotFound)?;
 
-        // §7.4: Stripe first. `?` returns before `detach_event`, so a failed
+        // Stripe first. `?` returns before `detach_event`, so a failed
         // detach leaves the row present rather than a mirror that lies about
         // the card being gone.
         self.provider
@@ -591,7 +589,7 @@ mod tests {
     /// A `WriteService` whose provider double and payment-method double both
     /// push into `log` (`"provider"` / `"repository"`), and whose provider's
     /// payment-method calls fail when `fail_provider` -- the two knobs the
-    /// §7.4 ordering tests need.
+    /// Stripe-first ordering tests need.
     fn service_for_ordering(log: CallLog, fail_provider: bool) -> TestWrites {
         WriteService::new(
             StubBillingProvider::for_ordering_test(log.clone(), fail_provider),
@@ -865,7 +863,7 @@ mod tests {
         Ok(())
     }
 
-    // --- Task 11: set_default_payment_method (§7.4 ordering) --------------
+    // --- set_default_payment_method (Stripe-first ordering) --------------
 
     #[tokio::test]
     async fn set_default_moves_the_flag_and_calls_stripe_for_the_customer()
@@ -916,7 +914,7 @@ mod tests {
         assert_eq!(
             *log.lock().unwrap_or_else(|p| p.into_inner()),
             vec!["provider", "repository"],
-            "Stripe must be updated before the local mirror (§7.4)"
+            "Stripe must be updated before the local mirror"
         );
         Ok(())
     }
@@ -990,7 +988,7 @@ mod tests {
         Ok(())
     }
 
-    // --- Task 12: remove_payment_method (§7.4 ordering) -----------------
+    // --- remove_payment_method (Stripe-first ordering) -----------------
 
     #[tokio::test]
     async fn remove_detaches_at_stripe_then_soft_deletes() -> Result<(), Box<dyn Error>> {
@@ -1032,7 +1030,7 @@ mod tests {
         assert_eq!(
             *log.lock().unwrap_or_else(|p| p.into_inner()),
             vec!["provider", "repository"],
-            "Stripe must detach before the mirror is soft-deleted (§7.4)"
+            "Stripe must detach before the mirror is soft-deleted"
         );
         Ok(())
     }
@@ -1111,7 +1109,7 @@ mod tests {
         Ok(())
     }
 
-    // --- Task 16: start_checkout_session -------------------------------
+    // --- start_checkout_session -------------------------------
 
     #[tokio::test]
     async fn start_checkout_resolves_the_plan_and_creates_the_session() -> Result<(), Box<dyn Error>>

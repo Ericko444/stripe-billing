@@ -9,11 +9,11 @@ use crate::{DomainError, WebhookEventId};
 /// Deliberately "dumb": the raw `payload` verbatim plus the few envelope
 /// fields the ledger needs, and no typed Stripe event. An unrecognised event
 /// type is therefore not a special case — it takes the identical path to a
-/// known one (`init-spec.md` §10.4).
+/// known one, so a new Stripe event type can never cause a failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedEvent {
-    /// The ledger row's id, so a later phase can mark that exact row
-    /// processed.
+    /// The ledger row's id, so the webhook processor can mark that exact
+    /// row processed.
     pub id: WebhookEventId,
     /// Stripe's own event id (`evt_…`) — the dedup anchor.
     pub stripe_event_id: String,
@@ -38,7 +38,7 @@ pub enum WebhookReceipt {
     /// First delivery. The event is recorded; the caller should process it.
     Fresh(VerifiedEvent),
     /// Already recorded by an earlier delivery. Acknowledge with 200 and do
-    /// not reprocess (`init-spec.md` §10.2).
+    /// not reprocess -- an error status would only make Stripe retry.
     Duplicate {
         /// Stripe's event id, echoed so the caller can log the skip.
         stripe_event_id: String,
@@ -50,8 +50,8 @@ pub enum WebhookReceipt {
 /// `stripe-adapter`; no I/O here.
 ///
 /// `#[async_trait]` and `: Send + Sync` for the same reason
-/// [`BillingProvider`](crate::BillingProvider) has them: a later phase's
-/// `api` holds this as a `dyn WebhookVerifier` in shared application state,
+/// [`BillingProvider`](crate::BillingProvider) has them: `api` holds this
+/// as a `dyn WebhookVerifier` in shared application state,
 /// wired at runtime, rather than as exactly one adapter behind a generic the
 /// way each repository port is.
 #[async_trait]
@@ -65,13 +65,13 @@ pub trait WebhookVerifier: Send + Sync {
     ///
     /// # Host preconditions
     ///
-    /// The route that calls this (a later phase's `api`) is responsible for
+    /// The route that calls this (in `api`) is responsible for
     /// two things this port cannot check for itself:
     ///
     /// - **Pass the raw, untouched request body.** The signature is an HMAC
     ///   over exactly the bytes Stripe sent, so any re-encoding,
     ///   pretty-printing or key reordering between the socket and this call
-    ///   breaks verification (`init-spec.md` §10.1). Read the body as bytes
+    ///   breaks verification. Read the body as bytes
     ///   and forward it unmodified.
     /// - **Bound the body size before calling.** Nothing here caps the input
     ///   it will HMAC. The limit belongs on the route (e.g. Axum's

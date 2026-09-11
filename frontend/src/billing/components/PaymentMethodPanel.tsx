@@ -11,7 +11,7 @@ import {
 import type { PaymentMethodDto } from "../api/types";
 import { Alert, Badge, Button, Card, EmptyState, Loading, Notice, Spinner } from "../../ui/primitives";
 
-// F3: only the publishable key crosses into the bundle -- the VITE_ prefix
+// Only the publishable key crosses into the bundle -- the VITE_ prefix
 // is what Vite inlines, and nothing carrying a secret may use it.
 const PUBLISHABLE_KEY: string = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
 if (!PUBLISHABLE_KEY) {
@@ -29,7 +29,7 @@ type AddCardPhase =
   | { kind: "pending"; countBefore: number }
   | { kind: "capped" };
 
-/** D4: `redirect: 'if_required'` -- cards confirm inline, no return route
+/** `redirect: 'if_required'` -- cards confirm inline, no return route
  * needed. `onSaved` hands control back to the panel, which owns the
  * pending poll (the card does not exist in this API until the webhook
  * mirrors it, same reasoning as `CheckoutReturn`). */
@@ -41,7 +41,8 @@ function AddCardForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () 
   // The Element can fail to mount for reasons the API call never sees --
   // most often a `client_secret` for a SetupIntent Stripe already
   // settled (an idempotent replay of a spent key). Without this the
-  // form is a blank box with a dead Save button, F2's worst case.
+  // form is a blank box with a dead Save button -- the worst case for a
+  // live demo, a failure with nothing on screen to explain it.
   const [elementFailed, setElementFailed] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -98,7 +99,7 @@ function AddCardForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () 
 }
 
 /** One card row: set-default and detach, the latter gated by an in-page
- * confirm step rather than `window.confirm` (Task 11). */
+ * confirm step rather than `window.confirm`. */
 function PaymentMethodRow({ pm }: { pm: PaymentMethodDto }) {
   const setDefault = useSetDefaultPaymentMethod();
   const removeMethod = useRemovePaymentMethod();
@@ -163,7 +164,7 @@ function PaymentMethodRow({ pm }: { pm: PaymentMethodDto }) {
   );
 }
 
-/** U4. */
+/** The tenant's cards: list, add through a SetupIntent, set default, remove. */
 export function PaymentMethodPanel() {
   const query = usePaymentMethods();
   const createSetupIntent = useCreateSetupIntent();
@@ -240,7 +241,7 @@ export function PaymentMethodPanel() {
         )}
 
         {phase.kind === "creating-intent" && <Loading>Loading payment form…</Loading>}
-        {/* F2: the setup-intent call has its own error surface. Without it a
+        {/* The setup-intent call has its own error surface. Without it a
             failed mutation resets `phase` to idle and the button silently
             does nothing, which is the one outcome a demo cannot explain. */}
         {phase.kind === "idle" && createSetupIntent.isError && (
@@ -251,7 +252,7 @@ export function PaymentMethodPanel() {
               : "Something went wrong."}
           </Alert>
         )}
-        {/* `locale` pinned for the same reason D10 pins `formatMoney`'s: left
+        {/* `locale` pinned for the same reason `formatMoney`'s is: left
             to the browser, the Element renders in whatever language the
             machine happens to be set to, and the demo is in English.
             Predictability beats politeness for something shown live. */}

@@ -78,9 +78,10 @@ function StartSubscription() {
   );
 }
 
-/** U1, D3's five-way state table. `incomplete` offers cancel directly here
- * (D2's demo path depends on it); `active` renders `PlanSelector` (U2);
- * no-subscription offers a plan choice that starts Checkout. */
+/** One branch per subscription state. `incomplete` offers cancel directly
+ * here (seeded subscriptions start `incomplete`, and the demo needs a way
+ * out); `active` renders `PlanSelector`; no-subscription offers a plan
+ * choice that starts Checkout. */
 export function SubscriptionPanel() {
   const query = useSubscription();
   const cancelSubscription = useCancelSubscription();

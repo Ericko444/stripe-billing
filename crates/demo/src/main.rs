@@ -10,10 +10,10 @@
 //! thirteen routes in one process, guarded by `demo`'s own
 //! [`JwtDecoder`](jwt::JwtDecoder) except for the webhook route (verified by
 //! signature instead) and `/demo/token` itself, which has no auth of its
-//! own and exists only to mint tokens the others accept (Phase 4d).
+//! own and exists only to mint tokens the others accept.
 //!
 //! The workspace denies `unwrap`, `expect` and `panic`; the one documented
-//! exception (`init-spec.md` §5.5) is startup config parsing, and even here
+//! exception is startup config parsing, and even here
 //! it is an explicit early return naming the missing variable, never a bare
 //! `unwrap`.
 
@@ -64,7 +64,7 @@ struct Config {
     /// TCP port the webhook listener binds.
     port: u16,
     /// The HS256 secret `demo`'s own `JwtDecoder` signs and verifies
-    /// `/demo/token` tokens with (Phase 4d, D1) -- `api` has no use for it.
+    /// `/demo/token` tokens with -- `api` has no use for it.
     billing_jwt_secret: SecretString,
 }
 
@@ -164,9 +164,8 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         LoggingSink,
     ));
 
-    // The read service the tenant-scoped routes will use. Wired now, from a
-    // second set of repository handles (a `PgPool` clone is cheap), so
-    // `AppState` is complete even though only the webhook route is mounted.
+    // The read service behind the tenant-scoped `GET` routes, from a second
+    // set of repository handles (a `PgPool` clone is cheap).
     let reads: Arc<dyn Reads> = Arc::new(ReadService::new(
         PgPlanRepository::new(pool.clone()),
         PgSubscriptionRepository::new(pool.clone()),
@@ -174,11 +173,9 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         PgPaymentMethodRepository::new(pool.clone()),
     ));
 
-    // The write service the tenant-scoped `POST`/`DELETE` routes will use
-    // (Phase 4c). A `StripeBillingProvider` over its own ledger repository
-    // handle, plus a third set of mirror repository handles. Wired for the
-    // same reason `reads` is: `AppState` stays complete before the router
-    // that calls it is mounted.
+    // The write service behind the tenant-scoped `POST`/`DELETE` routes: a
+    // `StripeBillingProvider` over its own ledger repository handle, plus a
+    // third set of mirror repository handles.
     let provider = StripeBillingProvider::new(
         &StripeConfig {
             secret: config.stripe_secret_key,
@@ -216,14 +213,14 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     // merged with the webhook route (which authenticates by signature and
     // needs no token) and the token mint (which has no auth of its own).
     // `Extension(decoder)` is the layer `DemoTenant`'s rejection suite
-    // already proved every path needs (D3) -- installed once, here, over
+    // already proved every path needs -- installed once, here, over
     // the merged router rather than any one part of it.
     let router = billing_router::<DemoTenant>(state.clone())
         .merge(webhook_router(state))
         .merge(token_router)
         .layer(Extension(decoder));
 
-    // The base path from §9. Every route moves together -- one rule beats a
+    // The `/api/v1` base path. Every route moves together -- one rule beats a
     // rule plus a carve-out -- so `/webhooks/stripe` moves too. Its
     // signature is computed over the body, never the path, so the forward
     // URL is the only thing that changes: `stripe listen --forward-to
@@ -249,9 +246,9 @@ async fn main() -> ExitCode {
     // Load `.env` if present; real environment always wins.
     dotenvy::dotenv().ok();
 
-    // `demo` has no argument parsing and must not gain a dependency for it
-    // (F1): two arms, `seed` and everything else, on the one argument this
-    // binary ever takes.
+    // `demo` has no argument parsing and must not gain a dependency for it:
+    // two arms, `seed` and everything else, on the one argument this binary
+    // ever takes.
     match std::env::args().nth(1).as_deref() {
         Some("seed") => match seed::run_seed().await {
             Ok(()) => ExitCode::SUCCESS,

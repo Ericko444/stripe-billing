@@ -4,11 +4,11 @@ use uuid::Uuid;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
 
-/// Applies `checkout.session.completed` -- the bootstrap exception
-/// (`init-spec.md` §10.3). In 4a this links the Stripe customer to a tenant
-/// by creating the `billing.customers` mirror row; the subscription mirror
-/// arrives via the `customer.subscription.created` Stripe sends alongside
-/// (which creates it now that the customer is known).
+/// Applies `checkout.session.completed` -- the bootstrap exception to
+/// resolving the tenant from a local customer row. It links the Stripe
+/// customer to a tenant by creating the `billing.customers` mirror row; the
+/// subscription mirror arrives via the `customer.subscription.created`
+/// Stripe sends alongside (which creates it now that the customer is known).
 ///
 /// **The database lookup is always attempted first.** Only when
 /// `find_by_stripe_customer_id` returns `None` -- a genuine first-time
@@ -49,14 +49,14 @@ where
 /// `client_reference_id` and `metadata.tenant_id`. **The only code path in
 /// this module that trusts the payload for tenancy.**
 ///
-/// §10.3 is explicit that dashboard-editable metadata is not a general trust
-/// anchor, so this is reached *only* after `find_by_stripe_customer_id` has
-/// returned `None`. As the available guard, the two sources must not
+/// Metadata can be edited from the Stripe dashboard, so it is not a general
+/// trust anchor: this is reached *only* after `find_by_stripe_customer_id`
+/// has returned `None`. As the available guard, the two sources must not
 /// disagree: an event whose `metadata.tenant_id` contradicts its
 /// `client_reference_id` is rejected, not trusted. Full session-ownership
 /// validation -- proving this module created *this* session for *this*
-/// tenant -- needs the checkout-session ledger that lands with
-/// `start_checkout_session` in 4c; until then, agreement is the check.
+/// tenant -- would need a ledger of created sessions; agreement is the
+/// check made instead.
 fn tenant_from_session(fields: &SessionFields) -> Result<Option<TenantId>, DomainError> {
     let from_ref = fields
         .client_reference_id

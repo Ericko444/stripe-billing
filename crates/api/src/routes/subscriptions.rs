@@ -81,7 +81,7 @@ where
 /// An unknown or another tenant's `plan_id` is a 404, checked before any
 /// outbound call. The success/cancel URLs come from `AppState`'s
 /// `checkout_urls` (host config), never the request. This handler logs
-/// nothing -- the returned `url` travels only in the response body (§9).
+/// nothing -- the returned `url` travels only in the response body.
 pub(crate) async fn start_checkout_session<T>(
     tenant: T,
     State(state): State<AppState>,

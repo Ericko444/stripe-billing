@@ -1,11 +1,10 @@
-//! `DemoTenant`'s full rejection-path suite (Plan 4d Task 4, P2): built and
-//! tested while `demo` still serves only the webhook route, so nothing here
-//! depends on a mount that does not exist yet.
+//! `DemoTenant`'s full rejection-path suite, exercised against a minimal
+//! router so nothing here depends on `main`'s full mount.
 //!
 //! "The token was refused" is worthless if it was refused for the wrong
 //! reason, so every rejection path gets its own named test -- and the row
 //! that matters most, [`jwt_every_rejection_looks_the_same`], checks that all
-//! seven produce the byte-identical `detail` (D5): the response alone must
+//! seven produce the byte-identical `detail`: the response alone must
 //! never tell a caller *why* it was rejected.
 
 mod common;
@@ -40,8 +39,8 @@ async fn whoami(tenant: DemoTenant) -> impl IntoResponse {
 }
 
 /// A router with exactly one route behind `DemoTenant`, mirroring how
-/// `main` will mount `billing_router::<DemoTenant>` (Task 5) -- except this
-/// exercises the extractor alone, before anything else depends on it.
+/// `main` mounts `billing_router::<DemoTenant>` -- except this exercises the
+/// extractor alone.
 /// `decoder: None` stands in for the layer never having been installed.
 fn router(decoder: Option<JwtDecoder>) -> Router {
     let router = Router::new()
@@ -92,8 +91,8 @@ async fn call(
 }
 
 /// `/whoami` (behind `DemoTenant`) merged with the real `/demo/token` mint
-/// route over the same secret -- the composition `main` builds (Task 5/6),
-/// so a round-trip test here exercises the actual seam rather than a stand-in.
+/// route over the same secret -- the composition `main` builds, so a
+/// round-trip test here exercises the actual seam rather than a stand-in.
 fn mounted_app(secret: &SecretString) -> Router {
     Router::new()
         .route("/whoami", get(whoami))
@@ -170,7 +169,7 @@ async fn jwt_wrong_secret_is_401() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 async fn jwt_wrong_algorithm_is_401() -> Result<(), Box<dyn Error>> {
-    // The D2 pin: a token signed with the right secret but a family the
+    // The HS256 pin: a token signed with the right secret but a family the
     // decoder does not accept must still be rejected. An unpinned
     // `Validation` is exactly how `alg: none`-style bypasses land.
     let token = token_with(&valid_claims(Uuid::new_v4()), SECRET, Algorithm::HS384)?;
@@ -223,7 +222,7 @@ async fn jwt_missing_decoder_extension_is_401() -> Result<(), Box<dyn Error>> {
     let token = token_with(&valid_claims(Uuid::new_v4()), SECRET, Algorithm::HS256)?;
 
     // No `Extension(JwtDecoder)` layer installed -- even an otherwise-valid
-    // token must still be rejected (D3).
+    // token must still be rejected.
     let (status, _) = call(router(None), Some(&format!("Bearer {token}"))).await?;
 
     assert_eq!(status, StatusCode::UNAUTHORIZED);
