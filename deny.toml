@@ -1,0 +1,14 @@
+# cargo-deny configuration. CI runs `cargo deny check advisories` only; the
+# licenses, bans and sources checks are not enabled. Every ignore below
+# carries the reason it is safe, and is revisited when that reason changes.
+
+[advisories]
+ignore = [
+    # Marvin Attack: timing side channel in the `rsa` crate, no fixed release.
+    # `rsa` arrives only through `jsonwebtoken`'s `rust_crypto` backend, in
+    # `demo`. The demo never builds an RSA key -- both keys come from
+    # `from_secret` -- and validation is pinned to `Algorithm::HS256`, so an
+    # RS* token is rejected before any RSA code runs. The code is compiled in,
+    # never reachable. Revisit if `demo` ever accepts an asymmetric algorithm.
+    { id = "RUSTSEC-2023-0071", reason = "rsa is unreachable: demo JWTs are HS256-only, keys from from_secret" },
+]
