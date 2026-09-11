@@ -20,7 +20,7 @@ export function usePaymentMethods() {
 /** No invalidation here -- the `client_secret` this returns is confirmed
  * client-side against Stripe.js, and the card does not exist in this API
  * until the `payment_method.attached` / `setup_intent.succeeded` webhook
- * mirrors it. `PaymentMethodPanel`'s own pending poll (D5) is what notices. */
+ * mirrors it. `PaymentMethodPanel`'s own pending poll is what notices. */
 export function useCreateSetupIntent() {
   return useMutation({
     mutationFn: createSetupIntent,

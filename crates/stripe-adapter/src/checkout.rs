@@ -17,7 +17,7 @@ use crate::{StripeError, fingerprint};
 /// The fingerprint covers **the customer id and the price id** -- the two
 /// inputs that identify the operation. The two URLs vary the request body
 /// but come from host config, constant per deployment, so they are not part
-/// of the call's identity (`docs/spec/phase-4c-write-routes.md` decision 2).
+/// of the call's identity.
 ///
 /// Mode is `subscription`. There is **no mirror write** here -- the local
 /// `subscriptions` row is created later, by the

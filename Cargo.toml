@@ -2,7 +2,7 @@
 resolver = "3"
 members = ["crates/*"]
 
-# `jsonwebtoken`'s `rust_crypto` backend (Phase 4d) pulls in enough extra
+# `jsonwebtoken`'s `rust_crypto` backend pulls in enough extra
 # crates (rsa, ed25519-dalek, p256/p384, curve25519-dalek...) that linking
 # `demo`'s full debug info on Windows/MSVC overflows the linker's PDB
 # database (LNK1140). Line tables are enough for `RUST_BACKTRACE=1`; full
@@ -24,7 +24,9 @@ persistence = { path = "crates/persistence" }
 stripe-adapter = { path = "crates/stripe-adapter" }
 api = { path = "crates/api" }
 
-# Stripe client, modular line. Pinned exactly: see docs/intent/phase-2.md.
+# Stripe client, modular line. A release candidate over the stale 0.41 stable
+# line, so pinned exactly: a caret range would float across RCs, which may
+# break. `BillingProvider` bounds any breaking change to `stripe-adapter`.
 # `default` resolves to default-tls -> hyper-tls -> native-tls, which drags in
 # OpenSSL, so default features are off and rustls is named explicitly. Selecting
 # rustls without a crypto provider is a compile_error!, so a mistake here is loud.
@@ -33,25 +35,25 @@ async-stripe = { version = "=1.0.0-rc.8", default-features = false, features = [
     "rustls-ring",
 ] }
 # Like async-stripe-core, the billing line opts in per resource -- no default
-# feature set. "subscription" brings the create/update/cancel request builders
-# Tasks 18-20 need; the SubscriptionItem response type is ungated.
+# feature set. "subscription" brings the create/update/cancel request
+# builders; the SubscriptionItem response type is ungated.
 async-stripe-billing = { version = "=1.0.0-rc.8", features = ["subscription"] }
-# Checkout Session (subscription mode) for POST /subscriptions/checkout-session
-# (Phase 4c). default-features off, same rustls discipline as every line here.
+# Checkout Session (subscription mode) for POST /subscriptions/checkout-session.
+# default-features off, same rustls discipline as every line here.
 async-stripe-checkout = { version = "=1.0.0-rc.8", default-features = false, features = ["checkout_session"] }
 async-stripe-client-core = "=1.0.0-rc.8"
 # async-stripe-core defines no default feature set at all -- each resource
-# (customer, subscription, ...) is opt-in. "customer" is Phase 2's; Phase 4c
-# adds "setup_intent" (SetupIntent lives in core, NOT in async-stripe-payment
-# -- checked against the registry). Later tasks add their own resource features.
+# (customer, subscription, ...) is opt-in. "customer" for the customer calls,
+# "setup_intent" for SetupIntents (SetupIntent lives in core, NOT in
+# async-stripe-payment -- checked against the registry).
 async-stripe-core = { version = "=1.0.0-rc.8", features = ["customer", "setup_intent"] }
-# PaymentMethod detach + attach metadata for the payment-method routes
-# (Phase 4c). default-features off, same discipline as the lines above.
+# PaymentMethod detach + attach metadata for the payment-method routes.
+# default-features off, same discipline as the lines above.
 async-stripe-payment = { version = "=1.0.0-rc.8", default-features = false, features = ["payment_method"] }
 async-trait = "0.1.92"
 axum = "0.8.9"
 dotenvy = "0.15.7"
-# Webhook signature verification (Phase 3). `hmac::Mac::verify_slice` is the
+# Webhook signature verification. `hmac::Mac::verify_slice` is the
 # constant-time comparison; `hex` decodes the `v1` signatures from the header.
 # No cryptography is implemented here -- `Hmac<Sha256>` over `sha2` does the
 # work. `hmac` is pinned to 0.13 to share `digest` 0.11 with the pinned
@@ -62,7 +64,7 @@ hmac = "0.13"
 # shared secret (`DecodingKey`/`EncodingKey::from_secret`), never a PEM key,
 # and `rust_crypto` keeps the dependency pure-Rust rather than pulling in
 # `aws-lc-rs`'s native build. Its own `hmac`/`sha2` versions differ from the
-# ones pinned above for the webhook signature (Phase 3) -- Cargo compiles
+# ones pinned above for the webhook signature -- Cargo compiles
 # both; the two never interact.
 jsonwebtoken = { version = "11.0.0", default-features = false, features = [
     "rust_crypto",

@@ -1,9 +1,9 @@
 //! The bound [`billing_router`](crate::billing_router) places on the host's
 //! tenant extractor.
 //!
-//! Ports-and-adapters, §8.1 Option B: this crate never authenticates. The
-//! host does, and hands the router a type that turns an authenticated
-//! request into a [`TenantId`]. The bound below is what the compiler checks
+//! Ports-and-adapters: this crate never authenticates. The host does, and
+//! hands the router a type that turns an authenticated request into a
+//! [`TenantId`]. The bound below is what the compiler checks
 //! that type against, so "forgot to wire an extractor" is a build error
 //! rather than a 500 in production.
 
@@ -32,10 +32,10 @@ use crate::{ApiError, AppState};
 /// - `Send + Sync + 'static` — Axum's requirement for anything it stores in
 ///   a handler's future.
 ///
-/// # Adapting a middleware-based host ("Option A")
+/// # Adapting a middleware-based host
 ///
 /// A host whose auth layer already resolves the tenant and inserts it into
-/// the request extensions does not need Option B's full extractor. It writes
+/// the request extensions does not need a full extractor of its own. It writes
 /// a newtype — about ten lines — and names that as `billing_router`'s type
 /// parameter. The snippet lives on [`billing_router`](crate::billing_router)'s
 /// own rustdoc, next to the call it plugs into.

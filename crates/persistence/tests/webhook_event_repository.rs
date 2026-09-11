@@ -87,7 +87,7 @@ async fn duplicate_stripe_event_id_is_rejected() -> Result<(), Box<dyn Error>> {
 
     // `create` opts into `RepositoryError::classify`, so a duplicate
     // `stripe_event_id` (SQLSTATE 23505) surfaces as the sharper
-    // `Conflict`, not the opaque `Repository`. Phase 3's dedup reads this
+    // `Conflict`, not the opaque `Repository`. The webhook dedup reads this
     // exact variant as the "already delivered" signal.
     assert!(matches!(second, Err(DomainError::Conflict)));
     Ok(())
@@ -131,8 +131,8 @@ async fn mark_processed_twice_is_harmless() -> Result<(), Box<dyn Error>> {
 
     repo.mark_processed(created.id).await?;
     // A second call is not an error and does not need the row to still be
-    // in some particular state -- decision 5's "still processed even for a
-    // declined event" path calls this unconditionally.
+    // in some particular state -- the processor marks even a declined
+    // (not-applied) event processed, and calls this unconditionally.
     repo.mark_processed(created.id).await?;
 
     let found = repo

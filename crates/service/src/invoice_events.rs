@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
 
-/// Which invoice event is being applied. Each of the two §10.4 invoice
+/// Which invoice event is being applied. Each of the two handled invoice
 /// types pins both the status mirrored onto the row and the `BillingEvent`
 /// handed to the sink, so there is no partial/unreachable state to handle.
 #[derive(Debug, Clone, Copy)]
@@ -27,9 +27,9 @@ impl Kind {
 }
 
 /// Applies an `invoice.paid` / `invoice.payment_failed` event: resolves the
-/// tenant from the invoice's Stripe customer id (§10.3), best-effort links
-/// the local subscription mirror, and mirrors the invoice through
-/// [`InvoiceRepository::apply_event`]'s upsert + ordering guard (§10.2).
+/// tenant from the invoice's Stripe customer id, best-effort links the
+/// local subscription mirror, and mirrors the invoice through
+/// [`InvoiceRepository::apply_event`]'s upsert + ordering guard.
 ///
 /// Unlike the subscription handler this may *create* the local invoice row:
 /// there is no `invoice.created` webhook, so `paid` / `payment_failed` are

@@ -44,8 +44,8 @@ pub struct Customer {
 /// (repo: R)`), never as `dyn CustomerRepository`. Its methods are still
 /// written as `fn … -> impl Future<Output = …> + Send` rather than bare
 /// `async fn`, matching `OutboundRequestRepository` and
-/// `WebhookEventRepository`: a later phase's `WebhookProcessor<C, S, W, K>`
-/// goes behind `#[async_trait]` to implement the object-safe
+/// `WebhookEventRepository`: `service`'s generic `WebhookProcessor` goes
+/// behind `#[async_trait]` to implement the object-safe
 /// `WebhookHandler` port, which boxes its futures as `Send`, so every future
 /// it awaits -- including these -- must be `Send` too. A bare `async fn` in a
 /// trait does not promise that for a generic `C`. Implementors may still
@@ -79,10 +79,10 @@ pub trait CustomerRepository {
     /// take a `TenantId`.** (`WebhookEventRepository`'s methods take none
     /// either, but the webhook ledger is not a tenant-scoped entity to begin
     /// with, which is why none of its methods do.) This one is deliberately
-    /// the exception: a later phase's webhook path (`init-spec.md` §10.3)
-    /// has no token and no tenant context -- the Stripe signature is the
-    /// authentication -- so this is the function that *produces* a tenant,
-    /// not one more call site that must already have one.
+    /// the exception: the webhook path has no token and no tenant context --
+    /// the Stripe signature is the authentication -- so this is the function
+    /// that *produces* a tenant, not one more call site that must already
+    /// have one.
     ///
     /// Returns the whole `Customer` rather than a bare `TenantId` so the
     /// caller receives the tenant *attached to the row it was derived from*,

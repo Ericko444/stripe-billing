@@ -1,4 +1,4 @@
-//! Task 17: `update_customer` against wiremock + a real Postgres ledger.
+//! `update_customer` against wiremock + a real Postgres ledger.
 //!
 //! The idempotency-ledger behaviour itself is exercised once, generically,
 //! in `idempotency.rs`; this file covers what is specific to

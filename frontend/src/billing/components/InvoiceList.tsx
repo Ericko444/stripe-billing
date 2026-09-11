@@ -12,9 +12,9 @@ const STATUS_TONE: Record<InvoiceStatus, "positive" | "caution" | "negative"> = 
   failed: "negative",
 };
 
-/** U3, 4b's keyset pagination -- pages by `next`, never an offset. "Load
- * more" replaces the visible page rather than accumulating; per P4 this is
- * the first thing cut under time pressure, so it stays deliberately simple. */
+/** Invoice history over the API's keyset pagination -- pages by `next`,
+ * never an offset. "Load more" replaces the visible page rather than
+ * accumulating, deliberately simple. */
 export function InvoiceList() {
   const [after, setAfter] = useState<string | undefined>(undefined);
   const query = useInvoices(after);

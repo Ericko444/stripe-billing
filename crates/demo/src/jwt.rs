@@ -1,6 +1,6 @@
 //! `demo`'s own JWT extractor. `api` defines the extractor contract
 //! ([`TenantExtractor`](api::TenantExtractor)) and has no use for a JWT
-//! itself (D1) -- authentication is the host's job.
+//! itself -- authentication is the host's job.
 //!
 //! **The pin is the whole defence.** `Validation::new(Algorithm::HS256)`
 //! below fixes the only algorithm this decoder ever accepts. An unpinned
@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// The claims a `demo` token carries. `sub` is the tenant's uuid directly
-/// (Open Question 3 -- `sub`, not a custom `tenant_id` claim); `exp` is the
-/// standard expiry `jsonwebtoken` checks during decode.
+/// -- the standard subject claim, not a custom `tenant_id` one; `exp` is
+/// the standard expiry `jsonwebtoken` checks during decode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     /// The tenant this token authenticates as.
@@ -31,7 +31,7 @@ pub struct Claims {
 }
 
 /// Verifies `demo`'s own tokens against `BILLING_JWT_SECRET`. Travels in a
-/// request `Extension` (D3) rather than `AppState`: `api` never sees it, and
+/// request `Extension` rather than `AppState`: `api` never sees it, and
 /// `demo`, as the composition root, is the one place that mechanism is
 /// acceptable.
 #[derive(Clone)]
@@ -52,7 +52,7 @@ impl JwtDecoder {
     /// Verifies and decodes `token`, checking signature, algorithm and
     /// expiry in one call. Any failure -- including a well-formed-but-wrong
     /// `sub` -- is reported as a single opaque error; the caller must not
-    /// distinguish causes from it (D5).
+    /// distinguish causes from it.
     fn decode(&self, token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
         jsonwebtoken::decode::<Claims>(token, &self.decoding_key, &self.validation)
             .map(|data| data.claims)
@@ -81,7 +81,7 @@ impl FromRequestParts<AppState> for DemoTenant {
         // Every rejection below is `ApiError::Unauthorized` and nothing
         // else: no header, no `Bearer ` prefix, wrong secret, wrong
         // algorithm, an expired token, a non-uuid `sub`, and a missing
-        // decoder all produce the identical body (D5) -- the response alone
+        // decoder all produce the identical body -- the response alone
         // must never tell a caller which of these happened.
         let decoder = parts
             .extensions

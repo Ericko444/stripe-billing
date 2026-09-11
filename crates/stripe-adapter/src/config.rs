@@ -10,9 +10,9 @@ use time::Duration;
 /// not a substitute for it: the failure mode it guards against is someone
 /// later adding a plain, unwrapped `String` field next to `secret` and
 /// getting a `#[derive(Debug)]` that prints it. A manual impl forces every
-/// new field to be a deliberate addition here, not an automatic one
-/// (`init-spec.md` §15's named leak: a `Debug`-printed config struct feeding
-/// a tracing span).
+/// new field to be a deliberate addition here, not an automatic one. The
+/// leak it prevents is a `Debug`-printed config struct feeding a tracing
+/// span.
 pub struct StripeConfig {
     /// The Stripe secret API key.
     pub secret: SecretString,
@@ -34,9 +34,9 @@ impl fmt::Debug for StripeConfig {
 /// The exact Stripe API version this adapter is pinned against, read from
 /// the compiled SDK rather than duplicated as a string literal here -- so a
 /// version bump in `Cargo.toml` is what changes this, not a second place
-/// that could silently drift from the first. Exposed for a later phase's
-/// startup assertion against the `STRIPE_API_VERSION` environment variable
-/// (`init-spec.md` §15).
+/// that could silently drift from the first. Exposed so a host can assert
+/// at startup that it matches the API version its Stripe account and
+/// webhook endpoint are configured for.
 ///
 /// A plain function rather than a `const`: `ApiVersion::as_str` is not a
 /// `const fn`, and duplicating its match arms here just to get a `const`

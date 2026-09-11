@@ -12,13 +12,14 @@ use crate::{ApiError, AppState};
 /// `body: Bytes`, never `Json<T>`, and it is the **last** extractor: the
 /// signature is an HMAC over the exact bytes Stripe sent, so `HeaderMap` is
 /// read first and nothing touches the body before
-/// `webhook_verifier.verify_and_record` sees it untouched (`init-spec.md`
-/// §10.1). A `Json<T>` extractor would consume and re-encode the body first,
-/// breaking verification irrecoverably.
+/// `webhook_verifier.verify_and_record` sees it untouched. A `Json<T>`
+/// extractor would consume and re-encode the body first, breaking
+/// verification irrecoverably.
 ///
 /// Every code path that reaches the handler or stops at `Duplicate` returns
-/// **200** -- a business outcome, never an error (§10.2, §10.4: `Fresh`
-/// handled, `Duplicate`, and every `EventOutcome` all acknowledge). Only a
+/// **200** -- a business outcome, never an error (`Fresh` handled,
+/// `Duplicate`, and every `EventOutcome` all acknowledge; anything else
+/// would only make Stripe retry). Only a
 /// missing header or a verification failure is a 400; anything else is a
 /// genuine fault and falls through `?` to the default 500.
 pub(crate) async fn post_stripe_webhook(

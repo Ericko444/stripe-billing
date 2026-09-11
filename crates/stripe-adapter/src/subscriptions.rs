@@ -26,8 +26,8 @@ use crate::{StripeError, fingerprint};
 /// unstated default: without it, a customer with no payment method makes
 /// Stripe **reject the request outright** ("no attached payment source")
 /// rather than create the subscription `incomplete` -- confirmed against a
-/// real test-mode account while building Phase 4d's seed (Plan 4d, P4),
-/// which depends on exactly the `incomplete`-not-rejected behavior this line
+/// real test-mode account while building the demo's `seed` command, which
+/// depends on exactly the `incomplete`-not-rejected behavior this line
 /// guarantees.
 pub async fn create_subscription<R: OutboundRequestRepository>(
     client: &stripe::Client,
@@ -65,10 +65,10 @@ pub async fn create_subscription<R: OutboundRequestRepository>(
 
 /// `BillingProvider::change_plan`'s real implementation. Updates the
 /// *existing* subscription item -- `items: [{ id, price }]` -- never adds a
-/// second one, which is the double-billing bug `init-spec.md` §5.1 exists to
-/// prevent. Prorates the change and errors (rather than leaving the
-/// subscription incomplete) if the immediate payment fails (§7.3, Open
-/// Question 1's resolved default).
+/// second one, which would bill the customer twice. Prorates the change and
+/// errors (rather than leaving the subscription incomplete) if the
+/// immediate payment fails, so a failed upgrade never leaves the
+/// subscription in an ambiguous state.
 ///
 /// The fingerprint covers the subscription id, the stored item id and the
 /// new price -- the three inputs that vary the request.
@@ -187,8 +187,8 @@ async fn complete_with_snapshot<R: OutboundRequestRepository>(
 /// version (`2026-07-29.dahlia`) `current_period_start` / `current_period_end`
 /// live on the subscription item, alongside its id. A subscription with no
 /// item is a response we cannot build a snapshot from -- a blank item id
-/// would silently break a later `change_plan`, which is the double-billing
-/// bug `init-spec.md` §5.1 exists to prevent -- so it is an error, never an
+/// would silently break a later `change_plan` and risk the double-billing
+/// bug the stored item id exists to prevent -- so it is an error, never an
 /// empty string.
 fn snapshot_from(
     subscription: stripe_billing::Subscription,

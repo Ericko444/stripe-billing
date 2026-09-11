@@ -1,6 +1,6 @@
 ---
 name: task-workflow
-description: Branch-verify-merge workflow for this repo. Use when starting a new task or unit of work, when finishing one, or when about to commit or merge. Covers branching from dev, the full verification gate (fmt, clippy, cargo tests, the S1 boundary check), and merging back into dev.
+description: Branch-verify-merge workflow for this repo. Use when starting a new task or unit of work, when finishing one, or when about to commit or merge. Covers branching from dev, the full verification gate (fmt, clippy, cargo tests, the domain boundary check), and merging back into dev.
 ---
 
 # Task Workflow
@@ -52,7 +52,7 @@ commits; do not rewrite old ones.
 
 The existing history is one commit per coherent step (aggregate → migration →
 adapter → tests). Keep that granularity — it is what makes the work reviewable
-and, per `init-spec.md` §17, explainable in the defense.
+and explainable in the defense.
 
 ## 3. Gate: verify before finishing
 
@@ -60,7 +60,7 @@ and, per `init-spec.md` §17, explainable in the defense.
 a break surfaces in seconds rather than minutes.
 
 ```bash
-# 1. S1 boundary — the load-bearing architectural invariant
+# 1. Domain boundary — the load-bearing architectural invariant
 grep -E "sqlx|axum|stripe" crates/domain/Cargo.toml
 
 # 2. Formatting
@@ -74,12 +74,12 @@ cargo test --workspace
 ```
 
 **Step 1 must produce no output.** `domain/Cargo.toml` gaining `sqlx`, a Stripe
-client, or `axum` breaks the separation the whole design rests on (S1). It is a
+client, or `axum` breaks the separation the whole design rests on. It is a
 one-second check and it is the single most checkable proof of the architecture,
 so it runs every time rather than being assumed.
 
 **Step 3 is not advisory.** `unwrap_used`, `expect_used` and `panic` are
-`deny` at the workspace level (S6). Clippy failing means the code does not meet
+`deny` at the workspace level. Clippy failing means the code does not meet
 a stated standard, not that a nitpick is available.
 
 **Step 4 needs Docker.** The `persistence` tests bring up a disposable Postgres

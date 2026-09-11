@@ -1,6 +1,6 @@
 //! Wire types, distinct from the domain model.
 //!
-//! §9: DTOs are defined here and are **not** the domain types, so the wire
+//! DTOs are defined here and are **not** the domain types, so the wire
 //! format can evolve without a domain change forcing it, and a field added
 //! to a domain struct never silently becomes a wire-breaking change. The
 //! conversion is an explicit `From` impl per type and it is allowed to be
@@ -20,7 +20,7 @@ use time::{OffsetDateTime, UtcOffset};
 use uuid::Uuid;
 
 /// A monetary amount on the wire: an integer count of the currency's minor
-/// unit, plus the ISO 4217 code as a separate field (S5).
+/// unit, plus the ISO 4217 code as a separate field. Never a float.
 #[derive(Debug, Serialize)]
 pub struct MoneyDto {
     /// The amount in the currency's smallest unit, e.g. `1999` for €19.99.
@@ -103,7 +103,7 @@ impl From<Subscription> for SubscriptionDto {
 /// Request body for `POST /subscriptions/{id}/change-plan`. `plan_id` is the
 /// **local** plan id (a uuid), resolved to a Stripe price id server-side --
 /// never a Stripe id itself, consistent with `SubscriptionDto.plan_id` and
-/// with 4b's wire rule that ids in bodies are local.
+/// with the wire rule that ids in bodies are local.
 #[derive(Debug, Deserialize)]
 pub struct ChangePlanRequest {
     /// The local id of the plan to change to.
@@ -115,7 +115,7 @@ pub struct ChangePlanRequest {
 /// `at_period_end` absent defaults to `true` -- the safer of the two: a
 /// client that forgets the field gets "cancels at the period boundary," not
 /// "cancels immediately." `#[serde(deny_unknown_fields)]` is deliberately
-/// not used (§9 decision 6): an extra key, such as a spoofed `tenant_id`,
+/// not used: an extra key, such as a spoofed `tenant_id`,
 /// must stay inert rather than fail the request.
 #[derive(Debug, Deserialize)]
 pub struct CancelRequest {
@@ -131,7 +131,7 @@ fn default_at_period_end() -> bool {
 
 /// Request body for `POST /subscriptions/checkout-session`. `plan_id` is the
 /// **local** plan id, resolved server-side. The success/cancel URLs are
-/// **not** here -- they are host config (P4), so a caller cannot redirect a
+/// **not** here -- they are host config, so a caller cannot redirect a
 /// customer anywhere after payment.
 #[derive(Debug, Deserialize)]
 pub struct CheckoutSessionRequest {
@@ -142,7 +142,7 @@ pub struct CheckoutSessionRequest {
 /// Response to `POST /subscriptions/checkout-session`: the hosted Checkout
 /// page URL, and nothing else -- the frontend just redirects there. The
 /// `url` is browser-destined and appears **only** in this body, never a log
-/// line (§9), the same rule as `SetupIntentDto.client_secret`.
+/// line, the same rule as `SetupIntentDto.client_secret`.
 #[derive(Debug, Serialize)]
 pub struct CheckoutSessionDto {
     /// `https://checkout.stripe.com/...`.
@@ -157,7 +157,7 @@ impl From<CheckoutSessionSnapshot> for CheckoutSessionDto {
 
 /// A stored card on the wire. Display metadata only -- `brand`, `last4`,
 /// `is_default`, plus id and creation time. No card number, no expiry, no
-/// token: §7.4 keeps card data in Stripe and the mirror table never held
+/// token: card data stays in Stripe and the mirror table never held
 /// anything else, so this DTO's job is to not undo that by joining in
 /// something richer later.
 #[derive(Debug, Serialize)]
@@ -191,7 +191,7 @@ impl From<PaymentMethod> for PaymentMethodDto {
 ///
 /// The `client_secret` is browser-destined and bearer-ish -- whoever holds
 /// it can attach a payment method to that customer. It belongs in this body
-/// and in no log line (§9; see `domain::SetupIntentSnapshot`'s own docs).
+/// and in no log line (see `domain::SetupIntentSnapshot`'s own docs).
 /// The DTO carries only it on purpose: there is nothing else about the
 /// SetupIntent a caller of this route needs.
 #[derive(Debug, Serialize)]

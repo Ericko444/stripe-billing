@@ -3,7 +3,7 @@ import { usePlans, useChangePlan } from "../hooks/usePlans";
 import { formatMoney } from "../../money";
 import { Alert, Badge, Button, Loading } from "../../ui/primitives";
 
-/** U2. Rendered only for an `active` subscription (D3) -- changing plan on
+/** Rendered only for an `active` subscription -- changing plan on
  * one that was never paid for is not a meaningful action, and cancelling an
  * `incomplete` one is `SubscriptionPanel`'s job instead. */
 export function PlanSelector({

@@ -24,7 +24,7 @@ impl SubscriptionId {
 }
 
 /// The lifecycle state of a `Subscription` — the subset of Stripe
-/// subscription statuses this system acts on (`init-spec.md` §10.4). Stored
+/// subscription statuses this system acts on. Stored
 /// as `TEXT`, mapped here rather than as a Postgres `ENUM` so a new Stripe
 /// status is a match arm, not an `ALTER TYPE` migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +84,7 @@ impl TryFrom<&str> for SubscriptionStatus {
 }
 
 /// Whether [`SubscriptionRepository::apply_event`]'s ordering guard admitted
-/// the write (`init-spec.md` §10.2). A named two-state value rather than a
+/// the write. A named two-state value rather than a
 /// bare `bool`, so a call site cannot silently invert it -- the same
 /// reasoning behind `CancellationTiming`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +121,7 @@ pub struct Subscription {
     /// Whether the subscription is set to end at the period boundary.
     pub cancel_at_period_end: bool,
     /// Stripe's `created` timestamp of the last webhook event applied to this
-    /// row (`init-spec.md` §10.2). `None` means no event has been applied
+    /// row. `None` means no event has been applied
     /// yet -- true of every row created before webhook processing existed.
     /// A later event is applied only when its `created` is `None`-relative
     /// (always applies) or greater than or equal to this value; an older
@@ -139,15 +139,15 @@ pub struct Subscription {
 ///
 /// Written as `fn … -> impl Future<Output = …> + Send` rather than bare
 /// `async fn`, matching `OutboundRequestRepository` and
-/// `WebhookEventRepository`: a later phase's `WebhookProcessor<C, S, W, K>`
-/// goes behind `#[async_trait]` to implement the object-safe
+/// `WebhookEventRepository`: `service`'s generic `WebhookProcessor` goes
+/// behind `#[async_trait]` to implement the object-safe
 /// `WebhookHandler` port, which boxes its futures as `Send`, so every future
 /// it awaits -- including these -- must be `Send` too. A bare `async fn` in a
 /// trait does not promise that for a generic `S`. Implementors may still
 /// write `async fn` in the `impl` block; the bound is checked there.
 pub trait SubscriptionRepository {
     /// Creates a new subscription for the given tenant. `cancel_at_period_end`
-    /// starts `false`; nothing in Phase 1 sets it.
+    /// starts `false`.
     #[allow(clippy::too_many_arguments)]
     fn create(
         &self,
@@ -179,7 +179,7 @@ pub trait SubscriptionRepository {
     /// `None` if it does not exist, has been soft-deleted, or belongs to a
     /// different tenant. Tenant-scoped, unlike
     /// [`CustomerRepository::find_by_stripe_customer_id`](crate::CustomerRepository::find_by_stripe_customer_id):
-    /// a later phase's webhook path always has a `Customer` -- and therefore
+    /// the webhook path always has a `Customer` -- and therefore
     /// a `TenantId` -- in hand by the time it needs this lookup, so this is
     /// not the tenant-establishing exception that one is.
     fn find_by_stripe_subscription_id(
@@ -189,7 +189,7 @@ pub trait SubscriptionRepository {
     ) -> impl Future<Output = Result<Option<Subscription>, DomainError>> + Send;
 
     /// Applies a webhook event's effect to a subscription row, guarded by
-    /// `init-spec.md` §10.2's ordering rule: the write is admitted when
+    /// the ordering rule: the write is admitted when
     /// `event_created_at` is greater than or equal to the row's current
     /// `last_event_created_at` (or that column is `NULL`), and rejected --
     /// recorded as [`EventApplication::Stale`], row unchanged -- otherwise.
@@ -227,7 +227,7 @@ pub trait SubscriptionRepository {
     /// Repoints a subscription at a different local plan.
     ///
     /// **Deliberately separate from [`apply_event`](Self::apply_event), and
-    /// deliberately *not* guarded by §10.2's ordering rule.** The two write
+    /// deliberately *not* guarded by the webhook ordering rule.** The two write
     /// disjoint columns for different reasons:
     ///
     /// - `apply_event` writes what *Stripe* reported (status, period bounds,
@@ -240,8 +240,8 @@ pub trait SubscriptionRepository {
     ///   newer event to lose a race against, and an ordering predicate would
     ///   only be able to reject the write that is by definition authoritative.
     ///
-    /// Call it **after** the corresponding Stripe call has succeeded (§7.4:
-    /// Stripe is authoritative, the local table is a cache). Concurrent plan
+    /// Call it **after** the corresponding Stripe call has succeeded (Stripe
+    /// is authoritative, the local table is a cache). Concurrent plan
     /// changes are last-write-wins, which is what Stripe itself does.
     ///
     /// **Precondition:** the row identified by `(tenant_id, id)` exists and

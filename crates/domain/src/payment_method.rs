@@ -39,11 +39,12 @@ pub struct PaymentMethod {
     /// The last four digits of the card.
     pub last4: String,
     /// Whether this is the customer's default payment method. Enforcing "at
-    /// most one default per customer" is a `service`-layer concern
-    /// (`init-spec.md` §7.4), not a schema constraint here.
+    /// most one default per customer" is a `service`-layer concern, not a
+    /// schema constraint here.
     pub is_default: bool,
     /// The `created` timestamp of the last webhook event applied to this row
-    /// (`init-spec.md` §10.2's ordering anchor). `None` means no event has
+    /// -- the ordering anchor that stops an older event overwriting a newer
+    /// one. `None` means no event has
     /// been applied yet -- true of a row created outside the webhook path.
     pub last_event_created_at: Option<OffsetDateTime>,
     /// When the payment method was created.
@@ -96,7 +97,7 @@ pub trait PaymentMethodRepository {
     ) -> impl Future<Output = Result<Option<PaymentMethod>, DomainError>> + Send;
 
     /// Mirrors a `payment_method.attached` (or equivalent) event, guarded by
-    /// `init-spec.md` §10.2's ordering rule. An **upsert**, like
+    /// the ordering rule. An **upsert**, like
     /// [`InvoiceRepository::apply_event`](crate::InvoiceRepository::apply_event):
     /// `attached` is the first the module sees, so "mirror" means
     /// create-if-absent. One `INSERT … ON CONFLICT (tenant_id,
@@ -131,9 +132,9 @@ pub trait PaymentMethodRepository {
     /// Makes `id` the customer's sole default in **one statement**: sets
     /// `is_default = (id = $target)` across the customer's non-deleted rows,
     /// so the old default is cleared and the new one set together -- never a
-    /// window with two defaults or none (`init-spec.md` §7.4).
+    /// window with two defaults or none.
     ///
-    /// **Deliberately not guarded by §10.2's ordering rule, and separate
+    /// **Deliberately not guarded by the webhook ordering rule, and separate
     /// from [`apply_event`](Self::apply_event)** -- the same split as
     /// [`SubscriptionRepository::set_plan`](crate::SubscriptionRepository::set_plan).
     /// `apply_event` writes what a webhook reported and must be ordered

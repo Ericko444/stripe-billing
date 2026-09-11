@@ -23,7 +23,7 @@ impl InvoiceId {
     }
 }
 
-/// The payment state of an `Invoice` — the subset `init-spec.md` §10.4 acts
+/// The payment state of an `Invoice` — the subset the webhook handlers act
 /// on (`invoice.paid`, `invoice.payment_failed`) plus the initial state.
 /// Stored as `TEXT`, mapped here rather than as a Postgres `ENUM`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,8 +78,8 @@ pub struct Invoice {
     /// The customer being billed.
     pub customer_id: CustomerId,
     /// The subscription this invoice is for, if any. An invoice can exist
-    /// against a customer before a subscription is linked (`init-spec.md`
-    /// §10.4 bootstrap).
+    /// against a customer before its subscription's mirror row exists --
+    /// webhooks can arrive in any order.
     pub subscription_id: Option<SubscriptionId>,
     /// The linked Stripe invoice id.
     pub stripe_invoice_id: String,
@@ -88,7 +88,8 @@ pub struct Invoice {
     /// The current payment state.
     pub status: InvoiceStatus,
     /// The `created` timestamp of the last webhook event applied to this row
-    /// (`init-spec.md` §10.2's ordering anchor). `None` means no event has
+    /// -- the ordering anchor that stops an older event overwriting a newer
+    /// one. `None` means no event has
     /// been applied yet -- true of a row created outside the webhook path,
     /// and momentarily of the first mirror write before it commits.
     pub last_event_created_at: Option<OffsetDateTime>,
@@ -221,15 +222,15 @@ pub trait InvoiceRepository {
         stripe_invoice_id: &str,
     ) -> impl Future<Output = Result<Option<Invoice>, DomainError>> + Send;
 
-    /// Mirrors a webhook event's invoice state, guarded by `init-spec.md`
-    /// §10.2's ordering rule: admitted when `event_created_at` is `>=` the
+    /// Mirrors a webhook event's invoice state, guarded by the ordering
+    /// rule: admitted when `event_created_at` is `>=` the
     /// row's current `last_event_created_at` (or that column is `NULL`),
     /// rejected -- [`EventApplication::Stale`](crate::EventApplication), row
     /// unchanged -- otherwise.
     ///
     /// **An upsert, unlike
     /// [`SubscriptionRepository::apply_event`](crate::SubscriptionRepository::apply_event).**
-    /// There is no `invoice.created` webhook (§10.4); `invoice.paid` /
+    /// No `invoice.created` webhook is handled; `invoice.paid` /
     /// `invoice.payment_failed` are the first the module sees, and "mirror
     /// invoice" means creating the local row if it is absent. So this takes
     /// the full set of insertable columns rather than a local `InvoiceId`,

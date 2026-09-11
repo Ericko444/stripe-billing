@@ -12,7 +12,7 @@ domain.workspace = true
 service.workspace = true
 axum.workspace = true
 # Opaque encoding for the invoice pagination cursor. `hex`, not `base64`:
-# it is already a workspace dependency (Phase 3's webhook signatures), and
+# it is already a workspace dependency (the webhook signatures), and
 # the cursor only needs to be opaque, not compact.
 hex.workspace = true
 serde.workspace = true
@@ -27,7 +27,7 @@ async-trait.workspace = true
 tokio.workspace = true
 tower = { workspace = true, features = ["util"] }
 # Router-level tests capture `tracing` output to assert a `client_secret`
-# never reaches a log line (Phase 4c, spec §9). Already a workspace dep.
+# never reaches a log line. Already a workspace dep.
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

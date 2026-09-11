@@ -31,7 +31,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// A shared, ordered record of *which* double was reached, so the
-/// `init-spec.md` §7.4 tests can assert "the provider ran before the
+/// Stripe-first ordering tests can assert "the provider ran before the
 /// repository." Both [`StubBillingProvider`] and [`InMemoryPaymentMethods`]
 /// push into the same one -- `"provider"` and `"repository"` respectively.
 pub(crate) type CallLog = Arc<Mutex<Vec<&'static str>>>;
@@ -399,7 +399,8 @@ impl InMemoryPaymentMethods {
     }
 
     /// Like `default()`, but `set_default` and `detach_event` push
-    /// `"repository"` into `log` when reached -- the §7.4 ordering tests.
+    /// `"repository"` into `log` when reached -- the Stripe-first ordering
+    /// tests.
     pub(crate) fn with_call_log(log: CallLog) -> Self {
         Self {
             rows: Mutex::default(),
@@ -750,9 +751,9 @@ pub(crate) struct StubBillingProvider {
 }
 
 impl StubBillingProvider {
-    /// A double for the §7.4 ordering tests: pushes `"provider"` into `log`
-    /// when a payment-method call is reached, and -- when `fail` -- returns a
-    /// `Provider` error from it. Pairing this (`fail = true`) with a check
+    /// A double for the Stripe-first ordering tests: pushes `"provider"` into
+    /// `log` when a payment-method call is reached, and -- when `fail` --
+    /// returns a `Provider` error from it. Pairing this (`fail = true`) with a check
     /// that the mirror did not move is what catches a reversed
     /// (mirror-first) implementation.
     pub(crate) fn for_ordering_test(log: CallLog, fail: bool) -> Self {

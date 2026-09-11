@@ -1,24 +1,24 @@
-//! Router-level tests for the Phase 4c write routes, driven through
+//! Router-level tests for the write routes, driven through
 //! `billing_router<T>` with a stub tenant extractor and a `StubWrites` fake.
 //!
-//! Task 7 covers `POST /payment-methods/setup-intent`: it answers 200 with a
+//! `POST /payment-methods/setup-intent`: it answers 200 with a
 //! `client_secret`, it resolves the tenant's customer first (a tenant with
 //! none still succeeds), that secret never reaches a log line, and two
 //! tenants get intents for their own customers.
 //!
-//! Tasks 8-9 cover `POST /subscriptions/{id}/change-plan` and
+//! `POST /subscriptions/{id}/change-plan` and
 //! `POST /subscriptions/{id}/cancel`: malformed path/body ids 404 the same
 //! way an unknown or cross-tenant subscription does, and the latter never
 //! reaches `Writes` at all; `cancel`'s `at_period_end` defaults to `true`
 //! when absent; cancelling an already-canceled subscription is a 200 with no
 //! second call.
 //!
-//! Task 13 covers `POST /payment-methods/{id}/default` (200, updated card)
+//! `POST /payment-methods/{id}/default` (200, updated card)
 //! and `DELETE /payment-methods/{id}` (204): a malformed or cross-tenant id
 //! is a 404 that never reaches `Writes`, and a second delete of the same id
 //! is a 404.
 //!
-//! Task 16 covers `POST /subscriptions/checkout-session`: 200 with a hosted
+//! `POST /subscriptions/checkout-session`: 200 with a hosted
 //! `url`, an unknown or cross-tenant `plan_id` is a 404 that never reaches
 //! `Writes`, the url never reaches a log line, and two tenants get sessions
 //! for their own plans.
@@ -226,7 +226,7 @@ async fn two_tenants_get_intents_for_their_own_customers() -> Result<(), Box<dyn
     Ok(())
 }
 
-// --- Task 8: POST /subscriptions/{id}/change-plan ---------------------
+// --- POST /subscriptions/{id}/change-plan ---------------------
 
 #[tokio::test]
 async fn change_plan_returns_the_updated_subscription() -> Result<(), Box<dyn Error>> {
@@ -324,7 +324,7 @@ async fn change_plan_for_another_tenants_subscription_is_404_and_never_reached()
     Ok(())
 }
 
-// --- Task 9: POST /subscriptions/{id}/cancel ---------------------------
+// --- POST /subscriptions/{id}/cancel ---------------------------
 
 #[tokio::test]
 async fn cancel_at_period_end_true_sets_the_flag_without_canceling() -> Result<(), Box<dyn Error>> {
@@ -466,7 +466,7 @@ async fn cancelling_an_already_canceled_subscription_is_200_with_no_second_call(
     Ok(())
 }
 
-// --- Task 13: POST /payment-methods/{id}/default -----------------------
+// --- POST /payment-methods/{id}/default -----------------------
 
 #[tokio::test]
 async fn set_default_returns_the_updated_card() -> Result<(), Box<dyn Error>> {
@@ -533,7 +533,7 @@ async fn set_default_for_another_tenants_card_is_404_and_never_reached()
     Ok(())
 }
 
-// --- Task 13: DELETE /payment-methods/{id} ---------------------------
+// --- DELETE /payment-methods/{id} ---------------------------
 
 #[tokio::test]
 async fn delete_returns_204_and_records_the_removal() -> Result<(), Box<dyn Error>> {
@@ -627,7 +627,7 @@ async fn deleting_an_already_removed_card_is_404() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-// --- Task 16: POST /subscriptions/checkout-session -------------------
+// --- POST /subscriptions/checkout-session -------------------
 
 #[tokio::test]
 async fn checkout_session_returns_a_url() -> Result<(), Box<dyn Error>> {

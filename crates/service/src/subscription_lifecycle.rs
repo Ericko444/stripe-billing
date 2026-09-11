@@ -11,7 +11,7 @@ use crate::webhook::{EventOutcome, NotAppliedReason};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnMissing {
     /// Return `NotApplied(UnknownSubscription)` -- the `updated` / `deleted`
-    /// behaviour, and `created`'s too until Task 22.
+    /// behaviour.
     NotApplied,
     /// Create the mirror: resolve `plan_id` from the subscription's Stripe
     /// price (`PlanRepository::find_by_stripe_price_id`), or
@@ -21,9 +21,9 @@ pub enum OnMissing {
 }
 
 /// Applies a `customer.subscription.{created,updated,deleted}` event:
-/// resolves the tenant from the Stripe customer id (§10.3), locates or --
-/// for `created` -- creates the local subscription mirror, and applies the
-/// event through the ordering guard (§10.2).
+/// resolves the tenant from the Stripe customer id, locates or -- for
+/// `created` -- creates the local subscription mirror, and applies the
+/// event through the ordering guard.
 ///
 /// One handler for all three because their `data.object` is the same shape
 /// and the flow is identical. `deleted` arrives as a `canceled` status and
@@ -39,8 +39,9 @@ pub enum OnMissing {
 /// treats it as authority for anything else.
 ///
 /// On the create path `plan_id` comes from the price mapping; on every
-/// other path `plan_id` is never touched (spec Open Question 1) -- only
-/// status, both period bounds and `cancel_at_period_end` are applied.
+/// other path `plan_id` is never touched -- a webhook names a Stripe price,
+/// not a local plan -- only status, both period bounds and
+/// `cancel_at_period_end` are applied.
 pub async fn apply<C, S, L>(
     customers: &C,
     subscriptions: &S,
@@ -60,7 +61,7 @@ where
         .await?
     else {
         // Not a failure: this event concerns a Stripe customer this module
-        // does not own (§10.3).
+        // does not own.
         return Ok(EventOutcome::NotApplied(NotAppliedReason::UnknownCustomer));
     };
     let tenant_id = customer.tenant_id;
@@ -149,11 +150,11 @@ where
 }
 
 /// Maps the subscription's new status to the [`BillingEvent`] this handler
-/// emits (§8.3's translation from a Stripe event into a host-facing typed
-/// notification). Not spec-mandated -- the spec fixes `BillingEvent`'s
-/// shape and the ordering around calling the sink, not which event each
-/// status produces -- so the mapping is deliberately the smallest one that
-/// covers the four variants `service` currently defines: `Active` becomes
+/// emits -- the translation from a Stripe event into a host-facing typed
+/// notification. The port fixes `BillingEvent`'s shape and the ordering
+/// around calling the sink, not which event each status produces, so the
+/// mapping is deliberately the smallest one that covers the three
+/// subscription variants: `Active` becomes
 /// `SubscriptionActivated` (a new subscriber, or a recovery from
 /// `past_due`/`incomplete`); `Canceled` and `IncompleteExpired` both become
 /// `SubscriptionCanceled` -- both are terminal, and the host has no

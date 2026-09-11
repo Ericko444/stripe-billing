@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// produce before ever reaching `domain` -- a request missing a header a
 /// route requires -- and `Unauthorized`, for a host's tenant extractor to
 /// reject with. All three map to a status; none leaks internals to the
-/// caller (`init-spec.md` §5.5).
+/// caller.
 #[derive(Debug)]
 pub enum ApiError {
     /// A failure surfaced by `domain` or a use case built on it.
@@ -66,7 +66,7 @@ impl IntoResponse for ApiError {
                 "The Stripe-Signature header was not present on the request.",
             ),
             // A host's tenant extractor rejected the request. One `detail`
-            // shared by every cause (D5) -- no token, a malformed header, a
+            // shared by every cause -- no token, a malformed header, a
             // bad signature and an expired token are all the same response,
             // so the body itself cannot be used to probe which is which.
             ApiError::Unauthorized => (
@@ -96,7 +96,7 @@ impl IntoResponse for ApiError {
             ),
             // A write lost a race for a record it needed -- in practice the
             // idempotency ledger refusing to guess the outcome of a prior
-            // in-flight attempt (Phase 2's case E). 409, not the 500 the
+            // in-flight attempt. 409, not the 500 the
             // default arm would give it, so the caller is told to retry the
             // logical operation rather than left thinking the request was
             // malformed. `detail` carries nothing caller-specific.
@@ -109,15 +109,15 @@ impl IntoResponse for ApiError {
             // was unreachable. 502: the failure is upstream of us, not the
             // caller's request. The provider's own message is in
             // `Provider(String)` and reaches the log line below; it never
-            // reaches the caller (§5.5 -- a provider error can carry account
-            // or schema internals).
+            // reaches the caller (a provider error can carry account or
+            // schema internals).
             ApiError::Domain(DomainError::Provider(_)) => (
                 StatusCode::BAD_GATEWAY,
                 "Upstream provider error",
                 "An upstream provider failed to process the request.",
             ),
             // Every other DomainError -- Repository, MalformedEvent, and any
-            // variant a later phase adds -- falls to 500. This is
+            // variant added later -- falls to 500. This is
             // deliberately the default arm, not an enumerated list: a new
             // DomainError variant must not silently acquire a 4xx because a
             // wildcard elsewhere guessed at it.
@@ -129,7 +129,7 @@ impl IntoResponse for ApiError {
         };
 
         // The full error goes server-side, keyed by the same id the caller
-        // receives -- `detail` above is deliberately coarse (§5.5: a raw
+        // receives -- `detail` above is deliberately coarse (a raw
         // DomainError rendered into a response body can expose schema or
         // provider internals), so this is the only place the real cause is
         // recorded.

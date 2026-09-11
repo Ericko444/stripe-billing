@@ -14,11 +14,12 @@ export type TenantId = keyof typeof SEEDED_TENANTS;
 const DEFAULT_TENANT: TenantId = "00000000-0000-0000-0000-000000000001";
 
 /** Checkout is a full-page redirect to Stripe and back -- the SPA remounts
- * from scratch on return, so the in-memory tenant selection (§11.6: the
- * token itself is never persisted) would otherwise silently reset to
+ * from scratch on return, so the in-memory tenant selection (the token
+ * itself is never persisted) would otherwise silently reset to
  * `DEFAULT_TENANT` even if a different tenant started the session. Not a
- * credential, so `sessionStorage` for this one value doesn't undermine
- * §11.6 -- it's which tenant to resume as, not proof of who they are. */
+ * credential, so `sessionStorage` for this one value doesn't undermine the
+ * never-persist-the-token rule -- it's which tenant to resume as, not proof
+ * of who they are. */
 const RETURN_TENANT_KEY = "billing-demo:return-tenant";
 
 function isSeededTenant(value: string): value is TenantId {
@@ -131,7 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (tenantId === state.tenantId) {
       return;
     }
-    // D7: cache partitioning, not authorization -- every query key already
+    // Cache partitioning, not authorization -- every query key already
     // carries tenantId, so this `clear()` is belt-and-suspenders against a
     // component that forgot to.
     queryClient.clear();

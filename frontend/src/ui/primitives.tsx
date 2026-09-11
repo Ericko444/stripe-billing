@@ -165,7 +165,7 @@ export function Alert({ children }: { children: ReactNode }) {
   );
 }
 
-/** The "waiting on a webhook" surface (D5). `busy` while polling (spinner),
+/** The "waiting on a webhook" surface. `busy` while polling (spinner),
  * plain caution once the poll has capped (warning triangle). */
 export function Notice({ children, busy = false }: { children: ReactNode; busy?: boolean }) {
   return (
