@@ -21,6 +21,8 @@ use domain::{
 };
 use time::OffsetDateTime;
 
+use crate::RequestContext;
+
 /// Object-safe façade over the write use cases.
 ///
 /// `api`'s `AppState` holds this as `Arc<dyn Writes>`, next to
@@ -59,7 +61,7 @@ pub trait Writes: Send + Sync {
     /// method to the customer.
     async fn create_setup_intent(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
     ) -> Result<SetupIntentSnapshot, DomainError>;
 
     /// Changes the tenant's subscription to `plan_id` (a **local** plan id,
@@ -89,7 +91,7 @@ pub trait Writes: Send + Sync {
     /// the caller's plan choice is not something a webhook can be newer than.
     async fn change_plan(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         plan_id: PlanId,
     ) -> Result<Subscription, DomainError>;
@@ -107,7 +109,7 @@ pub trait Writes: Send + Sync {
     /// `apply_event`, exactly as in `change_plan`.
     async fn cancel_subscription(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         at_period_end: bool,
     ) -> Result<Subscription, DomainError>;
@@ -126,7 +128,7 @@ pub trait Writes: Send + Sync {
     /// default cleared and new one set together, never two and never none.
     async fn set_default_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<PaymentMethod, DomainError>;
 
@@ -145,7 +147,7 @@ pub trait Writes: Send + Sync {
     /// here -- the card is gone either way.
     async fn remove_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<(), DomainError>;
 
@@ -165,7 +167,7 @@ pub trait Writes: Send + Sync {
     /// logged.
     async fn start_checkout_session(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         plan_id: PlanId,
         success_url: &str,
         cancel_url: &str,
@@ -293,8 +295,9 @@ where
 
     async fn create_setup_intent(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
     ) -> Result<SetupIntentSnapshot, DomainError> {
+        let tenant = ctx.tenant_id;
         let stripe_customer_id = self.ensure_customer(tenant).await?;
         self.provider
             .create_setup_intent(tenant, &stripe_customer_id)
@@ -303,10 +306,11 @@ where
 
     async fn change_plan(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         plan_id: PlanId,
     ) -> Result<Subscription, DomainError> {
+        let tenant = ctx.tenant_id;
         let subscription = self
             .subscriptions
             .find(tenant, subscription_id)
@@ -343,10 +347,11 @@ where
 
     async fn cancel_subscription(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         at_period_end: bool,
     ) -> Result<Subscription, DomainError> {
+        let tenant = ctx.tenant_id;
         let subscription = self
             .subscriptions
             .find(tenant, subscription_id)
@@ -372,9 +377,10 @@ where
 
     async fn set_default_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<PaymentMethod, DomainError> {
+        let tenant = ctx.tenant_id;
         let payment_method = self
             .payment_methods
             .find(tenant, payment_method_id)
@@ -418,9 +424,10 @@ where
 
     async fn remove_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<(), DomainError> {
+        let tenant = ctx.tenant_id;
         let payment_method = self
             .payment_methods
             .find(tenant, payment_method_id)
@@ -452,7 +459,7 @@ where
 
     async fn start_checkout_session(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         plan_id: PlanId,
         success_url: &str,
         cancel_url: &str,
@@ -460,6 +467,7 @@ where
         // Resolve the plan first: an unknown or cross-tenant id 404s here,
         // before `ensure_customer` could create a Stripe customer and before
         // the provider is reached.
+        let tenant = ctx.tenant_id;
         let plan = self
             .plans
             .find(tenant, plan_id)
@@ -508,6 +516,13 @@ mod tests {
     /// `#[async_trait]` decision exists for.
     #[allow(dead_code)]
     fn assert_dyn_compatible(_w: &dyn Writes) {}
+
+    /// Wraps `tenant` in a `RequestContext` with a fresh correlation id --
+    /// every test below cares about the tenant only, so this keeps the
+    /// `RequestContext` plumbing out of each call site.
+    fn ctx(tenant: TenantId) -> RequestContext {
+        RequestContext::new(tenant, Uuid::new_v4())
+    }
 
     /// A `WriteService` over the in-memory doubles. Seed and inspect through
     /// the fields: `svc.customers.seed(..)`, `svc.provider.create_customer_calls()`.
@@ -638,7 +653,7 @@ mod tests {
         let tenant = TenantId::new(Uuid::new_v4());
         let svc = service();
 
-        let snapshot = svc.create_setup_intent(tenant).await?;
+        let snapshot = svc.create_setup_intent(ctx(tenant)).await?;
 
         // ensure_customer created a customer (provider hit once), and the
         // SetupIntent was for that same id.
@@ -659,7 +674,7 @@ mod tests {
         let svc = service();
         svc.customers.seed(linked_customer(tenant, "cus_linked"));
 
-        svc.create_setup_intent(tenant).await?;
+        svc.create_setup_intent(ctx(tenant)).await?;
 
         assert_eq!(svc.provider.create_customer_calls(), 0);
         assert_eq!(
@@ -701,7 +716,7 @@ mod tests {
         let new_plan_id = new_plan.id;
         svc.plans.seed(new_plan);
 
-        let updated = svc.change_plan(tenant, sub_id, new_plan_id).await?;
+        let updated = svc.change_plan(ctx(tenant), sub_id, new_plan_id).await?;
 
         // The provider was called with the subscription's own Stripe ids and
         // the target plan's price -- never the local uuids.
@@ -735,7 +750,9 @@ mod tests {
         let their_plan_id = their_plan.id;
         svc.plans.seed(their_plan);
 
-        let result = svc.change_plan(mine, their_sub_id, their_plan_id).await;
+        let result = svc
+            .change_plan(ctx(mine), their_sub_id, their_plan_id)
+            .await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
         assert!(svc.provider.change_plan_calls().is_empty());
@@ -751,7 +768,7 @@ mod tests {
         svc.subscriptions.seed(sub);
 
         let result = svc
-            .change_plan(tenant, sub_id, PlanId::new(Uuid::new_v4()))
+            .change_plan(ctx(tenant), sub_id, PlanId::new(Uuid::new_v4()))
             .await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
@@ -775,7 +792,7 @@ mod tests {
         let new_plan_id = new_plan.id;
         svc.plans.seed(new_plan);
 
-        let returned = svc.change_plan(tenant, sub_id, new_plan_id).await?;
+        let returned = svc.change_plan(ctx(tenant), sub_id, new_plan_id).await?;
 
         // Stripe was still called (the plan change itself is not skipped),
         // but the guard rejected the write as stale, so the row -- and the
@@ -799,7 +816,7 @@ mod tests {
         let stripe_subscription_id = sub.stripe_subscription_id.clone();
         svc.subscriptions.seed(sub);
 
-        let updated = svc.cancel_subscription(tenant, sub_id, true).await?;
+        let updated = svc.cancel_subscription(ctx(tenant), sub_id, true).await?;
 
         assert_eq!(
             svc.provider.cancel_calls(),
@@ -818,7 +835,7 @@ mod tests {
         let stripe_subscription_id = sub.stripe_subscription_id.clone();
         svc.subscriptions.seed(sub);
 
-        let updated = svc.cancel_subscription(tenant, sub_id, false).await?;
+        let updated = svc.cancel_subscription(ctx(tenant), sub_id, false).await?;
 
         assert_eq!(
             svc.provider.cancel_calls(),
@@ -837,7 +854,7 @@ mod tests {
         let their_sub_id = their_sub.id;
         svc.subscriptions.seed(their_sub);
 
-        let result = svc.cancel_subscription(mine, their_sub_id, true).await;
+        let result = svc.cancel_subscription(ctx(mine), their_sub_id, true).await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
         assert!(svc.provider.cancel_calls().is_empty());
@@ -853,7 +870,7 @@ mod tests {
         let sub_id = sub.id;
         svc.subscriptions.seed(sub);
 
-        let returned = svc.cancel_subscription(tenant, sub_id, true).await?;
+        let returned = svc.cancel_subscription(ctx(tenant), sub_id, true).await?;
 
         assert_eq!(returned.status, SubscriptionStatus::Canceled);
         assert!(
@@ -881,7 +898,7 @@ mod tests {
         svc.payment_methods.seed(old_default);
         svc.payment_methods.seed(new_default);
 
-        let returned = svc.set_default_payment_method(tenant, new_id).await?;
+        let returned = svc.set_default_payment_method(ctx(tenant), new_id).await?;
 
         assert!(returned.is_default);
         assert_eq!(returned.id, new_id);
@@ -909,7 +926,7 @@ mod tests {
         let pm_id = pm.id;
         svc.payment_methods.seed(pm);
 
-        svc.set_default_payment_method(tenant, pm_id).await?;
+        svc.set_default_payment_method(ctx(tenant), pm_id).await?;
 
         assert_eq!(
             *log.lock().unwrap_or_else(|p| p.into_inner()),
@@ -938,7 +955,7 @@ mod tests {
         svc.payment_methods.seed(old_default);
         svc.payment_methods.seed(target);
 
-        let result = svc.set_default_payment_method(tenant, target_id).await;
+        let result = svc.set_default_payment_method(ctx(tenant), target_id).await;
 
         assert!(matches!(result, Err(DomainError::Provider(_))));
         let rows = svc.payment_methods.list(tenant).await?;
@@ -978,7 +995,7 @@ mod tests {
         let their_pm_id = their_pm.id;
         svc.payment_methods.seed(their_pm);
 
-        let result = svc.set_default_payment_method(mine, their_pm_id).await;
+        let result = svc.set_default_payment_method(ctx(mine), their_pm_id).await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
         assert!(
@@ -1002,7 +1019,7 @@ mod tests {
         let stripe_pm_id = pm.stripe_payment_method_id.clone();
         svc.payment_methods.seed(pm);
 
-        svc.remove_payment_method(tenant, pm_id).await?;
+        svc.remove_payment_method(ctx(tenant), pm_id).await?;
 
         assert_eq!(svc.provider.detach_calls(), vec![stripe_pm_id]);
         assert_eq!(
@@ -1025,7 +1042,7 @@ mod tests {
         let pm_id = pm.id;
         svc.payment_methods.seed(pm);
 
-        svc.remove_payment_method(tenant, pm_id).await?;
+        svc.remove_payment_method(ctx(tenant), pm_id).await?;
 
         assert_eq!(
             *log.lock().unwrap_or_else(|p| p.into_inner()),
@@ -1049,7 +1066,7 @@ mod tests {
         let pm_id = pm.id;
         svc.payment_methods.seed(pm);
 
-        let result = svc.remove_payment_method(tenant, pm_id).await;
+        let result = svc.remove_payment_method(ctx(tenant), pm_id).await;
 
         assert!(matches!(result, Err(DomainError::Provider(_))));
         assert!(
@@ -1078,7 +1095,7 @@ mod tests {
         let pm_id = pm.id;
         svc.payment_methods.seed(pm);
 
-        svc.remove_payment_method(tenant, pm_id).await?;
+        svc.remove_payment_method(ctx(tenant), pm_id).await?;
 
         assert_eq!(svc.provider.detach_calls().len(), 1);
         // Stale is not an error; the webhook path owns the row now.
@@ -1099,7 +1116,7 @@ mod tests {
         let their_pm_id = their_pm.id;
         svc.payment_methods.seed(their_pm);
 
-        let result = svc.remove_payment_method(mine, their_pm_id).await;
+        let result = svc.remove_payment_method(ctx(mine), their_pm_id).await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
         assert!(
@@ -1121,7 +1138,7 @@ mod tests {
         svc.plans.seed(plan);
 
         let snapshot = svc
-            .start_checkout_session(tenant, plan_id, "https://ok", "https://cancel")
+            .start_checkout_session(ctx(tenant), plan_id, "https://ok", "https://cancel")
             .await?;
 
         assert!(snapshot.url.contains("price_checkout"));
@@ -1141,7 +1158,7 @@ mod tests {
         let svc = service();
 
         let result = svc
-            .start_checkout_session(tenant, PlanId::new(Uuid::new_v4()), "a", "b")
+            .start_checkout_session(ctx(tenant), PlanId::new(Uuid::new_v4()), "a", "b")
             .await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
@@ -1162,7 +1179,7 @@ mod tests {
         svc.plans.seed(their_plan);
 
         let result = svc
-            .start_checkout_session(mine, their_plan_id, "a", "b")
+            .start_checkout_session(ctx(mine), their_plan_id, "a", "b")
             .await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));

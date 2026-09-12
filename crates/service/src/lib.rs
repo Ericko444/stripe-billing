@@ -55,6 +55,7 @@
 //! Stripe customer before naming it to Stripe.
 
 mod checkout_session;
+mod context;
 mod invoice_events;
 mod payment_method_events;
 mod reads;
@@ -65,6 +66,7 @@ mod writes;
 #[cfg(test)]
 mod test_support;
 
+pub use context::RequestContext;
 pub use reads::{ReadService, Reads};
 pub use webhook::{EventOutcome, NotAppliedReason, WebhookHandler, WebhookProcessor};
 pub use writes::{WriteService, Writes};

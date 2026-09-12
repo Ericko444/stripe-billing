@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::{Extension, Path, State};
 use domain::{DomainError, PlanId, SubscriptionId, TenantId};
+use service::RequestContext;
 use uuid::Uuid;
 
 use crate::dto::{
@@ -46,9 +47,10 @@ where
 {
     let id = parse_subscription_id(&id)?;
     let plan_id = parse_plan_id(&body.plan_id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     let subscription = state
         .writes
-        .change_plan(tenant.into(), id, plan_id)
+        .change_plan(ctx, id, plan_id)
         .await
         .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(subscription.into()))
@@ -73,9 +75,10 @@ where
     T: Into<TenantId>,
 {
     let id = parse_subscription_id(&id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     let subscription = state
         .writes
-        .cancel_subscription(tenant.into(), id, body.at_period_end)
+        .cancel_subscription(ctx, id, body.at_period_end)
         .await
         .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(subscription.into()))
@@ -99,10 +102,11 @@ where
     T: Into<TenantId>,
 {
     let plan_id = parse_plan_id(&body.plan_id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     let snapshot = state
         .writes
         .start_checkout_session(
-            tenant.into(),
+            ctx,
             plan_id,
             &state.checkout_urls.success,
             &state.checkout_urls.cancel,

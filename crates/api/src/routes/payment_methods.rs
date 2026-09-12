@@ -2,6 +2,7 @@ use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use domain::{DomainError, PaymentMethodId, TenantId};
+use service::RequestContext;
 use uuid::Uuid;
 
 use crate::dto::{PaymentMethodDto, SetupIntentDto};
@@ -55,9 +56,10 @@ pub(crate) async fn create_setup_intent<T>(
 where
     T: Into<TenantId>,
 {
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     let snapshot = state
         .writes
-        .create_setup_intent(tenant.into())
+        .create_setup_intent(ctx)
         .await
         .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(SetupIntentDto::from(snapshot)))
@@ -80,9 +82,10 @@ where
     T: Into<TenantId>,
 {
     let id = parse_payment_method_id(&id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     let payment_method = state
         .writes
-        .set_default_payment_method(tenant.into(), id)
+        .set_default_payment_method(ctx, id)
         .await
         .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(payment_method.into()))
@@ -105,9 +108,10 @@ where
     T: Into<TenantId>,
 {
     let id = parse_payment_method_id(&id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     state
         .writes
-        .remove_payment_method(tenant.into(), id)
+        .remove_payment_method(ctx, id)
         .await
         .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(StatusCode::NO_CONTENT)
