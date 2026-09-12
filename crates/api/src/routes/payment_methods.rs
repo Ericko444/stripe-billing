@@ -1,11 +1,11 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use domain::{DomainError, PaymentMethodId, TenantId};
 use uuid::Uuid;
 
 use crate::dto::{PaymentMethodDto, SetupIntentDto};
-use crate::{ApiError, AppState};
+use crate::{ApiError, AppState, CorrelationId};
 
 /// Parses a path segment as a [`PaymentMethodId`]. A segment that is not a
 /// uuid names no payment method, so it takes the same 404 path as an unknown
@@ -50,11 +50,16 @@ where
 pub(crate) async fn create_setup_intent<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
 ) -> Result<Json<SetupIntentDto>, ApiError>
 where
     T: Into<TenantId>,
 {
-    let snapshot = state.writes.create_setup_intent(tenant.into()).await?;
+    let snapshot = state
+        .writes
+        .create_setup_intent(tenant.into())
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(SetupIntentDto::from(snapshot)))
 }
 
@@ -68,6 +73,7 @@ where
 pub(crate) async fn set_default_payment_method<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
 ) -> Result<Json<PaymentMethodDto>, ApiError>
 where
@@ -77,7 +83,8 @@ where
     let payment_method = state
         .writes
         .set_default_payment_method(tenant.into(), id)
-        .await?;
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(payment_method.into()))
 }
 
@@ -91,6 +98,7 @@ where
 pub(crate) async fn remove_payment_method<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError>
 where
@@ -100,6 +108,7 @@ where
     state
         .writes
         .remove_payment_method(tenant.into(), id)
-        .await?;
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(StatusCode::NO_CONTENT)
 }

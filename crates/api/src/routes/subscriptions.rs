@@ -1,12 +1,12 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use domain::{DomainError, PlanId, SubscriptionId, TenantId};
 use uuid::Uuid;
 
 use crate::dto::{
     CancelRequest, ChangePlanRequest, CheckoutSessionDto, CheckoutSessionRequest, SubscriptionDto,
 };
-use crate::{ApiError, AppState};
+use crate::{ApiError, AppState, CorrelationId};
 
 /// Parses a path segment as a [`SubscriptionId`]. A segment that is not a
 /// uuid names no subscription, so it takes the same 404 path as an unknown
@@ -37,6 +37,7 @@ fn parse_plan_id(raw: &str) -> Result<PlanId, ApiError> {
 pub(crate) async fn change_plan<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
     Json(body): Json<ChangePlanRequest>,
 ) -> Result<Json<SubscriptionDto>, ApiError>
@@ -45,7 +46,11 @@ where
 {
     let id = parse_subscription_id(&id)?;
     let plan_id = parse_plan_id(&body.plan_id)?;
-    let subscription = state.writes.change_plan(tenant.into(), id, plan_id).await?;
+    let subscription = state
+        .writes
+        .change_plan(tenant.into(), id, plan_id)
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(subscription.into()))
 }
 
@@ -60,6 +65,7 @@ where
 pub(crate) async fn cancel_subscription<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
     Json(body): Json<CancelRequest>,
 ) -> Result<Json<SubscriptionDto>, ApiError>
@@ -70,7 +76,8 @@ where
     let subscription = state
         .writes
         .cancel_subscription(tenant.into(), id, body.at_period_end)
-        .await?;
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(subscription.into()))
 }
 
@@ -85,6 +92,7 @@ where
 pub(crate) async fn start_checkout_session<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Json(body): Json<CheckoutSessionRequest>,
 ) -> Result<Json<CheckoutSessionDto>, ApiError>
 where
@@ -99,6 +107,7 @@ where
             &state.checkout_urls.success,
             &state.checkout_urls.cancel,
         )
-        .await?;
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(snapshot.into()))
 }

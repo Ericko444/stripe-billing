@@ -43,14 +43,17 @@
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::middleware;
 use axum::routing::{delete, get, post};
 
+mod correlation;
 mod dto;
 mod error;
 mod extract;
 mod routes;
 mod state;
 
+pub use correlation::CorrelationId;
 pub use dto::{
     CancelRequest, ChangePlanRequest, CheckoutSessionDto, CheckoutSessionRequest, InvoiceDto,
     InvoicePageDto, MoneyDto, PageParams, PaymentMethodDto, PlanDto, SetupIntentDto,
@@ -191,5 +194,10 @@ where
         )
         .route("/invoices", get(routes::invoices::list_invoices::<T>))
         .route("/invoices/{id}", get(routes::invoices::get_invoice::<T>))
+        // Mints this request's `CorrelationId` before any handler runs. Not
+        // mounted on `webhook_router`: that route has its own actor story
+        // (Task 11 territory) and no write route of its own to match a
+        // correlation id against yet.
+        .layer(middleware::from_fn(correlation::layer))
         .with_state(state)
 }

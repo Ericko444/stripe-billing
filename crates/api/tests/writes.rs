@@ -575,6 +575,81 @@ async fn delete_with_a_malformed_id_is_404() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// An unknown id (well-formed, but no such row) fails *inside*
+/// `Writes::remove_payment_method`, unlike `delete_with_a_malformed_id_is_404`
+/// above -- so this is the path that actually attaches the request's own
+/// `CorrelationId` (`correlation::layer` mints it; `remove_payment_method`
+/// reads it and calls `ApiError::with_correlation_id` on failure), not the
+/// self-minted fallback a pre-validation 404 still uses.
+#[tokio::test]
+async fn a_write_routes_error_body_carries_this_requests_correlation_id()
+-> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+    let unknown_id = Uuid::new_v4().to_string();
+
+    let (status, body) = send(
+        app_state_writes(Arc::new(StubWrites::default())),
+        Request::delete(format!("/payment-methods/{unknown_id}"))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let correlation_id = body["correlation_id"].as_str().unwrap_or_default();
+    assert!(Uuid::parse_str(correlation_id).is_ok());
+    Ok(())
+}
+
+/// The correlation id in the body above is minted by `correlation::layer`,
+/// never accepted from the caller -- the same rule `ApiError`'s own id
+/// generation always followed, just extended one layer out.
+#[tokio::test]
+async fn an_inbound_correlation_id_header_is_ignored() -> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+    let unknown_id = Uuid::new_v4().to_string();
+    let spoofed = "00000000-0000-0000-0000-000000000000";
+
+    let (status, body) = send(
+        app_state_writes(Arc::new(StubWrites::default())),
+        Request::delete(format!("/payment-methods/{unknown_id}"))
+            .header("x-tenant", &tenant)
+            .header("x-correlation-id", spoofed)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_ne!(body["correlation_id"].as_str(), Some(spoofed));
+    Ok(())
+}
+
+/// Two failing write requests get two different ids -- proving this is a
+/// fresh, per-request mint, not a value fixed for the process.
+#[tokio::test]
+async fn two_failing_write_requests_get_different_correlation_ids() -> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+    let writes = Arc::new(StubWrites::default());
+
+    let (_, first) = send(
+        app_state_writes(writes.clone()),
+        Request::delete(format!("/payment-methods/{}", Uuid::new_v4()))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+    let (_, second) = send(
+        app_state_writes(writes),
+        Request::delete(format!("/payment-methods/{}", Uuid::new_v4()))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_ne!(first["correlation_id"], second["correlation_id"]);
+    Ok(())
+}
+
 #[tokio::test]
 async fn delete_for_another_tenants_card_is_404_and_never_reached() -> Result<(), Box<dyn Error>> {
     let owner = TenantId::new(Uuid::new_v4());
