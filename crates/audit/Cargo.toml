@@ -1,0 +1,16 @@
+[package]
+name = "audit"
+description = "A typed, append-only audit journal, consumable by any module without depending on it. No I/O, no other workspace crate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
