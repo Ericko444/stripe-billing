@@ -40,5 +40,5 @@ pub use actor::{Actor, SubjectId};
 pub use correlation::CorrelationId;
 pub use entry::AuditEntry;
 pub use sink::{AuditError, AuditSink};
-pub use target::Target;
+pub use target::{Target, TargetId};
 pub use tenant::TenantId;

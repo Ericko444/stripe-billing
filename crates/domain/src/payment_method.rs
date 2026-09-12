@@ -1,5 +1,6 @@
 use std::future::Future;
 
+use audit::AuditEntry;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -129,6 +130,35 @@ pub trait PaymentMethodRepository {
         event_created_at: OffsetDateTime,
     ) -> impl Future<Output = Result<crate::EventApplication, DomainError>> + Send;
 
+    /// The same soft-delete [`detach_event`](Self::detach_event) performs,
+    /// in one transaction with the audit entry that records it. Used by
+    /// `Writes::remove_payment_method` -- the caller-initiated removal --
+    /// never by the webhook path, which still calls `detach_event` directly.
+    ///
+    /// A separate method rather than an `Option<AuditEntry>` parameter on
+    /// `detach_event`, deliberately: `detach_event` is also called from the
+    /// webhook path, which does not yet have a correlation id to attach
+    /// (that lands with the webhook path's own audit wiring, a later
+    /// phase). An optional parameter there would let a caller silently
+    /// skip the audit write for the one caller that always has an entry to
+    /// give it -- exactly the gap a shared write-and-audit transaction
+    /// exists to close.
+    ///
+    /// The entry is written **regardless of whether this detach is
+    /// stale**: by the time this method runs, the caller has already asked
+    /// Stripe to detach the card and Stripe has confirmed it, so the
+    /// request happened and is worth recording even if a
+    /// `payment_method.detached` webhook already soft-deleted the local row
+    /// first -- see `detach_event`'s own docs on why that race is not an
+    /// error.
+    fn remove(
+        &self,
+        tenant_id: TenantId,
+        stripe_payment_method_id: &str,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> impl Future<Output = Result<crate::EventApplication, DomainError>> + Send;
+
     /// Makes `id` the customer's sole default in **one statement**: sets
     /// `is_default = (id = $target)` across the customer's non-deleted rows,
     /// so the old default is cleared and the new one set together -- never a
@@ -149,11 +179,18 @@ pub trait PaymentMethodRepository {
     /// -- the caller looked it up first. A non-matching `id` clears every
     /// default for that customer and sets none, which is why the caller
     /// checks ownership before calling.
+    ///
+    /// Takes `entry` directly, unlike [`remove`](Self::remove)'s separate
+    /// method: this write has exactly one caller
+    /// (`Writes::set_default_payment_method`), no webhook ever reaches it,
+    /// so there is no second caller an `AuditEntry` parameter could starve
+    /// of one. Runs in one transaction with the audit insert (D1(h)).
     fn set_default(
         &self,
         tenant_id: TenantId,
         customer_id: CustomerId,
         id: PaymentMethodId,
+        entry: AuditEntry,
     ) -> impl Future<Output = Result<(), DomainError>> + Send;
 }
 

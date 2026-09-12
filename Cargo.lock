@@ -260,6 +260,7 @@ dependencies = [
 name = "audit-pg"
 version = "0.1.0"
 dependencies = [
+ "audit",
  "persistence",
  "sqlx",
  "testcontainers",
@@ -816,6 +817,7 @@ name = "domain"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "audit",
  "serde",
  "serde_json",
  "thiserror",
@@ -1972,6 +1974,8 @@ name = "persistence"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "audit",
+ "audit-pg",
  "domain",
  "serde_json",
  "sqlx",
@@ -2582,6 +2586,7 @@ name = "service"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "audit",
  "domain",
  "serde_json",
  "thiserror",

@@ -8,8 +8,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+audit.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
 
 # `persistence` is a dev-only edge, the same reasoning as `stripe-adapter`'s
 # own dev-dependency on it: proving the billing module's migrator and this
@@ -19,7 +21,6 @@ thiserror.workspace = true
 persistence.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true
-uuid.workspace = true
 
 [lints]
 workspace = true

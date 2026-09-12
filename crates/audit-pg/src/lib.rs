@@ -1,22 +1,22 @@
-//! Postgres adapter for `audit`: its own schema, migrator and append-only
-//! grant.
+//! Postgres adapter for `audit`: its own schema, migrator, append-only
+//! grant, and [`insert`].
 //!
 //! Owns `audit.audit_log` and its migration -- see `migrations/` for the
 //! schema, the append-only grant, and why append-only is enforced at the
 //! grant layer rather than trusted to the application.
 //!
-//! No `insert` function ships yet, deliberately: `audit::Action` and
-//! `audit::Target` are still empty enums (each vertical slice adds its own
-//! variant as it lands), which makes an `AuditEntry` impossible to
-//! construct today. Writing an `insert` now would mean matching those
-//! enums exhaustively with zero arms, which makes everything after that
-//! match unreachable and trips the workspace's `-D warnings` gate for no
-//! real reason -- there is nothing yet to insert. It is added once the
-//! first variant lands.
+//! No `AuditSink` implementation ships here yet: [`insert`] is the
+//! primitive a caller composes into its own transaction (`persistence`
+//! does exactly this for the audited write paths), and a pool-based
+//! `AuditSink` for callers with no existing transaction to join is added
+//! once something actually needs it (the two Stripe-only write routes,
+//! Task 10).
 
 mod error;
+mod insert;
 
 pub use error::AuditPgError;
+pub use insert::insert;
 
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;

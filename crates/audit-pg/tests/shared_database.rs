@@ -48,11 +48,13 @@ async fn both_migrators_share_one_database_and_are_idempotent() -> Result<(), Bo
     // Each migrator's own tracking table exists, is distinct, and has rows
     // -- proof neither one's migrations were skipped or misfiled into the
     // other's table.
-    let audit_migrations: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM audit._sqlx_migrations")
-            .fetch_one(&pool)
-            .await?;
-    assert!(audit_migrations > 0, "audit's migrator must have recorded its own migrations");
+    let audit_migrations: i64 = sqlx::query_scalar("SELECT count(*) FROM audit._sqlx_migrations")
+        .fetch_one(&pool)
+        .await?;
+    assert!(
+        audit_migrations > 0,
+        "audit's migrator must have recorded its own migrations"
+    );
 
     let billing_migrations: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
         .fetch_one(&pool)

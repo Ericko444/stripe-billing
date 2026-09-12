@@ -40,3 +40,16 @@ impl RepositoryError {
         }
     }
 }
+
+impl From<audit_pg::AuditPgError> for RepositoryError {
+    /// `AuditPgError` wraps exactly one thing, `sqlx::Error` -- this just
+    /// unwraps it and reuses `Other`'s own `#[from]`, so a caller writing
+    /// `audit_pg::insert(..).await?` inside a method returning
+    /// `Result<_, RepositoryError>` composes with `?` the same way a plain
+    /// `sqlx` call already does.
+    fn from(err: audit_pg::AuditPgError) -> Self {
+        match err {
+            audit_pg::AuditPgError::Sqlx(err) => RepositoryError::from(err),
+        }
+    }
+}

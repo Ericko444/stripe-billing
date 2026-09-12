@@ -82,3 +82,37 @@ impl AuditEntry {
         self.correlation_id
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::{SubjectId, TargetId};
+
+    #[test]
+    fn accessors_return_exactly_what_new_was_given() {
+        let tenant_id = TenantId::new(Uuid::new_v4());
+        let actor = Actor::User(SubjectId::new(Uuid::new_v4()));
+        let action = Action::PaymentMethodDetached;
+        let target = Target::PaymentMethod(TargetId::new(Uuid::new_v4()));
+        let occurred_at = OffsetDateTime::now_utc();
+        let correlation_id = CorrelationId::new(Uuid::new_v4());
+
+        let entry = AuditEntry::new(
+            tenant_id,
+            actor,
+            action,
+            target,
+            occurred_at,
+            correlation_id,
+        );
+
+        assert_eq!(entry.tenant_id(), tenant_id);
+        assert_eq!(entry.actor(), actor);
+        assert_eq!(entry.action(), action);
+        assert_eq!(entry.target(), target);
+        assert_eq!(entry.occurred_at(), occurred_at);
+        assert_eq!(entry.correlation_id(), correlation_id);
+    }
+}

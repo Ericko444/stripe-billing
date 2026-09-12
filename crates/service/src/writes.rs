@@ -13,6 +13,7 @@
 //! is what keeps the read tests running in a millisecond.
 
 use async_trait::async_trait;
+use audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
 use domain::{
     BillingProvider, CancellationTiming, CheckoutSessionParams, CheckoutSessionSnapshot,
     CreateCustomerParams, CustomerRepository, DomainError, PaymentMethod, PaymentMethodId,
@@ -411,9 +412,18 @@ where
             .await?;
 
         // Then the mirror, in one guarded-free statement (old default
-        // cleared and new one set together).
+        // cleared and new one set together), audited in the same
+        // transaction (D1(h)).
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::PaymentMethodSetDefault,
+            Target::PaymentMethod(TargetId::new(payment_method_id.as_uuid())),
+            OffsetDateTime::now_utc(),
+            CorrelationId::new(ctx.correlation_id),
+        );
         self.payment_methods
-            .set_default(tenant, payment_method.customer_id, payment_method_id)
+            .set_default(tenant, payment_method.customer_id, payment_method_id, entry)
             .await?;
 
         self.payment_methods
@@ -441,17 +451,25 @@ where
             .detach_payment_method(tenant, &payment_method.stripe_payment_method_id)
             .await?;
 
-        // Then the mirror. `Applied` vs `Stale` is not branched on: a stale
-        // result means a `payment_method.detached` webhook already
-        // soft-deleted the row, which is not an error -- the card is gone
-        // either way.
+        // Then the mirror, audited in the same transaction (D1(h)). `Applied`
+        // vs `Stale` is not branched on: a stale result means a
+        // `payment_method.detached` webhook already soft-deleted the row,
+        // which is not an error -- the card is gone either way, and the
+        // entry is written regardless (Stripe already confirmed the detach
+        // above, so the request happened either way -- see
+        // `PaymentMethodRepository::remove`'s own docs).
+        let now = OffsetDateTime::now_utc();
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::PaymentMethodDetached,
+            Target::PaymentMethod(TargetId::new(payment_method_id.as_uuid())),
+            now,
+            CorrelationId::new(ctx.correlation_id),
+        );
         let _application = self
             .payment_methods
-            .detach_event(
-                tenant,
-                &payment_method.stripe_payment_method_id,
-                OffsetDateTime::now_utc(),
-            )
+            .remove(tenant, &payment_method.stripe_payment_method_id, now, entry)
             .await?;
 
         Ok(())
@@ -915,6 +933,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_default_builds_an_audit_entry_naming_the_tenant_target_and_correlation_id()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let customer = linked_customer(tenant, "cus_pm_audit");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let pm = payment_method(tenant, customer_id, false);
+        let pm_id = pm.id;
+        svc.payment_methods.seed(pm);
+        let correlation_id = Uuid::new_v4();
+
+        svc.set_default_payment_method(RequestContext::new(tenant, correlation_id), pm_id)
+            .await?;
+
+        let entries = svc.payment_methods.set_default_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::PaymentMethodSetDefault);
+        assert_eq!(
+            entry.target(),
+            audit::Target::PaymentMethod(audit::TargetId::new(pm_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn set_default_calls_the_provider_before_the_repository() -> Result<(), Box<dyn Error>> {
         let log: CallLog = CallLog::default();
         let svc = service_for_ordering(log.clone(), false);
@@ -1027,6 +1075,36 @@ mod tests {
             None,
             "the row must be soft-deleted after a successful detach"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_builds_an_audit_entry_naming_the_tenant_target_and_correlation_id()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let customer = linked_customer(tenant, "cus_rm_audit");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let pm = payment_method(tenant, customer_id, true);
+        let pm_id = pm.id;
+        svc.payment_methods.seed(pm);
+        let correlation_id = Uuid::new_v4();
+
+        svc.remove_payment_method(RequestContext::new(tenant, correlation_id), pm_id)
+            .await?;
+
+        let entries = svc.payment_methods.removed_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::PaymentMethodDetached);
+        assert_eq!(
+            entry.target(),
+            audit::Target::PaymentMethod(audit::TargetId::new(pm_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
     }
 

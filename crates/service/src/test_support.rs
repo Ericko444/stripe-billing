@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
+use audit::AuditEntry;
 use domain::{
     BillingEvent, BillingEventSink, BillingProvider, CancellationTiming, CheckoutSessionParams,
     CheckoutSessionSnapshot, CreateCustomerParams, Customer, CustomerId, CustomerRepository,
@@ -391,6 +392,12 @@ impl InvoiceRepository for InMemoryInvoices {
 pub(crate) struct InMemoryPaymentMethods {
     rows: Mutex<Vec<PaymentMethod>>,
     call_log: Option<CallLog>,
+    /// Every `AuditEntry` handed to `remove`, in call order -- lets a test
+    /// assert on the entry `Writes::remove_payment_method` built, the same
+    /// way `remove_calls` asserts on the tenant/id pair.
+    removed_entries: Mutex<Vec<AuditEntry>>,
+    /// Same idea as `removed_entries`, for `set_default`.
+    set_default_entries: Mutex<Vec<AuditEntry>>,
 }
 
 impl InMemoryPaymentMethods {
@@ -405,6 +412,8 @@ impl InMemoryPaymentMethods {
         Self {
             rows: Mutex::default(),
             call_log: Some(log),
+            removed_entries: Mutex::default(),
+            set_default_entries: Mutex::default(),
         }
     }
 
@@ -412,6 +421,16 @@ impl InMemoryPaymentMethods {
         if let Some(log) = &self.call_log {
             lock(log).push("repository");
         }
+    }
+
+    /// The `AuditEntry` values `remove` was called with, in order.
+    pub(crate) fn removed_entries(&self) -> Vec<AuditEntry> {
+        lock(&self.removed_entries).clone()
+    }
+
+    /// The `AuditEntry` values `set_default` was called with, in order.
+    pub(crate) fn set_default_entries(&self) -> Vec<AuditEntry> {
+        lock(&self.set_default_entries).clone()
     }
 }
 
@@ -530,8 +549,10 @@ impl PaymentMethodRepository for InMemoryPaymentMethods {
         tenant_id: TenantId,
         customer_id: CustomerId,
         id: PaymentMethodId,
+        entry: AuditEntry,
     ) -> Result<(), DomainError> {
         self.record();
+        lock(&self.set_default_entries).push(entry);
         // Mirror the SQL: is_default = (id == target) across the customer's
         // live rows, in one pass -- no "two defaults or none" window.
         for row in lock(&self.rows).iter_mut().filter(|p| {
@@ -549,6 +570,35 @@ impl PaymentMethodRepository for InMemoryPaymentMethods {
         event_created_at: OffsetDateTime,
     ) -> Result<EventApplication, DomainError> {
         self.record();
+        let mut rows = lock(&self.rows);
+        let Some(row) = rows.iter_mut().find(|p| {
+            p.tenant_id == tenant_id
+                && p.stripe_payment_method_id == stripe_payment_method_id
+                && p.deleted_at.is_none()
+        }) else {
+            return Ok(EventApplication::Stale);
+        };
+        let admitted = match row.last_event_created_at {
+            None => true,
+            Some(last) => last <= event_created_at,
+        };
+        if !admitted {
+            return Ok(EventApplication::Stale);
+        }
+        row.deleted_at = Some(OffsetDateTime::now_utc());
+        row.last_event_created_at = Some(event_created_at);
+        Ok(EventApplication::Applied)
+    }
+
+    async fn remove(
+        &self,
+        tenant_id: TenantId,
+        stripe_payment_method_id: &str,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> Result<EventApplication, DomainError> {
+        self.record();
+        lock(&self.removed_entries).push(entry);
         let mut rows = lock(&self.rows);
         let Some(row) = rows.iter_mut().find(|p| {
             p.tenant_id == tenant_id

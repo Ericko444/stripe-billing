@@ -4,11 +4,85 @@ mod common;
 
 use std::error::Error;
 
+use audit::{
+    Action, Actor, AuditEntry, CorrelationId, Target, TargetId, TenantId as AuditTenantId,
+};
 use domain::{CustomerId, CustomerRepository, EventApplication, PaymentMethodRepository, TenantId};
 use persistence::{PgCustomerRepository, PgPaymentMethodRepository};
 use sqlx::PgPool;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
+
+/// An `AuditEntry` for `tenant`/`target_id`, with a fresh, otherwise
+/// unremarkable correlation id -- what every `remove` test below needs and
+/// does not care about beyond "some valid entry".
+fn entry(tenant: TenantId, target_id: Uuid) -> AuditEntry {
+    AuditEntry::new(
+        AuditTenantId::new(tenant.as_uuid()),
+        Actor::System,
+        Action::PaymentMethodDetached,
+        Target::PaymentMethod(TargetId::new(target_id)),
+        OffsetDateTime::now_utc(),
+        CorrelationId::new(Uuid::new_v4()),
+    )
+}
+
+/// Installs a `BEFORE INSERT` trigger on `audit.audit_log` that raises an
+/// exception for exactly one sentinel `target_id` -- a controlled,
+/// deterministic way to force the audit half of `remove`'s transaction to
+/// fail through the real public API, with no other row or caller affected.
+async fn fail_audit_insert_for(
+    pool: &PgPool,
+    sentinel_target_id: Uuid,
+) -> Result<(), Box<dyn Error>> {
+    // The interpolated value is a UUID this test generated itself, never
+    // external input -- `AssertSqlSafe` is sqlx 0.9's required, explicit
+    // acknowledgement of that, not a routine escape hatch.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE OR REPLACE FUNCTION audit.fail_on_sentinel() RETURNS trigger AS $$
+         BEGIN
+           IF NEW.target_id = '{sentinel_target_id}' THEN
+             RAISE EXCEPTION 'test-forced audit insert failure';
+           END IF;
+           RETURN NEW;
+         END;
+         $$ LANGUAGE plpgsql;
+         CREATE TRIGGER fail_on_sentinel_trigger
+           BEFORE INSERT ON audit.audit_log
+           FOR EACH ROW EXECUTE FUNCTION audit.fail_on_sentinel();"
+    )))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Installs a `BEFORE UPDATE` trigger on `billing.payment_methods` that
+/// raises for exactly one sentinel `stripe_payment_method_id` -- the same
+/// technique as `fail_audit_insert_for`, aimed at the other half of the
+/// transaction.
+async fn fail_detach_update_for(
+    pool: &PgPool,
+    sentinel_stripe_id: &str,
+) -> Result<(), Box<dyn Error>> {
+    // Same `AssertSqlSafe` reasoning as `fail_audit_insert_for`: the
+    // interpolated value is a test-chosen literal, never external input.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE OR REPLACE FUNCTION billing.fail_on_sentinel() RETURNS trigger AS $$
+         BEGIN
+           IF NEW.stripe_payment_method_id = '{sentinel_stripe_id}' THEN
+             RAISE EXCEPTION 'test-forced detach update failure';
+           END IF;
+           RETURN NEW;
+         END;
+         $$ LANGUAGE plpgsql;
+         CREATE TRIGGER fail_on_sentinel_trigger
+           BEFORE UPDATE ON billing.payment_methods
+           FOR EACH ROW EXECUTE FUNCTION billing.fail_on_sentinel();"
+    )))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
 
 /// `now_utc()` truncated to microsecond precision, matching `TIMESTAMPTZ`.
 fn now_micros() -> OffsetDateTime {
@@ -347,6 +421,191 @@ async fn detach_event_soft_deletes_and_the_guard_still_applies() -> Result<(), B
 }
 
 #[tokio::test]
+async fn remove_soft_deletes_and_writes_exactly_one_audit_row() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgPaymentMethodRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let created = repo
+        .create(
+            tenant,
+            customer_id,
+            "pm_remove".to_string(),
+            "visa".to_string(),
+            "4242".to_string(),
+            true,
+        )
+        .await?;
+    let audit_entry = entry(tenant, created.id.as_uuid());
+    let correlation_id = audit_entry.correlation_id().as_uuid();
+
+    let application = repo
+        .remove(tenant, "pm_remove", now_micros(), audit_entry)
+        .await?;
+
+    assert_eq!(application, EventApplication::Applied);
+    assert_eq!(repo.find(tenant, created.id).await?, None);
+
+    let audit_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit.audit_log WHERE correlation_id = $1")
+            .bind(correlation_id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(audit_rows, 1, "remove must write exactly one audit row");
+
+    let (tenant_id, actor_kind, action, target_kind, target_id): (
+        Uuid,
+        String,
+        String,
+        String,
+        Option<Uuid>,
+    ) = sqlx::query_as(
+        "SELECT tenant_id, actor_kind, action, target_kind, target_id \
+         FROM audit.audit_log WHERE correlation_id = $1",
+    )
+    .bind(correlation_id)
+    .fetch_one(&db.pool)
+    .await?;
+    assert_eq!(tenant_id, tenant.as_uuid());
+    assert_eq!(actor_kind, "system");
+    assert_eq!(action, "payment_method.detached");
+    assert_eq!(target_kind, "payment_method");
+    assert_eq!(target_id, Some(created.id.as_uuid()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn remove_writes_the_entry_even_when_the_detach_is_stale() -> Result<(), Box<dyn Error>> {
+    // Simulates a `payment_method.detached` webhook beating the caller's own
+    // removal: `detach_event` (the webhook path's own method) soft-deletes
+    // the row first, with a *newer* event timestamp than the one `remove`
+    // is about to use, so `remove`'s own detach is Stale. Stripe already
+    // confirmed the detach to the caller either way, so the request is
+    // still audited (see `PaymentMethodRepository::remove`'s docs).
+    let db = common::setup().await?;
+    let repo = PgPaymentMethodRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let created = repo
+        .create(
+            tenant,
+            customer_id,
+            "pm_stale_remove".to_string(),
+            "visa".to_string(),
+            "4242".to_string(),
+            true,
+        )
+        .await?;
+    let webhook_detached_at = now_micros();
+    assert_eq!(
+        repo.detach_event(tenant, "pm_stale_remove", webhook_detached_at)
+            .await?,
+        EventApplication::Applied
+    );
+
+    let audit_entry = entry(tenant, created.id.as_uuid());
+    let correlation_id = audit_entry.correlation_id().as_uuid();
+    let stale_at = webhook_detached_at - Duration::minutes(1);
+
+    let application = repo
+        .remove(tenant, "pm_stale_remove", stale_at, audit_entry)
+        .await?;
+
+    assert_eq!(application, EventApplication::Stale);
+    let audit_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit.audit_log WHERE correlation_id = $1")
+            .bind(correlation_id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(
+        audit_rows, 1,
+        "a stale detach must still be audited -- Stripe already confirmed it"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn remove_rolls_back_the_detach_when_the_audit_insert_fails() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgPaymentMethodRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let created = repo
+        .create(
+            tenant,
+            customer_id,
+            "pm_audit_fails".to_string(),
+            "visa".to_string(),
+            "4242".to_string(),
+            true,
+        )
+        .await?;
+    fail_audit_insert_for(&db.pool, created.id.as_uuid()).await?;
+
+    let result = repo
+        .remove(
+            tenant,
+            "pm_audit_fails",
+            now_micros(),
+            entry(tenant, created.id.as_uuid()),
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "the forced audit-insert failure must surface as an error"
+    );
+    assert_eq!(
+        repo.find(tenant, created.id).await?,
+        Some(created),
+        "a failed audit insert must leave the payment method attached -- \
+         the detach must have rolled back with it"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn remove_writes_no_audit_row_when_the_detach_fails() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgPaymentMethodRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let created = repo
+        .create(
+            tenant,
+            customer_id,
+            "pm_detach_fails".to_string(),
+            "visa".to_string(),
+            "4242".to_string(),
+            true,
+        )
+        .await?;
+    fail_detach_update_for(&db.pool, "pm_detach_fails").await?;
+    let audit_entry = entry(tenant, created.id.as_uuid());
+    let correlation_id = audit_entry.correlation_id().as_uuid();
+
+    let result = repo
+        .remove(tenant, "pm_detach_fails", now_micros(), audit_entry)
+        .await;
+
+    assert!(
+        result.is_err(),
+        "the forced detach-update failure must surface as an error"
+    );
+    let audit_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit.audit_log WHERE correlation_id = $1")
+            .bind(correlation_id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(
+        audit_rows, 0,
+        "a failed detach must leave no audit row -- the insert must have \
+         rolled back with it"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn set_default_moves_the_flag_atomically_across_the_customer() -> Result<(), Box<dyn Error>> {
     let db = common::setup().await?;
     let repo = PgPaymentMethodRepository::new(db.pool.clone());
@@ -374,7 +633,8 @@ async fn set_default_moves_the_flag_atomically_across_the_customer() -> Result<(
         )
         .await?;
 
-    repo.set_default(tenant, customer_id, new.id).await?;
+    repo.set_default(tenant, customer_id, new.id, entry(tenant, new.id.as_uuid()))
+        .await?;
 
     let rows = repo.list(tenant).await?;
     let defaults: Vec<Uuid> = rows
@@ -422,7 +682,13 @@ async fn set_default_is_scoped_to_the_tenant_and_customer() -> Result<(), Box<dy
         )
         .await?;
 
-    repo.set_default(tenant, customer_b, b_card.id).await?;
+    repo.set_default(
+        tenant,
+        customer_b,
+        b_card.id,
+        entry(tenant, b_card.id.as_uuid()),
+    )
+    .await?;
 
     let a_after = repo
         .find(tenant, a_default.id)
@@ -437,11 +703,124 @@ async fn set_default_is_scoped_to_the_tenant_and_customer() -> Result<(), Box<dy
 
     // And another tenant naming the same customer id changes nothing.
     let intruder = TenantId::new(Uuid::new_v4());
-    repo.set_default(intruder, customer_a, a_default.id).await?;
+    repo.set_default(
+        intruder,
+        customer_a,
+        a_default.id,
+        entry(intruder, a_default.id.as_uuid()),
+    )
+    .await?;
     let a_still = repo
         .find(tenant, a_default.id)
         .await?
         .ok_or("a row exists")?;
     assert!(a_still.is_default);
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_default_writes_exactly_one_audit_row() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgPaymentMethodRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let card = repo
+        .create(
+            tenant,
+            customer_id,
+            "pm_set_default_audit".to_string(),
+            "visa".to_string(),
+            "4242".to_string(),
+            false,
+        )
+        .await?;
+    let audit_entry = entry(tenant, card.id.as_uuid());
+    let correlation_id = audit_entry.correlation_id().as_uuid();
+
+    repo.set_default(tenant, customer_id, card.id, audit_entry)
+        .await?;
+
+    let (action, target_id): (String, Option<Uuid>) =
+        sqlx::query_as("SELECT action, target_id FROM audit.audit_log WHERE correlation_id = $1")
+            .bind(correlation_id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(action, "payment_method.set_default");
+    assert_eq!(target_id, Some(card.id.as_uuid()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_default_rolls_back_the_flag_change_when_the_audit_insert_fails()
+-> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgPaymentMethodRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let card = repo
+        .create(
+            tenant,
+            customer_id,
+            "pm_set_default_audit_fails".to_string(),
+            "visa".to_string(),
+            "4242".to_string(),
+            false,
+        )
+        .await?;
+    fail_audit_insert_for(&db.pool, card.id.as_uuid()).await?;
+
+    let result = repo
+        .set_default(
+            tenant,
+            customer_id,
+            card.id,
+            entry(tenant, card.id.as_uuid()),
+        )
+        .await;
+
+    assert!(result.is_err());
+    let after = repo
+        .find(tenant, card.id)
+        .await?
+        .ok_or("row still exists")?;
+    assert!(
+        !after.is_default,
+        "a failed audit insert must leave is_default unchanged"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_default_writes_no_audit_row_when_the_flag_change_fails() -> Result<(), Box<dyn Error>>
+{
+    let db = common::setup().await?;
+    let repo = PgPaymentMethodRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let customer_id = seed_customer(&db.pool, tenant).await?;
+    let card = repo
+        .create(
+            tenant,
+            customer_id,
+            "pm_set_default_flag_fails".to_string(),
+            "visa".to_string(),
+            "4242".to_string(),
+            false,
+        )
+        .await?;
+    fail_detach_update_for(&db.pool, "pm_set_default_flag_fails").await?;
+    let audit_entry = entry(tenant, card.id.as_uuid());
+    let correlation_id = audit_entry.correlation_id().as_uuid();
+
+    let result = repo
+        .set_default(tenant, customer_id, card.id, audit_entry)
+        .await;
+
+    assert!(result.is_err());
+    let audit_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit.audit_log WHERE correlation_id = $1")
+            .bind(correlation_id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(audit_rows, 0);
     Ok(())
 }
