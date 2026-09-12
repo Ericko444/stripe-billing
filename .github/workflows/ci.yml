@@ -49,6 +49,22 @@ jobs:
             exit 1
           fi
 
+      # The audit crate's own load-bearing invariant: it names none of the
+      # other workspace crates, so two modules can depend on it without
+      # depending on each other. `audit-pg` (the Postgres adapter) is
+      # exempt -- it is expected to depend on `audit` and on `sqlx`.
+      - name: Audit crate boundary
+        run: |
+          if grep -E "domain|service|persistence|stripe-adapter|^api|axum|stripe|sqlx" crates/audit/Cargo.toml; then
+            echo "::error file=crates/audit/Cargo.toml::audit must not depend on any other workspace crate, axum, a Stripe client, or sqlx"
+            exit 1
+          fi
+          if cargo tree -p audit -e normal,build --prefix none --locked \
+              | grep -E "^(domain|service|persistence|stripe-adapter|api|axum|async-stripe|stripe|sqlx)"; then
+            echo "::error::audit pulls in a workspace crate, axum, a Stripe client, or sqlx transitively"
+            exit 1
+          fi
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -97,8 +113,8 @@ jobs:
               || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             base="$(git merge-base origin/dev HEAD)"
           fi
-          echo "Comparing migrations/ against $base"
-          changed="$(git diff --name-only --diff-filter=MDR "$base" HEAD -- migrations/)"
+          echo "Comparing migrations/ and crates/audit-pg/migrations/ against $base"
+          changed="$(git diff --name-only --diff-filter=MDR "$base" HEAD -- migrations/ crates/audit-pg/migrations/)"
           if [ -n "$changed" ]; then
             echo "$changed" | while read -r f; do
               echo "::error file=$f::landed migration changed; add a new migration instead"
