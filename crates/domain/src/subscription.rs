@@ -295,6 +295,29 @@ pub trait SubscriptionRepository {
         event_created_at: OffsetDateTime,
         entry: AuditEntry,
     ) -> impl Future<Output = Result<Subscription, DomainError>> + Send;
+
+    /// Applies a cancellation `snapshot` and audits it in one transaction.
+    ///
+    /// A separate method from [`apply_event`](Self::apply_event), the same
+    /// reasoning as [`PaymentMethodRepository::remove`](crate::PaymentMethodRepository::remove):
+    /// `apply_event` is also called from the webhook path, which has no
+    /// correlation id to attach yet. Unlike [`change_plan`](Self::change_plan)
+    /// there is only the one guarded write here -- `Writes::cancel_subscription`
+    /// never touches `plan_id` -- so this method is `apply_event` plus the
+    /// audit insert, not a merge of two writes.
+    ///
+    /// **Precondition:** the row identified by `(tenant_id, id)` exists,
+    /// is not soft-deleted, and is not already `Canceled` -- the caller
+    /// (`Writes::cancel_subscription`) checks all three before ever
+    /// reaching Stripe, so there is always a real cancellation to audit.
+    fn cancel(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        snapshot: SubscriptionSnapshot,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> impl Future<Output = Result<Subscription, DomainError>> + Send;
 }
 
 #[cfg(test)]

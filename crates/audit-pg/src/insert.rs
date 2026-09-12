@@ -55,6 +55,7 @@ fn action_kind(action: &Action) -> &'static str {
         Action::PaymentMethodDetached => "payment_method.detached",
         Action::PaymentMethodSetDefault => "payment_method.set_default",
         Action::SubscriptionPlanChanged => "subscription.plan_changed",
+        Action::SubscriptionCanceled => "subscription.canceled",
     }
 }
 

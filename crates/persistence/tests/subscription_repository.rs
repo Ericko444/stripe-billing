@@ -17,13 +17,13 @@ use sqlx::PgPool;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-/// An `AuditEntry` for `tenant`/`target_id`, with a fresh, otherwise
-/// unremarkable correlation id.
-fn entry(tenant: TenantId, target_id: Uuid) -> AuditEntry {
+/// An `AuditEntry` for `tenant`/`target_id`/`action`, with a fresh,
+/// otherwise unremarkable correlation id.
+fn entry(tenant: TenantId, target_id: Uuid, action: Action) -> AuditEntry {
     AuditEntry::new(
         AuditTenantId::new(tenant.as_uuid()),
         Actor::System,
-        Action::SubscriptionPlanChanged,
+        action,
         Target::Subscription(TargetId::new(target_id)),
         OffsetDateTime::now_utc(),
         CorrelationId::new(Uuid::new_v4()),
@@ -490,7 +490,11 @@ async fn change_plan_repoints_applies_the_snapshot_and_writes_one_audit_row()
     let (_, new_plan_id) = seed(&db.pool, tenant).await?;
     let mut snapshot = snapshot_of(&created);
     snapshot.status = SubscriptionStatus::PastDue;
-    let audit_entry = entry(tenant, created.id.as_uuid());
+    let audit_entry = entry(
+        tenant,
+        created.id.as_uuid(),
+        Action::SubscriptionPlanChanged,
+    );
     let correlation_id = audit_entry.correlation_id().as_uuid();
 
     let updated = repo
@@ -551,7 +555,11 @@ async fn change_plan_still_moves_the_plan_and_audits_when_the_snapshot_is_stale(
     let (_, new_plan_id) = seed(&db.pool, tenant).await?;
     let mut stale_snapshot = snapshot_of(&created);
     stale_snapshot.status = SubscriptionStatus::PastDue;
-    let audit_entry = entry(tenant, created.id.as_uuid());
+    let audit_entry = entry(
+        tenant,
+        created.id.as_uuid(),
+        Action::SubscriptionPlanChanged,
+    );
     let correlation_id = audit_entry.correlation_id().as_uuid();
 
     let updated = repo
@@ -607,7 +615,11 @@ async fn change_plan_rolls_back_both_writes_when_the_audit_insert_fails()
             new_plan_id,
             snapshot,
             now_micros(),
-            entry(tenant, created.id.as_uuid()),
+            entry(
+                tenant,
+                created.id.as_uuid(),
+                Action::SubscriptionPlanChanged,
+            ),
         )
         .await;
 
@@ -640,7 +652,11 @@ async fn change_plan_writes_no_audit_row_when_the_business_write_fails()
     fail_subscriptions_update_for(&db.pool, "sub_business_fails").await?;
     let mut snapshot = snapshot_of(&created);
     snapshot.status = SubscriptionStatus::PastDue;
-    let audit_entry = entry(tenant, created.id.as_uuid());
+    let audit_entry = entry(
+        tenant,
+        created.id.as_uuid(),
+        Action::SubscriptionPlanChanged,
+    );
     let correlation_id = audit_entry.correlation_id().as_uuid();
 
     let result = repo
@@ -652,6 +668,159 @@ async fn change_plan_writes_no_audit_row_when_the_business_write_fails()
             now_micros(),
             audit_entry,
         )
+        .await;
+
+    assert!(result.is_err());
+    let audit_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit.audit_log WHERE correlation_id = $1")
+            .bind(correlation_id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(audit_rows, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_applies_the_snapshot_and_writes_one_audit_row() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgSubscriptionRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let (customer_id, plan_id) = seed(&db.pool, tenant).await?;
+    let created = create_subscription(&repo, tenant, customer_id, plan_id, "sub_cancel").await?;
+    let mut snapshot = snapshot_of(&created);
+    snapshot.status = SubscriptionStatus::Canceled;
+    let audit_entry = entry(tenant, created.id.as_uuid(), Action::SubscriptionCanceled);
+    let correlation_id = audit_entry.correlation_id().as_uuid();
+
+    let updated = repo
+        .cancel(tenant, created.id, snapshot, now_micros(), audit_entry)
+        .await?;
+
+    assert_eq!(updated.status, SubscriptionStatus::Canceled);
+    let (action, target_id): (String, Option<Uuid>) =
+        sqlx::query_as("SELECT action, target_id FROM audit.audit_log WHERE correlation_id = $1")
+            .bind(correlation_id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(action, "subscription.canceled");
+    assert_eq!(target_id, Some(created.id.as_uuid()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_still_audits_when_the_snapshot_is_stale() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgSubscriptionRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let (customer_id, plan_id) = seed(&db.pool, tenant).await?;
+    let created =
+        create_subscription(&repo, tenant, customer_id, plan_id, "sub_cancel_stale").await?;
+    let future = now_micros() + Duration::hours(1);
+    let _ = repo
+        .apply_event(
+            tenant,
+            created.id,
+            SubscriptionStatus::Active,
+            created.current_period_start,
+            created.current_period_end,
+            created.cancel_at_period_end,
+            future,
+        )
+        .await?;
+    let mut stale_snapshot = snapshot_of(&created);
+    stale_snapshot.status = SubscriptionStatus::Canceled;
+    let audit_entry = entry(tenant, created.id.as_uuid(), Action::SubscriptionCanceled);
+    let correlation_id = audit_entry.correlation_id().as_uuid();
+
+    let updated = repo
+        .cancel(
+            tenant,
+            created.id,
+            stale_snapshot,
+            now_micros(),
+            audit_entry,
+        )
+        .await?;
+
+    assert_eq!(
+        updated.status,
+        SubscriptionStatus::Active,
+        "the stale cancellation must not regress the status the newer event set"
+    );
+    let audit_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit.audit_log WHERE correlation_id = $1")
+            .bind(correlation_id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(
+        audit_rows, 1,
+        "Stripe already confirmed the cancellation, so the request is audited regardless"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_rolls_back_when_the_audit_insert_fails() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgSubscriptionRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let (customer_id, plan_id) = seed(&db.pool, tenant).await?;
+    let created = create_subscription(
+        &repo,
+        tenant,
+        customer_id,
+        plan_id,
+        "sub_cancel_audit_fails",
+    )
+    .await?;
+    fail_audit_insert_for(&db.pool, created.id.as_uuid()).await?;
+    let mut snapshot = snapshot_of(&created);
+    snapshot.status = SubscriptionStatus::Canceled;
+
+    let result = repo
+        .cancel(
+            tenant,
+            created.id,
+            snapshot,
+            now_micros(),
+            entry(tenant, created.id.as_uuid(), Action::SubscriptionCanceled),
+        )
+        .await;
+
+    assert!(result.is_err());
+    let after = repo
+        .find(tenant, created.id)
+        .await?
+        .ok_or("row still exists")?;
+    assert_eq!(
+        after.status, created.status,
+        "a failed audit insert must leave the snapshot apply rolled back"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_writes_no_audit_row_when_the_business_write_fails() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let repo = PgSubscriptionRepository::new(db.pool.clone());
+    let tenant = TenantId::new(Uuid::new_v4());
+    let (customer_id, plan_id) = seed(&db.pool, tenant).await?;
+    let created = create_subscription(
+        &repo,
+        tenant,
+        customer_id,
+        plan_id,
+        "sub_cancel_business_fails",
+    )
+    .await?;
+    fail_subscriptions_update_for(&db.pool, "sub_cancel_business_fails").await?;
+    let mut snapshot = snapshot_of(&created);
+    snapshot.status = SubscriptionStatus::Canceled;
+    let audit_entry = entry(tenant, created.id.as_uuid(), Action::SubscriptionCanceled);
+    let correlation_id = audit_entry.correlation_id().as_uuid();
+
+    let result = repo
+        .cancel(tenant, created.id, snapshot, now_micros(), audit_entry)
         .await;
 
     assert!(result.is_err());

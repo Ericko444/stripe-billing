@@ -26,4 +26,9 @@ pub enum Action {
     /// same reasoning as `PaymentMethodSetDefault`: no webhook ever writes
     /// `plan_id`.
     SubscriptionPlanChanged,
+    /// A subscription was canceled (`POST /subscriptions/{id}/cancel`), at
+    /// the period boundary or immediately -- whether by an explicit
+    /// caller request or a webhook confirming one Stripe already knows
+    /// about, the same `PaymentMethodDetached`/`Actor` split.
+    SubscriptionCanceled,
 }

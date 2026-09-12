@@ -18,7 +18,7 @@ use domain::{
     BillingProvider, CancellationTiming, CheckoutSessionParams, CheckoutSessionSnapshot,
     CreateCustomerParams, CustomerRepository, DomainError, PaymentMethod, PaymentMethodId,
     PaymentMethodRepository, PlanId, PlanRepository, SetupIntentSnapshot, Subscription,
-    SubscriptionId, SubscriptionRepository, SubscriptionSnapshot, SubscriptionStatus, TenantId,
+    SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId,
 };
 use time::OffsetDateTime;
 
@@ -174,47 +174,6 @@ pub trait Writes: Send + Sync {
         success_url: &str,
         cancel_url: &str,
     ) -> Result<CheckoutSessionSnapshot, DomainError>;
-}
-
-/// Applies a direct (non-webhook) [`SubscriptionSnapshot`] through
-/// [`SubscriptionRepository::apply_event`], then returns the row's current
-/// state regardless of whether this particular write was admitted.
-///
-/// Shared by [`Writes::change_plan`] and [`Writes::cancel_subscription`]:
-/// both call a provider method that returns a fresh `SubscriptionSnapshot`
-/// and must apply it the same guarded way, and duplicating that dance
-/// invites the two copies to quietly drift.
-///
-/// `event_created_at` is `OffsetDateTime::now_utc()` -- there is no Stripe
-/// event here, only an API response, so "now" is this write's honest
-/// timestamp for the ordering guard. Re-reading the row afterward (rather
-/// than trusting the snapshot) is what makes a `Stale` result harmless: the
-/// caller always sees whatever is currently authoritative, never a state the
-/// guard just rejected.
-async fn apply_subscription_snapshot<S: SubscriptionRepository + Send + Sync>(
-    subscriptions: &S,
-    tenant: TenantId,
-    subscription_id: SubscriptionId,
-    snapshot: SubscriptionSnapshot,
-) -> Result<Subscription, DomainError> {
-    // `EventApplication::Applied` vs `Stale` is deliberately not branched on
-    // here -- the re-`find` below returns the row's current state either
-    // way, which is exactly right for both outcomes.
-    let _application = subscriptions
-        .apply_event(
-            tenant,
-            subscription_id,
-            snapshot.status,
-            snapshot.current_period_start,
-            snapshot.current_period_end,
-            snapshot.cancel_at_period_end,
-            OffsetDateTime::now_utc(),
-        )
-        .await?;
-    subscriptions
-        .find(tenant, subscription_id)
-        .await?
-        .ok_or(DomainError::NotFound)
 }
 
 /// Holds the [`BillingProvider`] and the four repositories a mutating call
@@ -383,7 +342,18 @@ where
             .cancel_subscription(tenant, &subscription.stripe_subscription_id, timing)
             .await?;
 
-        apply_subscription_snapshot(&self.subscriptions, tenant, subscription_id, snapshot).await
+        let now = OffsetDateTime::now_utc();
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::SubscriptionCanceled,
+            Target::Subscription(TargetId::new(subscription_id.as_uuid())),
+            now,
+            CorrelationId::new(ctx.correlation_id),
+        );
+        self.subscriptions
+            .cancel(tenant, subscription_id, snapshot, now, entry)
+            .await
     }
 
     async fn set_default_payment_method(
@@ -904,6 +874,33 @@ mod tests {
             vec![(stripe_subscription_id, CancellationTiming::Immediate)]
         );
         assert_eq!(updated.status, SubscriptionStatus::Canceled);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancel_builds_an_audit_entry_naming_the_tenant_target_and_correlation_id()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let sub = subscription(tenant, SubscriptionStatus::Active, None);
+        let sub_id = sub.id;
+        svc.subscriptions.seed(sub);
+        let correlation_id = Uuid::new_v4();
+
+        svc.cancel_subscription(RequestContext::new(tenant, correlation_id), sub_id, true)
+            .await?;
+
+        let entries = svc.subscriptions.cancel_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::SubscriptionCanceled);
+        assert_eq!(
+            entry.target(),
+            audit::Target::Subscription(audit::TargetId::new(sub_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
     }
 
