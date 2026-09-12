@@ -30,6 +30,10 @@ api = { path = "crates/api" }
 # of this module's own inward dependency chain; a second, not-yet-built
 # module depends on it too, and neither module may depend on the other.
 audit = { path = "crates/audit" }
+# Postgres adapter for `audit` -- its own schema, migrator and grant. Kept
+# separate from `audit` itself so the identity module can depend on the
+# model without compiling sqlx to do it.
+audit-pg = { path = "crates/audit-pg" }
 
 # Stripe client, modular line. A release candidate over the stale 0.41 stable
 # line, so pinned exactly: a caret range would float across RCs, which may

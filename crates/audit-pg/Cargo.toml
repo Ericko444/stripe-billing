@@ -1,0 +1,20 @@
+[package]
+name = "audit-pg"
+description = "Postgres adapter for the audit crate: its own schema, an append-only table, and an insert usable inside a caller's transaction."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sqlx.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+testcontainers.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
