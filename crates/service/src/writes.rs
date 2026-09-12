@@ -13,7 +13,7 @@
 //! is what keeps the read tests running in a millisecond.
 
 use async_trait::async_trait;
-use audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
+use audit::{Action, Actor, AuditEntry, AuditSink, CorrelationId, Target, TargetId};
 use domain::{
     BillingProvider, CancellationTiming, CheckoutSessionParams, CheckoutSessionSnapshot,
     CreateCustomerParams, CustomerRepository, DomainError, PaymentMethod, PaymentMethodId,
@@ -176,47 +176,63 @@ pub trait Writes: Send + Sync {
     ) -> Result<CheckoutSessionSnapshot, DomainError>;
 }
 
-/// Holds the [`BillingProvider`] and the four repositories a mutating call
-/// touches.
+/// Holds the [`BillingProvider`], the four repositories a mutating call
+/// touches, and an [`AuditSink`] for the two write routes with no local
+/// write of their own to be atomic with (`create_setup_intent`,
+/// `start_checkout_session` -- see their own docs, and `AuditSink`'s).
+/// Every other write's audit entry travels through its own repository
+/// method instead (D1(h)) and never touches this field.
 ///
 /// Generic over each port, matching [`ReadService`](crate::ReadService) and
-/// `WebhookProcessor`: `demo` monomorphises the concrete `stripe-adapter`
-/// and `persistence` types, and nothing is boxed on the write path. The
-/// `dyn` boundary is `Arc<dyn Writes>` on `AppState`, and nowhere else.
+/// `WebhookProcessor`: `demo` monomorphises the concrete `stripe-adapter`,
+/// `persistence` and `audit-pg` types, and nothing is boxed on the write
+/// path. The `dyn` boundary is `Arc<dyn Writes>` on `AppState`, and nowhere
+/// else.
 ///
-/// All five dependencies were taken from the start, like `ReadService`'s
-/// four, so `AppState` and every host's wiring stayed fixed as the trait
-/// filled in.
+/// All five original dependencies were taken from the start, like
+/// `ReadService`'s four, so `AppState` and every host's wiring stayed fixed
+/// as the trait filled in; `audit_sink` is the one addition, made when the
+/// two standalone-audit routes actually needed it.
 #[allow(dead_code)]
-pub struct WriteService<P, C, S, M, L> {
+pub struct WriteService<P, C, S, M, L, K> {
     provider: P,
     customers: C,
     subscriptions: S,
     payment_methods: M,
     plans: L,
+    audit_sink: K,
 }
 
-impl<P, C, S, M, L> WriteService<P, C, S, M, L> {
-    /// Wraps the provider and the four write repositories.
-    pub fn new(provider: P, customers: C, subscriptions: S, payment_methods: M, plans: L) -> Self {
+impl<P, C, S, M, L, K> WriteService<P, C, S, M, L, K> {
+    /// Wraps the provider, the four write repositories, and the audit sink.
+    pub fn new(
+        provider: P,
+        customers: C,
+        subscriptions: S,
+        payment_methods: M,
+        plans: L,
+        audit_sink: K,
+    ) -> Self {
         Self {
             provider,
             customers,
             subscriptions,
             payment_methods,
             plans,
+            audit_sink,
         }
     }
 }
 
 #[async_trait]
-impl<P, C, S, M, L> Writes for WriteService<P, C, S, M, L>
+impl<P, C, S, M, L, K> Writes for WriteService<P, C, S, M, L, K>
 where
     P: BillingProvider,
     C: CustomerRepository + Send + Sync,
     S: SubscriptionRepository + Send + Sync,
     M: PaymentMethodRepository + Send + Sync,
     L: PlanRepository + Send + Sync,
+    K: AuditSink + Send + Sync,
 {
     async fn ensure_customer(&self, tenant: TenantId) -> Result<String, DomainError> {
         // Already linked? Hand back that id and never touch Stripe. This is
@@ -260,9 +276,45 @@ where
     ) -> Result<SetupIntentSnapshot, DomainError> {
         let tenant = ctx.tenant_id;
         let stripe_customer_id = self.ensure_customer(tenant).await?;
-        self.provider
+        let snapshot = self
+            .provider
             .create_setup_intent(tenant, &stripe_customer_id)
+            .await?;
+
+        // No local write here at all (F2) -- there is nothing for an audit
+        // entry to be atomic with, so it goes through `AuditSink` standalone
+        // rather than a repository method's transaction. `ensure_customer`
+        // just guaranteed this tenant has a linked customer row; this
+        // re-derives its local id (the same lookup `ensure_customer` already
+        // does internally) because that id, not the Stripe one, is what a
+        // `Target` can name.
+        let customer_id = self
+            .customers
+            .list(tenant)
+            .await?
+            .into_iter()
+            .find(|c| c.stripe_customer_id.as_deref() == Some(stripe_customer_id.as_str()))
+            .map(|c| c.id)
+            .ok_or_else(|| {
+                DomainError::Repository(
+                    "ensure_customer reported a linked customer that list() cannot find"
+                        .to_string(),
+                )
+            })?;
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::SetupIntentCreated,
+            Target::Customer(TargetId::new(customer_id.as_uuid())),
+            OffsetDateTime::now_utc(),
+            CorrelationId::new(ctx.correlation_id),
+        );
+        self.audit_sink
+            .record(entry)
             .await
+            .map_err(|err| DomainError::Repository(err.to_string()))?;
+
+        Ok(snapshot)
     }
 
     async fn change_plan(
@@ -474,7 +526,8 @@ where
 
         let stripe_customer_id = self.ensure_customer(tenant).await?;
 
-        self.provider
+        let snapshot = self
+            .provider
             .create_checkout_session(
                 tenant,
                 CheckoutSessionParams {
@@ -484,7 +537,28 @@ where
                     cancel_url: cancel_url.to_string(),
                 },
             )
+            .await?;
+
+        // No local write here at all (F2), the same reasoning as
+        // `create_setup_intent`: the local `subscriptions` row is created
+        // later, by the `customer.subscription.created` webhook once the
+        // customer completes checkout. `plan_id` is already this method's
+        // own parameter, so unlike `create_setup_intent` there is no extra
+        // lookup needed for the target.
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::CheckoutSessionStarted,
+            Target::Plan(TargetId::new(plan_id.as_uuid())),
+            OffsetDateTime::now_utc(),
+            CorrelationId::new(ctx.correlation_id),
+        );
+        self.audit_sink
+            .record(entry)
             .await
+            .map_err(|err| DomainError::Repository(err.to_string()))?;
+
+        Ok(snapshot)
     }
 }
 
@@ -499,7 +573,7 @@ mod tests {
     use super::*;
     use crate::test_support::{
         CallLog, InMemoryCustomers, InMemoryPaymentMethods, InMemoryPlans, InMemorySubscriptions,
-        StubBillingProvider,
+        StubAuditSink, StubBillingProvider,
     };
 
     type TestWrites = WriteService<
@@ -508,6 +582,7 @@ mod tests {
         InMemorySubscriptions,
         InMemoryPaymentMethods,
         InMemoryPlans,
+        StubAuditSink,
     >;
 
     /// Compiles only if `Writes` is dyn-compatible -- the property the
@@ -531,6 +606,7 @@ mod tests {
             InMemorySubscriptions::default(),
             InMemoryPaymentMethods::default(),
             InMemoryPlans::default(),
+            StubAuditSink::default(),
         )
     }
 
@@ -610,6 +686,7 @@ mod tests {
             InMemorySubscriptions::default(),
             InMemoryPaymentMethods::with_call_log(log),
             InMemoryPlans::default(),
+            StubAuditSink::default(),
         )
     }
 
@@ -663,6 +740,26 @@ mod tests {
         assert_eq!(svc.provider.setup_intent_customers(), vec![linked.clone()]);
         assert!(snapshot.client_secret.contains(&linked));
         assert!(snapshot.client_secret.contains("_secret_"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_setup_intent_writes_a_standalone_audit_entry() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let correlation_id = Uuid::new_v4();
+
+        svc.create_setup_intent(RequestContext::new(tenant, correlation_id))
+            .await?;
+
+        let entries = svc.audit_sink.entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::SetupIntentCreated);
+        assert!(matches!(entry.target(), audit::Target::Customer(_)));
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
     }
 
@@ -1267,6 +1364,38 @@ mod tests {
         let calls = svc.provider.checkout_calls();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].1, "price_checkout");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn start_checkout_session_writes_a_standalone_audit_entry() -> Result<(), Box<dyn Error>>
+    {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let plan = plan(tenant, "price_audit_checkout");
+        let plan_id = plan.id;
+        svc.plans.seed(plan);
+        let correlation_id = Uuid::new_v4();
+
+        svc.start_checkout_session(
+            RequestContext::new(tenant, correlation_id),
+            plan_id,
+            "https://ok",
+            "https://cancel",
+        )
+        .await?;
+
+        let entries = svc.audit_sink.entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::CheckoutSessionStarted);
+        assert_eq!(
+            entry.target(),
+            audit::Target::Plan(audit::TargetId::new(plan_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
     }
 

@@ -1081,3 +1081,25 @@ impl BillingProvider for StubBillingProvider {
         })
     }
 }
+
+/// An `AuditSink` double for `create_setup_intent`/`start_checkout_session`
+/// tests -- the two write routes with no repository method of their own to
+/// capture an entry through.
+#[derive(Default)]
+pub(crate) struct StubAuditSink {
+    entries: Mutex<Vec<AuditEntry>>,
+}
+
+impl StubAuditSink {
+    /// The `AuditEntry` values `record` was called with, in order.
+    pub(crate) fn entries(&self) -> Vec<AuditEntry> {
+        lock(&self.entries).clone()
+    }
+}
+
+impl audit::AuditSink for StubAuditSink {
+    async fn record(&self, entry: AuditEntry) -> Result<(), audit::AuditError> {
+        lock(&self.entries).push(entry);
+        Ok(())
+    }
+}

@@ -56,6 +56,8 @@ fn action_kind(action: &Action) -> &'static str {
         Action::PaymentMethodSetDefault => "payment_method.set_default",
         Action::SubscriptionPlanChanged => "subscription.plan_changed",
         Action::SubscriptionCanceled => "subscription.canceled",
+        Action::SetupIntentCreated => "setup_intent.created",
+        Action::CheckoutSessionStarted => "checkout_session.started",
     }
 }
 
@@ -64,5 +66,7 @@ fn target_columns(target: &Target) -> (&'static str, Option<Uuid>) {
     match target {
         Target::PaymentMethod(id) => ("payment_method", Some(id.as_uuid())),
         Target::Subscription(id) => ("subscription", Some(id.as_uuid())),
+        Target::Customer(id) => ("customer", Some(id.as_uuid())),
+        Target::Plan(id) => ("plan", Some(id.as_uuid())),
     }
 }

@@ -31,4 +31,15 @@ pub enum Action {
     /// caller request or a webhook confirming one Stripe already knows
     /// about, the same `PaymentMethodDetached`/`Actor` split.
     SubscriptionCanceled,
+    /// A Stripe SetupIntent was created (`POST /payment-methods/setup-intent`)
+    /// to collect a payment method. No local row changes -- the mirror is
+    /// created later, when Stripe confirms attachment via webhook -- so
+    /// this entry is written standalone, not inside a business-write
+    /// transaction (see `AuditSink`'s own docs on why).
+    SetupIntentCreated,
+    /// A Stripe Checkout Session was started
+    /// (`POST /subscriptions/checkout-session`). Same standalone treatment
+    /// as `SetupIntentCreated`: no local row changes until the customer
+    /// completes checkout and a webhook creates the subscription.
+    CheckoutSessionStarted,
 }

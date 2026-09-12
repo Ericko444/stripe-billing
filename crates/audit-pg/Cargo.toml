@@ -20,6 +20,7 @@ uuid.workspace = true
 [dev-dependencies]
 persistence.workspace = true
 testcontainers.workspace = true
+time.workspace = true
 tokio.workspace = true
 
 [lints]

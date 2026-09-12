@@ -1,22 +1,24 @@
 //! Postgres adapter for `audit`: its own schema, migrator, append-only
-//! grant, and [`insert`].
+//! grant, [`insert`], and [`PgAuditSink`].
 //!
 //! Owns `audit.audit_log` and its migration -- see `migrations/` for the
 //! schema, the append-only grant, and why append-only is enforced at the
 //! grant layer rather than trusted to the application.
 //!
-//! No `AuditSink` implementation ships here yet: [`insert`] is the
+//! Two ways to write, for two different callers: [`insert`] is the
 //! primitive a caller composes into its own transaction (`persistence`
-//! does exactly this for the audited write paths), and a pool-based
-//! `AuditSink` for callers with no existing transaction to join is added
-//! once something actually needs it (the two Stripe-only write routes,
-//! Task 10).
+//! does exactly this for every audited write that has a local business
+//! write to be atomic with); [`PgAuditSink`] is for the two write routes
+//! that don't -- it implements `audit::AuditSink` over a `PgPool`,
+//! acquiring its own connection per call.
 
 mod error;
 mod insert;
+mod sink;
 
 pub use error::AuditPgError;
 pub use insert::insert;
+pub use sink::PgAuditSink;
 
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;

@@ -135,6 +135,10 @@ impl BillingEventSink for LoggingSink {
 async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let pool = PgPoolOptions::new().connect(&config.database_url).await?;
     run_migrations(&pool).await?;
+    // `audit-pg`'s own migrator, against the same database -- safe to run
+    // alongside the one above because it tracks its state in
+    // `audit._sqlx_migrations`, not the default table (see its own docs).
+    audit_pg::run_migrations(&pool).await?;
 
     // Postgres repositories: customer, subscription and invoice lookups plus
     // the webhook ledger for the processor, and a second ledger handle for
@@ -189,6 +193,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         PgSubscriptionRepository::new(pool.clone()),
         PgPaymentMethodRepository::new(pool.clone()),
         PgPlanRepository::new(pool.clone()),
+        audit_pg::PgAuditSink::new(pool.clone()),
     ));
 
     // The Checkout Session redirect URLs the write path needs. From config,

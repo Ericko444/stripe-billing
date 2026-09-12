@@ -265,6 +265,7 @@ dependencies = [
  "sqlx",
  "testcontainers",
  "thiserror",
+ "time",
  "tokio",
  "uuid",
 ]
@@ -726,6 +727,7 @@ version = "0.1.0"
 dependencies = [
  "api",
  "async-trait",
+ "audit-pg",
  "axum",
  "domain",
  "dotenvy",

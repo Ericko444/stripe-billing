@@ -1,3 +1,9 @@
+// Each file under `tests/` compiles this module into its own binary, and no
+// single binary uses every helper here -- `sink.rs` doesn't need `url_as`,
+// `shared_database.rs` builds its own pool from scratch. Not dead code --
+// it's shared setup.
+#![allow(dead_code)]
+
 use std::error::Error;
 
 use sqlx::PgPool;

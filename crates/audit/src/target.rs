@@ -32,6 +32,10 @@ pub enum Target {
     PaymentMethod(TargetId),
     /// A subscription.
     Subscription(TargetId),
+    /// A customer.
+    Customer(TargetId),
+    /// A plan.
+    Plan(TargetId),
 }
 
 #[cfg(test)]
