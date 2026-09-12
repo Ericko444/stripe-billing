@@ -21,4 +21,9 @@ pub enum Action {
     /// column (see the billing module's own `set_default` port method), so
     /// unlike `PaymentMethodDetached` this action has exactly one caller.
     PaymentMethodSetDefault,
+    /// A subscription was moved to a different local plan
+    /// (`POST /subscriptions/{id}/change-plan`). Exactly one caller, the
+    /// same reasoning as `PaymentMethodSetDefault`: no webhook ever writes
+    /// `plan_id`.
+    SubscriptionPlanChanged,
 }

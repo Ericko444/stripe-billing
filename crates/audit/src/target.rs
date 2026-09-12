@@ -30,6 +30,8 @@ impl TargetId {
 pub enum Target {
     /// A payment method.
     PaymentMethod(TargetId),
+    /// A subscription.
+    Subscription(TargetId),
 }
 
 #[cfg(test)]

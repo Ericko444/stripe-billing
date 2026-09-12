@@ -101,11 +101,18 @@ impl CustomerRepository for InMemoryCustomers {
 #[derive(Default)]
 pub(crate) struct InMemorySubscriptions {
     rows: Mutex<Vec<Subscription>>,
+    /// Every `AuditEntry` handed to `change_plan`, in call order.
+    change_plan_entries: Mutex<Vec<AuditEntry>>,
 }
 
 impl InMemorySubscriptions {
     pub(crate) fn seed(&self, subscription: Subscription) {
         lock(&self.rows).push(subscription);
+    }
+
+    /// The `AuditEntry` values `change_plan` was called with, in order.
+    pub(crate) fn change_plan_entries(&self) -> Vec<AuditEntry> {
+        lock(&self.change_plan_entries).clone()
     }
 }
 
@@ -227,6 +234,43 @@ impl SubscriptionRepository for InMemorySubscriptions {
             row.plan_id = plan_id;
         }
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn change_plan(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        plan_id: PlanId,
+        snapshot: SubscriptionSnapshot,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> Result<Subscription, DomainError> {
+        lock(&self.change_plan_entries).push(entry);
+        let mut rows = lock(&self.rows);
+        let row = rows
+            .iter_mut()
+            .find(|s| s.tenant_id == tenant_id && s.id == id && s.deleted_at.is_none())
+            .ok_or(DomainError::NotFound)?;
+
+        // Unguarded, mirroring `set_plan`.
+        row.plan_id = plan_id;
+
+        // Guarded, mirroring `apply_event` -- not branched on: the row is
+        // returned as-is below regardless of Applied vs. Stale.
+        let admitted = match row.last_event_created_at {
+            None => true,
+            Some(last) => last <= event_created_at,
+        };
+        if admitted {
+            row.status = snapshot.status;
+            row.current_period_start = snapshot.current_period_start;
+            row.current_period_end = snapshot.current_period_end;
+            row.cancel_at_period_end = snapshot.cancel_at_period_end;
+            row.last_event_created_at = Some(event_created_at);
+        }
+
+        Ok(row.clone())
     }
 }
 

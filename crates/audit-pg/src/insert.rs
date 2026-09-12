@@ -54,6 +54,7 @@ fn action_kind(action: &Action) -> &'static str {
     match action {
         Action::PaymentMethodDetached => "payment_method.detached",
         Action::PaymentMethodSetDefault => "payment_method.set_default",
+        Action::SubscriptionPlanChanged => "subscription.plan_changed",
     }
 }
 
@@ -61,5 +62,6 @@ fn action_kind(action: &Action) -> &'static str {
 fn target_columns(target: &Target) -> (&'static str, Option<Uuid>) {
     match target {
         Target::PaymentMethod(id) => ("payment_method", Some(id.as_uuid())),
+        Target::Subscription(id) => ("subscription", Some(id.as_uuid())),
     }
 }

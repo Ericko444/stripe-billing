@@ -74,18 +74,19 @@ pub trait Writes: Send + Sync {
     /// [`DomainError::NotFound`] with **no outbound call**; so is an unknown
     /// `plan_id`.
     ///
-    /// On success the mirror is updated by **two** writes, deliberately
-    /// separate because they answer to different authorities:
+    /// On success the mirror is updated by
+    /// [`SubscriptionRepository::change_plan`], one transaction covering
+    /// both the plan repoint and the Stripe-reported snapshot -- merged
+    /// from two separate writes specifically so an audit entry would have
+    /// one honest write to be atomic with (see that method's own rustdoc).
+    /// The *authority* split is unchanged, only the transaction boundary is:
     ///
-    /// - [`SubscriptionRepository::set_plan`] repoints `plan_id` at the plan
-    ///   *this caller* named. Unguarded: no webhook ever writes that column,
-    ///   so there is no event to be stale against.
-    /// - The snapshot Stripe returned goes through
-    ///   [`SubscriptionRepository::apply_event`]'s ordering guard, so a
-    ///   `customer.subscription.updated` webhook racing this call cannot be
-    ///   regressed by it (or vice versa) -- this is the one place outside the
-    ///   webhook path that writes those columns, and it borrows the webhook
-    ///   path's own safety.
+    /// - The plan repoint answers only to *this caller*. Unguarded: no
+    ///   webhook ever writes that column, so there is no event to be stale
+    ///   against.
+    /// - The snapshot Stripe returned goes through the same ordering guard
+    ///   `apply_event` uses elsewhere, so a `customer.subscription.updated`
+    ///   webhook racing this call cannot be regressed by it (or vice versa).
     ///
     /// A stale snapshot therefore leaves status and period bounds at the
     /// newer webhook's values while `plan_id` still moves, which is correct:
@@ -334,16 +335,25 @@ where
             .await?;
 
         // Stripe accepted the change, so the mirror may now be repointed at
-        // the new plan. Two separate writes because they answer to two
-        // different authorities: `set_plan` records what *this caller* asked
-        // for (unguarded -- no webhook writes `plan_id`), while the snapshot
-        // below records what *Stripe* reported and goes through the webhook
-        // ordering guard. See `SubscriptionRepository::set_plan`'s rustdoc.
+        // the new plan. One transaction, one port method
+        // (`SubscriptionRepository::change_plan`, not the standalone
+        // `set_plan` + `apply_event` this used to be) -- see that method's
+        // rustdoc for why the two writes needed merging before this could be
+        // audited honestly (F5). The *authority* split is unchanged: the
+        // plan repoint still answers only to this caller, the snapshot still
+        // goes through the webhook ordering guard.
+        let now = OffsetDateTime::now_utc();
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::SubscriptionPlanChanged,
+            Target::Subscription(TargetId::new(subscription_id.as_uuid())),
+            now,
+            CorrelationId::new(ctx.correlation_id),
+        );
         self.subscriptions
-            .set_plan(tenant, subscription_id, plan_id)
-            .await?;
-
-        apply_subscription_snapshot(&self.subscriptions, tenant, subscription_id, snapshot).await
+            .change_plan(tenant, subscription_id, plan_id, snapshot, now, entry)
+            .await
     }
 
     async fn cancel_subscription(
@@ -752,6 +762,40 @@ mod tests {
         // Without `set_plan` this silently kept the old plan forever, since
         // no webhook writes `plan_id` either.
         assert_eq!(updated.plan_id, new_plan_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn change_plan_builds_an_audit_entry_naming_the_tenant_target_and_correlation_id()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let sub = subscription(tenant, SubscriptionStatus::Active, None);
+        let sub_id = sub.id;
+        svc.subscriptions.seed(sub);
+        let new_plan = plan(tenant, "price_audit");
+        let new_plan_id = new_plan.id;
+        svc.plans.seed(new_plan);
+        let correlation_id = Uuid::new_v4();
+
+        svc.change_plan(
+            RequestContext::new(tenant, correlation_id),
+            sub_id,
+            new_plan_id,
+        )
+        .await?;
+
+        let entries = svc.subscriptions.change_plan_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::SubscriptionPlanChanged);
+        assert_eq!(
+            entry.target(),
+            audit::Target::Subscription(audit::TargetId::new(sub_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
     }
 

@@ -43,12 +43,15 @@
 //!   fails.
 //! - **The snapshot goes through the webhook ordering guard.** After
 //!   `change_plan` / `cancel_subscription`, Stripe's returned
-//!   `SubscriptionSnapshot` is applied via
-//!   `SubscriptionRepository::apply_event` -- the same guard the webhook
-//!   path uses -- so the API response and the `customer.subscription.updated`
-//!   webhook that races it cannot regress the row. `plan_id` is the one
-//!   column no webhook writes, so `change_plan` moves it through a separate,
-//!   unguarded `set_plan`.
+//!   `SubscriptionSnapshot` is applied through the same ordering guard the
+//!   webhook path uses (`SubscriptionRepository::apply_event`, or the
+//!   equivalent predicate inside `change_plan`'s merged transaction -- see
+//!   that method's own rustdoc for why the two writes had to merge), so the
+//!   API response and the `customer.subscription.updated` webhook that races
+//!   it cannot regress the row. `plan_id` is the one column no webhook
+//!   writes, moved by `change_plan`'s own unguarded half (or the standalone
+//!   `set_plan`, still used directly nowhere in production but kept and
+//!   tested as a primitive).
 //!
 //! `ensure_customer` is routeless: `create_setup_intent` and
 //! `start_checkout_session` call it to resolve (or create) the tenant's
