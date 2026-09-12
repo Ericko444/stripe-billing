@@ -42,6 +42,21 @@ fn attach_entry(tenant: TenantId, customer_id: CustomerId) -> AuditEntry {
     )
 }
 
+/// An `AuditEntry` for `set_default` -- what every `set_default` test below
+/// needs; distinct from `entry()` (which is `PaymentMethodDetached`, for
+/// `remove`/`detach_event`) since `set_default_writes_exactly_one_audit_row`
+/// asserts the actual action string written.
+fn set_default_entry(tenant: TenantId, target_id: Uuid) -> AuditEntry {
+    AuditEntry::new(
+        AuditTenantId::new(tenant.as_uuid()),
+        Actor::System,
+        Action::PaymentMethodSetDefault,
+        Target::PaymentMethod(TargetId::new(target_id)),
+        OffsetDateTime::now_utc(),
+        CorrelationId::new(Uuid::new_v4()),
+    )
+}
+
 /// Installs a `BEFORE INSERT` trigger on `audit.audit_log` that raises an
 /// exception for exactly one sentinel `target_id` -- a controlled,
 /// deterministic way to force the audit half of `remove`'s transaction to
@@ -53,7 +68,7 @@ async fn fail_audit_insert_for(
     // The interpolated value is a UUID this test generated itself, never
     // external input -- `AssertSqlSafe` is sqlx 0.9's required, explicit
     // acknowledgement of that, not a routine escape hatch.
-    sqlx::query(sqlx::AssertSqlSafe(format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE OR REPLACE FUNCTION audit.fail_on_sentinel() RETURNS trigger AS $$
          BEGIN
            IF NEW.target_id = '{sentinel_target_id}' THEN
@@ -81,7 +96,7 @@ async fn fail_detach_update_for(
 ) -> Result<(), Box<dyn Error>> {
     // Same `AssertSqlSafe` reasoning as `fail_audit_insert_for`: the
     // interpolated value is a test-chosen literal, never external input.
-    sqlx::query(sqlx::AssertSqlSafe(format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE OR REPLACE FUNCTION billing.fail_on_sentinel() RETURNS trigger AS $$
          BEGIN
            IF NEW.stripe_payment_method_id = '{sentinel_stripe_id}' THEN
@@ -720,8 +735,13 @@ async fn set_default_moves_the_flag_atomically_across_the_customer() -> Result<(
         )
         .await?;
 
-    repo.set_default(tenant, customer_id, new.id, entry(tenant, new.id.as_uuid()))
-        .await?;
+    repo.set_default(
+        tenant,
+        customer_id,
+        new.id,
+        set_default_entry(tenant, new.id.as_uuid()),
+    )
+    .await?;
 
     let rows = repo.list(tenant).await?;
     let defaults: Vec<Uuid> = rows
@@ -773,7 +793,7 @@ async fn set_default_is_scoped_to_the_tenant_and_customer() -> Result<(), Box<dy
         tenant,
         customer_b,
         b_card.id,
-        entry(tenant, b_card.id.as_uuid()),
+        set_default_entry(tenant, b_card.id.as_uuid()),
     )
     .await?;
 
@@ -794,7 +814,7 @@ async fn set_default_is_scoped_to_the_tenant_and_customer() -> Result<(), Box<dy
         intruder,
         customer_a,
         a_default.id,
-        entry(intruder, a_default.id.as_uuid()),
+        set_default_entry(intruder, a_default.id.as_uuid()),
     )
     .await?;
     let a_still = repo
@@ -821,7 +841,7 @@ async fn set_default_writes_exactly_one_audit_row() -> Result<(), Box<dyn Error>
             false,
         )
         .await?;
-    let audit_entry = entry(tenant, card.id.as_uuid());
+    let audit_entry = set_default_entry(tenant, card.id.as_uuid());
     let correlation_id = audit_entry.correlation_id().as_uuid();
 
     repo.set_default(tenant, customer_id, card.id, audit_entry)
@@ -861,7 +881,7 @@ async fn set_default_rolls_back_the_flag_change_when_the_audit_insert_fails()
             tenant,
             customer_id,
             card.id,
-            entry(tenant, card.id.as_uuid()),
+            set_default_entry(tenant, card.id.as_uuid()),
         )
         .await;
 
@@ -895,7 +915,7 @@ async fn set_default_writes_no_audit_row_when_the_flag_change_fails() -> Result<
         )
         .await?;
     fail_detach_update_for(&db.pool, "pm_set_default_flag_fails").await?;
-    let audit_entry = entry(tenant, card.id.as_uuid());
+    let audit_entry = set_default_entry(tenant, card.id.as_uuid());
     let correlation_id = audit_entry.correlation_id().as_uuid();
 
     let result = repo

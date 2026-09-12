@@ -41,7 +41,7 @@ async fn fail_subscriptions_update_for(
     // The interpolated value is a test-chosen literal, never external input
     // -- `AssertSqlSafe` is sqlx 0.9's required, explicit acknowledgement of
     // that.
-    sqlx::query(sqlx::AssertSqlSafe(format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE OR REPLACE FUNCTION billing.fail_on_sentinel() RETURNS trigger AS $$
          BEGIN
            IF NEW.stripe_subscription_id = '{sentinel_stripe_subscription_id}' THEN
@@ -64,7 +64,7 @@ async fn fail_audit_insert_for(
     pool: &PgPool,
     sentinel_target_id: Uuid,
 ) -> Result<(), Box<dyn Error>> {
-    sqlx::query(sqlx::AssertSqlSafe(format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE OR REPLACE FUNCTION audit.fail_on_sentinel() RETURNS trigger AS $$
          BEGIN
            IF NEW.target_id = '{sentinel_target_id}' THEN
