@@ -5,13 +5,13 @@ use uuid::Uuid;
 
 /// This request's correlation id.
 ///
-/// Minted once by [`layer`] and inserted into the request's extensions --
+/// Minted once by `layer` and inserted into the request's extensions --
 /// never accepted from an inbound header. A write route reads it out
 /// (`Extension<CorrelationId>`) and attaches it to an [`ApiError`](crate::ApiError)
 /// on failure, so the id in that response's body is the same one a
 /// successful call on the same request would have carried forward. A route
 /// that does not read it (every read route, and any route mounted without
-/// [`layer`]) is unaffected: `ApiError` falls back to minting its own, the
+/// `layer`) is unaffected: `ApiError` falls back to minting its own, the
 /// same behaviour this crate had before this type existed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CorrelationId(Uuid);

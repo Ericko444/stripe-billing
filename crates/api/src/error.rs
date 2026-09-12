@@ -19,8 +19,8 @@ use crate::correlation::CorrelationId;
 /// `Domain` carries an `Option<CorrelationId>` -- `None` via `?`'s blanket
 /// `From<DomainError>` below, matching this crate's original
 /// self-minting behaviour exactly; `Some` when a write route has attached
-/// the id it read from [`correlation::layer`](crate::correlation::layer),
-/// via [`ApiError::with_correlation_id`]. `MissingSignatureHeader` and
+/// the id it read from `correlation::layer`,
+/// via `ApiError::with_correlation_id`. `MissingSignatureHeader` and
 /// `Unauthorized` never carry one: the first is the (tenant-less) webhook
 /// route, the second is constructed by a host's own tenant extractor
 /// *before* this crate's business logic -- and therefore before any
