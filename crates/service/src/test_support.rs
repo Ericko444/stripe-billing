@@ -105,6 +105,9 @@ pub(crate) struct InMemorySubscriptions {
     change_plan_entries: Mutex<Vec<AuditEntry>>,
     /// Every `AuditEntry` handed to `cancel`, in call order.
     cancel_entries: Mutex<Vec<AuditEntry>>,
+    /// Every `AuditEntry` handed to `apply_event` (the webhook path), in
+    /// call order.
+    apply_event_entries: Mutex<Vec<AuditEntry>>,
 }
 
 impl InMemorySubscriptions {
@@ -120,6 +123,11 @@ impl InMemorySubscriptions {
     /// The `AuditEntry` values `cancel` was called with, in order.
     pub(crate) fn cancel_entries(&self) -> Vec<AuditEntry> {
         lock(&self.cancel_entries).clone()
+    }
+
+    /// The `AuditEntry` values `apply_event` was called with, in order.
+    pub(crate) fn apply_event_entries(&self) -> Vec<AuditEntry> {
+        lock(&self.apply_event_entries).clone()
     }
 }
 
@@ -199,7 +207,9 @@ impl SubscriptionRepository for InMemorySubscriptions {
         current_period_end: OffsetDateTime,
         cancel_at_period_end: bool,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> Result<EventApplication, DomainError> {
+        lock(&self.apply_event_entries).push(entry);
         // Mirrors the SQL guard exactly (persistence's `apply_event`): admit
         // when there is no prior event, or the new one is not older.
         let mut rows = lock(&self.rows);
@@ -314,11 +324,18 @@ impl SubscriptionRepository for InMemorySubscriptions {
 #[derive(Default)]
 pub(crate) struct InMemoryInvoices {
     rows: Mutex<Vec<Invoice>>,
+    /// Every `AuditEntry` handed to `apply_event`, in call order.
+    apply_event_entries: Mutex<Vec<AuditEntry>>,
 }
 
 impl InMemoryInvoices {
     pub(crate) fn seed(&self, invoice: Invoice) {
         lock(&self.rows).push(invoice);
+    }
+
+    /// The `AuditEntry` values `apply_event` was called with, in order.
+    pub(crate) fn apply_event_entries(&self) -> Vec<AuditEntry> {
+        lock(&self.apply_event_entries).clone()
     }
 }
 
@@ -426,7 +443,9 @@ impl InvoiceRepository for InMemoryInvoices {
         amount: Money,
         status: InvoiceStatus,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> Result<EventApplication, DomainError> {
+        lock(&self.apply_event_entries).push(entry);
         // Mirrors persistence's upsert-with-guard: insert if absent, else
         // update only when this event is not older than the last applied.
         let mut rows = lock(&self.rows);
@@ -479,6 +498,11 @@ pub(crate) struct InMemoryPaymentMethods {
     removed_entries: Mutex<Vec<AuditEntry>>,
     /// Same idea as `removed_entries`, for `set_default`.
     set_default_entries: Mutex<Vec<AuditEntry>>,
+    /// Same idea, for `apply_event` (the webhook `attached` path).
+    apply_event_entries: Mutex<Vec<AuditEntry>>,
+    /// Same idea, for `detach_event` (the webhook `detached` path) --
+    /// distinct from `removed_entries`, which is `remove`'s own.
+    detach_event_entries: Mutex<Vec<AuditEntry>>,
 }
 
 impl InMemoryPaymentMethods {
@@ -495,6 +519,8 @@ impl InMemoryPaymentMethods {
             call_log: Some(log),
             removed_entries: Mutex::default(),
             set_default_entries: Mutex::default(),
+            apply_event_entries: Mutex::default(),
+            detach_event_entries: Mutex::default(),
         }
     }
 
@@ -512,6 +538,16 @@ impl InMemoryPaymentMethods {
     /// The `AuditEntry` values `set_default` was called with, in order.
     pub(crate) fn set_default_entries(&self) -> Vec<AuditEntry> {
         lock(&self.set_default_entries).clone()
+    }
+
+    /// The `AuditEntry` values `apply_event` was called with, in order.
+    pub(crate) fn apply_event_entries(&self) -> Vec<AuditEntry> {
+        lock(&self.apply_event_entries).clone()
+    }
+
+    /// The `AuditEntry` values `detach_event` was called with, in order.
+    pub(crate) fn detach_event_entries(&self) -> Vec<AuditEntry> {
+        lock(&self.detach_event_entries).clone()
     }
 }
 
@@ -585,7 +621,9 @@ impl PaymentMethodRepository for InMemoryPaymentMethods {
         last4: &str,
         is_default: bool,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> Result<EventApplication, DomainError> {
+        lock(&self.apply_event_entries).push(entry);
         let mut rows = lock(&self.rows);
         match rows.iter_mut().find(|p| {
             p.tenant_id == tenant_id
@@ -649,8 +687,10 @@ impl PaymentMethodRepository for InMemoryPaymentMethods {
         tenant_id: TenantId,
         stripe_payment_method_id: &str,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> Result<EventApplication, DomainError> {
         self.record();
+        lock(&self.detach_event_entries).push(entry);
         let mut rows = lock(&self.rows);
         let Some(row) = rows.iter_mut().find(|p| {
             p.tenant_id == tenant_id

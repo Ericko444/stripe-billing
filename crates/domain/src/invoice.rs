@@ -1,6 +1,7 @@
 use core::fmt;
 use std::future::Future;
 
+use audit::AuditEntry;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -242,6 +243,14 @@ pub trait InvoiceRepository {
     /// update reports one row affected; a conflict whose predicate fails
     /// reports zero, and `rows_affected() == 0` *is* the stale signal --
     /// resolved atomically by Postgres, not concluded here.
+    ///
+    /// Takes `entry` directly: this method has exactly one caller, the
+    /// webhook path (there is no user-facing invoice mutation). The
+    /// target it carries is `Target::Customer`, not an invoice-specific
+    /// target -- this is an upsert, so the local `InvoiceId` does not
+    /// exist yet when the caller builds the entry. Written regardless of
+    /// Applied vs. Stale, the same reasoning every other audited write in
+    /// this module gives.
     #[allow(clippy::too_many_arguments)]
     fn apply_event(
         &self,
@@ -252,6 +261,7 @@ pub trait InvoiceRepository {
         amount: Money,
         status: InvoiceStatus,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> impl Future<Output = Result<crate::EventApplication, DomainError>> + Send;
 }
 

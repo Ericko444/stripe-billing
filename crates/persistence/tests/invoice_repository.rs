@@ -4,6 +4,9 @@ mod common;
 
 use std::error::Error;
 
+use audit::{
+    Action, Actor, AuditEntry, CorrelationId, Target, TargetId, TenantId as AuditTenantId,
+};
 use domain::{
     Currency, CustomerId, CustomerRepository, DomainError, EventApplication, Invoice,
     InvoiceCursor, InvoiceId, InvoiceRepository, InvoiceStatus, Money, PlanRepository,
@@ -15,6 +18,21 @@ use persistence::{
 use sqlx::PgPool;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
+
+/// An `AuditEntry` for the webhook `apply_event` calls below --
+/// `Target::Customer`, not an invoice-specific target: `apply_event` is an
+/// upsert, so the local `InvoiceId` does not exist yet when the caller
+/// builds the entry (see the port's own rustdoc).
+fn entry(tenant: TenantId, customer_id: CustomerId) -> AuditEntry {
+    AuditEntry::new(
+        AuditTenantId::new(tenant.as_uuid()),
+        Actor::System,
+        Action::PaymentSucceeded,
+        Target::Customer(TargetId::new(customer_id.as_uuid())),
+        OffsetDateTime::now_utc(),
+        CorrelationId::new(Uuid::new_v4()),
+    )
+}
 
 /// `now_utc()` truncated to microsecond precision, matching what `TIMESTAMPTZ`
 /// stores -- a raw nanosecond value fails an equality assertion against a row
@@ -267,6 +285,7 @@ async fn apply_event_inserts_the_mirror_when_absent() -> Result<(), Box<dyn Erro
             Money::new(4200, Currency::Eur),
             InvoiceStatus::Paid,
             event_created_at,
+            entry(tenant, customer_id),
         )
         .await?;
 
@@ -305,6 +324,7 @@ async fn apply_event_updates_an_existing_mirror_and_advances_the_ordering_column
             Money::new(4200, Currency::Eur),
             InvoiceStatus::Paid,
             event_created_at,
+            entry(tenant, customer_id),
         )
         .await?;
 
@@ -338,6 +358,7 @@ async fn apply_event_with_an_older_timestamp_is_stale_and_leaves_the_row_unchang
             Money::new(4200, Currency::Eur),
             InvoiceStatus::Paid,
             newer_created_at,
+            entry(tenant, customer_id),
         )
         .await?;
     assert_eq!(first, EventApplication::Applied);
@@ -354,6 +375,7 @@ async fn apply_event_with_an_older_timestamp_is_stale_and_leaves_the_row_unchang
             Money::new(9999, Currency::Eur),
             InvoiceStatus::Failed,
             older_created_at,
+            entry(tenant, customer_id),
         )
         .await?;
 
@@ -388,6 +410,7 @@ async fn apply_event_with_an_equal_timestamp_applies() -> Result<(), Box<dyn Err
             Money::new(4200, Currency::Eur),
             InvoiceStatus::Paid,
             shared,
+            entry(tenant, customer_id),
         )
         .await?;
     assert_eq!(first, EventApplication::Applied);
@@ -401,6 +424,7 @@ async fn apply_event_with_an_equal_timestamp_applies() -> Result<(), Box<dyn Err
             Money::new(4200, Currency::Eur),
             InvoiceStatus::Failed,
             shared,
+            entry(tenant, customer_id),
         )
         .await?;
 

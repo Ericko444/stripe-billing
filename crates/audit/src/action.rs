@@ -42,4 +42,20 @@ pub enum Action {
     /// as `SetupIntentCreated`: no local row changes until the customer
     /// completes checkout and a webhook creates the subscription.
     CheckoutSessionStarted,
+    /// A subscription became (or remained) active, mirroring a
+    /// `customer.subscription.*` webhook -- always `Actor::System`, since
+    /// nothing here has an authenticated caller behind it.
+    SubscriptionActivated,
+    /// A subscription changed in some way not covered by
+    /// `SubscriptionActivated` or `SubscriptionCanceled` (a period
+    /// rollover, a `cancel_at_period_end` flip with no status change,
+    /// `past_due`, `incomplete`).
+    SubscriptionUpdated,
+    /// A payment method was attached to a customer
+    /// (`payment_method.attached`).
+    PaymentMethodAttached,
+    /// An invoice was paid in full (`invoice.paid`).
+    PaymentSucceeded,
+    /// An invoice payment attempt failed (`invoice.payment_failed`).
+    PaymentFailed,
 }

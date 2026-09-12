@@ -27,6 +27,21 @@ fn entry(tenant: TenantId, target_id: Uuid) -> AuditEntry {
     )
 }
 
+/// An `AuditEntry` for the webhook `attached` path's `apply_event` calls --
+/// `Target::Customer`, not `Target::PaymentMethod`: `apply_event` is an
+/// upsert, so the local id does not exist yet when the caller builds the
+/// entry (see the port's own rustdoc).
+fn attach_entry(tenant: TenantId, customer_id: CustomerId) -> AuditEntry {
+    AuditEntry::new(
+        AuditTenantId::new(tenant.as_uuid()),
+        Actor::System,
+        Action::PaymentMethodAttached,
+        Target::Customer(TargetId::new(customer_id.as_uuid())),
+        OffsetDateTime::now_utc(),
+        CorrelationId::new(Uuid::new_v4()),
+    )
+}
+
 /// Installs a `BEFORE INSERT` trigger on `audit.audit_log` that raises an
 /// exception for exactly one sentinel `target_id` -- a controlled,
 /// deterministic way to force the audit half of `remove`'s transaction to
@@ -287,8 +302,17 @@ async fn apply_event_inserts_when_absent_then_updates_with_the_guard() -> Result
 
     let t1 = now_micros();
     assert_eq!(
-        repo.apply_event(tenant, customer_id, "pm_x", "visa", "4242", true, t1)
-            .await?,
+        repo.apply_event(
+            tenant,
+            customer_id,
+            "pm_x",
+            "visa",
+            "4242",
+            true,
+            t1,
+            attach_entry(tenant, customer_id)
+        )
+        .await?,
         EventApplication::Applied
     );
     let inserted = repo
@@ -302,8 +326,17 @@ async fn apply_event_inserts_when_absent_then_updates_with_the_guard() -> Result
 
     let t2 = t1 + Duration::minutes(1);
     assert_eq!(
-        repo.apply_event(tenant, customer_id, "pm_x", "visa", "9999", false, t2)
-            .await?,
+        repo.apply_event(
+            tenant,
+            customer_id,
+            "pm_x",
+            "visa",
+            "9999",
+            false,
+            t2,
+            attach_entry(tenant, customer_id)
+        )
+        .await?,
         EventApplication::Applied
     );
     let updated = repo
@@ -327,14 +360,32 @@ async fn apply_event_older_timestamp_is_stale_and_leaves_the_row_unchanged()
 
     let newer = now_micros();
     let seeded = repo
-        .apply_event(tenant, customer_id, "pm_ord", "visa", "4242", true, newer)
+        .apply_event(
+            tenant,
+            customer_id,
+            "pm_ord",
+            "visa",
+            "4242",
+            true,
+            newer,
+            attach_entry(tenant, customer_id),
+        )
         .await?;
     assert_eq!(seeded, EventApplication::Applied);
 
     let older = newer - Duration::minutes(5);
     assert_eq!(
-        repo.apply_event(tenant, customer_id, "pm_ord", "amex", "0000", false, older)
-            .await?,
+        repo.apply_event(
+            tenant,
+            customer_id,
+            "pm_ord",
+            "amex",
+            "0000",
+            false,
+            older,
+            attach_entry(tenant, customer_id)
+        )
+        .await?,
         EventApplication::Stale
     );
     let found = repo
@@ -356,12 +407,30 @@ async fn apply_event_equal_timestamp_applies() -> Result<(), Box<dyn Error>> {
 
     let t = now_micros();
     let first = repo
-        .apply_event(tenant, customer_id, "pm_eq", "visa", "4242", false, t)
+        .apply_event(
+            tenant,
+            customer_id,
+            "pm_eq",
+            "visa",
+            "4242",
+            false,
+            t,
+            attach_entry(tenant, customer_id),
+        )
         .await?;
     assert_eq!(first, EventApplication::Applied);
     assert_eq!(
-        repo.apply_event(tenant, customer_id, "pm_eq", "visa", "5555", false, t)
-            .await?,
+        repo.apply_event(
+            tenant,
+            customer_id,
+            "pm_eq",
+            "visa",
+            "5555",
+            false,
+            t,
+            attach_entry(tenant, customer_id)
+        )
+        .await?,
         EventApplication::Applied
     );
     let found = repo
@@ -389,14 +458,21 @@ async fn detach_event_soft_deletes_and_the_guard_still_applies() -> Result<(), B
             "4242",
             true,
             attached_at,
+            attach_entry(tenant, customer_id),
         )
         .await?;
     assert_eq!(attached, EventApplication::Applied);
+    let created_id = repo
+        .find_by_stripe_payment_method_id(tenant, "pm_del")
+        .await?
+        .ok_or("row exists")?
+        .id;
 
     // A stale detach -- older than the attach -- must not remove the row.
     let stale = attached_at - Duration::minutes(1);
     assert_eq!(
-        repo.detach_event(tenant, "pm_del", stale).await?,
+        repo.detach_event(tenant, "pm_del", stale, entry(tenant, created_id.as_uuid()))
+            .await?,
         EventApplication::Stale
     );
     assert!(
@@ -409,7 +485,13 @@ async fn detach_event_soft_deletes_and_the_guard_still_applies() -> Result<(), B
     // A newer detach removes it (soft).
     let detached_at = attached_at + Duration::minutes(1);
     assert_eq!(
-        repo.detach_event(tenant, "pm_del", detached_at).await?,
+        repo.detach_event(
+            tenant,
+            "pm_del",
+            detached_at,
+            entry(tenant, created_id.as_uuid())
+        )
+        .await?,
         EventApplication::Applied
     );
     assert_eq!(
@@ -498,8 +580,13 @@ async fn remove_writes_the_entry_even_when_the_detach_is_stale() -> Result<(), B
         .await?;
     let webhook_detached_at = now_micros();
     assert_eq!(
-        repo.detach_event(tenant, "pm_stale_remove", webhook_detached_at)
-            .await?,
+        repo.detach_event(
+            tenant,
+            "pm_stale_remove",
+            webhook_detached_at,
+            entry(tenant, created.id.as_uuid())
+        )
+        .await?,
         EventApplication::Applied
     );
 

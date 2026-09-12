@@ -156,10 +156,19 @@ impl PaymentMethodRepository for PgPaymentMethodRepository {
         last4: &str,
         is_default: bool,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> Result<EventApplication, DomainError> {
-        // Upsert with the ordering guard in the statement, the same shape as
-        // the invoice one: fresh insert or admitted update is one row, a
-        // conflict the predicate rejects is zero -- the stale signal.
+        // One transaction (D1(h)): upsert with the ordering guard in the
+        // statement, the same shape as the invoice one -- fresh insert or
+        // admitted update is one row, a conflict the predicate rejects is
+        // zero, the stale signal -- plus the audit entry, either way.
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
         let result = sqlx::query(
             "INSERT INTO billing.payment_methods AS pm \
                  (id, tenant_id, customer_id, stripe_payment_method_id, brand, last4, \
@@ -183,16 +192,28 @@ impl PaymentMethodRepository for PgPaymentMethodRepository {
         .bind(last4)
         .bind(is_default)
         .bind(event_created_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(RepositoryError::from)
         .map_err(to_domain_error)?;
 
-        if result.rows_affected() == 0 {
-            Ok(EventApplication::Stale)
+        let application = if result.rows_affected() == 0 {
+            EventApplication::Stale
         } else {
-            Ok(EventApplication::Applied)
-        }
+            EventApplication::Applied
+        };
+
+        audit_pg::insert(&mut tx, &entry)
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        tx.commit()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        Ok(application)
     }
 
     async fn detach_event(
@@ -200,10 +221,19 @@ impl PaymentMethodRepository for PgPaymentMethodRepository {
         tenant_id: TenantId,
         stripe_payment_method_id: &str,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> Result<EventApplication, DomainError> {
-        // Soft delete, ordering predicate in the WHERE clause. Precondition:
-        // the row exists (the caller looked it up), so zero rows means a
-        // newer event already landed -- Stale, not "no such row".
+        // One transaction (D1(h)): soft delete, ordering predicate in the
+        // WHERE clause. Precondition: the row exists (the caller looked it
+        // up), so zero rows means a newer event already landed -- Stale,
+        // not "no such row".
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
         let result = sqlx::query(
             "UPDATE billing.payment_methods \
                 SET deleted_at = now(), last_event_created_at = $3 \
@@ -213,16 +243,28 @@ impl PaymentMethodRepository for PgPaymentMethodRepository {
         .bind(tenant_id.as_uuid())
         .bind(stripe_payment_method_id)
         .bind(event_created_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(RepositoryError::from)
         .map_err(to_domain_error)?;
 
-        if result.rows_affected() == 0 {
-            Ok(EventApplication::Stale)
+        let application = if result.rows_affected() == 0 {
+            EventApplication::Stale
         } else {
-            Ok(EventApplication::Applied)
-        }
+            EventApplication::Applied
+        };
+
+        audit_pg::insert(&mut tx, &entry)
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        tx.commit()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        Ok(application)
     }
 
     async fn remove(

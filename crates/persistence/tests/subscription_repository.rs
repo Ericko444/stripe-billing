@@ -279,6 +279,7 @@ async fn apply_event_updates_the_row_and_advances_the_ordering_column() -> Resul
             new_period_end,
             true,
             event_created_at,
+            entry(tenant, created.id.as_uuid(), Action::SubscriptionUpdated),
         )
         .await?;
 
@@ -317,6 +318,7 @@ async fn apply_event_with_an_older_timestamp_is_stale_and_leaves_the_row_unchang
             newer_period_end,
             false,
             newer_created_at,
+            entry(tenant, created.id.as_uuid(), Action::SubscriptionUpdated),
         )
         .await?;
     assert_eq!(first_outcome, EventApplication::Applied);
@@ -334,6 +336,7 @@ async fn apply_event_with_an_older_timestamp_is_stale_and_leaves_the_row_unchang
             older_created_at + Duration::days(1),
             true,
             older_created_at,
+            entry(tenant, created.id.as_uuid(), Action::SubscriptionUpdated),
         )
         .await?;
 
@@ -369,6 +372,7 @@ async fn apply_event_with_an_equal_timestamp_applies() -> Result<(), Box<dyn Err
             shared_created_at + Duration::days(30),
             false,
             shared_created_at,
+            entry(tenant, created.id.as_uuid(), Action::SubscriptionUpdated),
         )
         .await?;
     assert_eq!(first_outcome, EventApplication::Applied);
@@ -382,6 +386,7 @@ async fn apply_event_with_an_equal_timestamp_applies() -> Result<(), Box<dyn Err
             shared_created_at + Duration::days(30),
             true,
             shared_created_at,
+            entry(tenant, created.id.as_uuid(), Action::SubscriptionUpdated),
         )
         .await?;
 
@@ -550,6 +555,7 @@ async fn change_plan_still_moves_the_plan_and_audits_when_the_snapshot_is_stale(
             created.current_period_end,
             created.cancel_at_period_end,
             future,
+            entry(tenant, created.id.as_uuid(), Action::SubscriptionUpdated),
         )
         .await?;
     let (_, new_plan_id) = seed(&db.pool, tenant).await?;
@@ -725,6 +731,7 @@ async fn cancel_still_audits_when_the_snapshot_is_stale() -> Result<(), Box<dyn 
             created.current_period_end,
             created.cancel_at_period_end,
             future,
+            entry(tenant, created.id.as_uuid(), Action::SubscriptionUpdated),
         )
         .await?;
     let mut stale_snapshot = snapshot_of(&created);

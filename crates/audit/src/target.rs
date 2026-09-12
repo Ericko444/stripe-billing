@@ -36,6 +36,8 @@ pub enum Target {
     Customer(TargetId),
     /// A plan.
     Plan(TargetId),
+    /// An invoice.
+    Invoice(TargetId),
 }
 
 #[cfg(test)]

@@ -58,6 +58,11 @@ fn action_kind(action: &Action) -> &'static str {
         Action::SubscriptionCanceled => "subscription.canceled",
         Action::SetupIntentCreated => "setup_intent.created",
         Action::CheckoutSessionStarted => "checkout_session.started",
+        Action::SubscriptionActivated => "subscription.activated",
+        Action::SubscriptionUpdated => "subscription.updated",
+        Action::PaymentMethodAttached => "payment_method.attached",
+        Action::PaymentSucceeded => "payment.succeeded",
+        Action::PaymentFailed => "payment.failed",
     }
 }
 
@@ -68,5 +73,6 @@ fn target_columns(target: &Target) -> (&'static str, Option<Uuid>) {
         Target::Subscription(id) => ("subscription", Some(id.as_uuid())),
         Target::Customer(id) => ("customer", Some(id.as_uuid())),
         Target::Plan(id) => ("plan", Some(id.as_uuid())),
+        Target::Invoice(id) => ("invoice", Some(id.as_uuid())),
     }
 }

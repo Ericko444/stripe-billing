@@ -177,11 +177,20 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         current_period_end: OffsetDateTime,
         cancel_at_period_end: bool,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> Result<EventApplication, DomainError> {
-        // The ordering predicate is part of the statement, not a read-then-
-        // compare in Rust -- see the port's rustdoc for why. rows_affected()
-        // is the stale signal, reported by Postgres rather than concluded by
-        // us.
+        // One transaction: the ordering predicate is part of the statement,
+        // not a read-then-compare in Rust -- see the port's rustdoc for
+        // why. rows_affected() is the stale signal, reported by Postgres
+        // rather than concluded by us. The audit entry commits with the
+        // write either way (D1(h)).
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
         let result = sqlx::query(
             "UPDATE billing.subscriptions \
                 SET status = $3, current_period_start = $4, current_period_end = $5, \
@@ -196,16 +205,28 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .bind(current_period_end)
         .bind(cancel_at_period_end)
         .bind(event_created_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(RepositoryError::from)
         .map_err(to_domain_error)?;
 
-        if result.rows_affected() == 0 {
-            Ok(EventApplication::Stale)
+        let application = if result.rows_affected() == 0 {
+            EventApplication::Stale
         } else {
-            Ok(EventApplication::Applied)
-        }
+            EventApplication::Applied
+        };
+
+        audit_pg::insert(&mut tx, &entry)
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        tx.commit()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        Ok(application)
     }
 
     async fn set_plan(

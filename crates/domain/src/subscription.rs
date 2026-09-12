@@ -213,6 +213,16 @@ pub trait SubscriptionRepository {
     /// zero-rows result is read as "a newer event already applied" rather
     /// than "no such row" -- this method cannot tell the two apart, and does
     /// not need to for its one caller.
+    ///
+    /// Takes `entry` directly: this method now has exactly one caller (the
+    /// webhook path -- `change_plan` and `cancel` each moved to their own
+    /// method in Tasks 8/9), so there is no second caller an `AuditEntry`
+    /// parameter could starve of one, the same reasoning
+    /// [`PaymentMethodRepository::set_default`](crate::PaymentMethodRepository::set_default)
+    /// gives. Written **regardless of Applied vs. Stale**, matching every
+    /// other audited write in this module: Stripe reported a real event
+    /// either way, and a rejected write is itself evidence worth keeping
+    /// (e.g. for debugging out-of-order delivery).
     #[allow(clippy::too_many_arguments)]
     fn apply_event(
         &self,
@@ -223,6 +233,7 @@ pub trait SubscriptionRepository {
         current_period_end: OffsetDateTime,
         cancel_at_period_end: bool,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> impl Future<Output = Result<EventApplication, DomainError>> + Send;
 
     /// Repoints a subscription at a different local plan.
