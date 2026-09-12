@@ -11,7 +11,12 @@ publish.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 
+# `persistence` is a dev-only edge, the same reasoning as `stripe-adapter`'s
+# own dev-dependency on it: proving the billing module's migrator and this
+# crate's migrator coexist against one real Postgres needs the real other
+# migrator. It never appears in the production dependency graph.
 [dev-dependencies]
+persistence.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true
 uuid.workspace = true

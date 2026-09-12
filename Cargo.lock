@@ -260,6 +260,7 @@ dependencies = [
 name = "audit-pg"
 version = "0.1.0"
 dependencies = [
+ "persistence",
  "sqlx",
  "testcontainers",
  "thiserror",
