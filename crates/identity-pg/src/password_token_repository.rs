@@ -132,7 +132,8 @@ impl PasswordTokenRepository for PgPasswordTokenRepository {
         // outstanding -- the invitation is refused rather than let a 72-hour
         // link overwrite it.
         let updated = sqlx::query(
-            "UPDATE identity.users SET password_hash = $2, updated_at = now()               WHERE id = $1 AND ($3 <> 'invitation' OR password_hash IS NULL)",
+            "UPDATE identity.users SET password_hash = $2, updated_at = now() \
+              WHERE id = $1 AND ($3 <> 'invitation' OR password_hash IS NULL)",
         )
         .bind(user)
         .bind(new_hash.as_str())

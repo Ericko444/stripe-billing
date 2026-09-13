@@ -62,7 +62,11 @@ impl MembershipRepository for PgMembershipRepository {
 impl MemberRepository for PgMembershipRepository {
     async fn list(&self, tenant_id: TenantId) -> Result<Vec<TenantMember>, RepositoryError> {
         let rows = sqlx::query(
-            "SELECT m.id, m.user_id, u.email_normalized, m.role, m.status                FROM identity.memberships m                JOIN identity.users u ON u.id = m.user_id               WHERE m.tenant_id = $1               ORDER BY u.email_normalized",
+            "SELECT m.id, m.user_id, u.email_normalized, m.role, m.status \
+               FROM identity.memberships m \
+               JOIN identity.users u ON u.id = m.user_id \
+              WHERE m.tenant_id = $1 \
+              ORDER BY u.email_normalized",
         )
         .bind(tenant_id.as_uuid())
         .fetch_all(&self.pool)
@@ -111,7 +115,9 @@ impl MemberRepository for PgMembershipRepository {
         // NOTHING` rather than look-then-insert: two tenants adding the same
         // new address at once end with one account, not a unique violation.
         let created: Option<Uuid> = sqlx::query_scalar(
-            "INSERT INTO identity.users (id, email_normalized) VALUES ($1, $2)              ON CONFLICT (email_normalized) DO NOTHING              RETURNING id",
+            "INSERT INTO identity.users (id, email_normalized) VALUES ($1, $2) \
+             ON CONFLICT (email_normalized) DO NOTHING \
+             RETURNING id",
         )
         .bind(Uuid::new_v4())
         .bind(grant.email.as_str())
@@ -123,7 +129,8 @@ impl MemberRepository for PgMembershipRepository {
         // exist: a reset completing concurrently waits for this commit, so
         // "has no password" is still true when the invitation is stored.
         let row = sqlx::query(
-            "SELECT id, password_hash IS NULL AS no_password FROM identity.users               WHERE email_normalized = $1 FOR SHARE",
+            "SELECT id, password_hash IS NULL AS no_password FROM identity.users \
+              WHERE email_normalized = $1 FOR SHARE",
         )
         .bind(grant.email.as_str())
         .fetch_one(&mut *tx)
@@ -133,7 +140,10 @@ impl MemberRepository for PgMembershipRepository {
         let no_password: bool = row.try_get("no_password").map_err(repository_error)?;
 
         let inserted: Option<Uuid> = sqlx::query_scalar(
-            "INSERT INTO identity.memberships (id, user_id, tenant_id, role, status)              VALUES ($1, $2, $3, $4, 'active')              ON CONFLICT (user_id, tenant_id) DO NOTHING              RETURNING id",
+            "INSERT INTO identity.memberships (id, user_id, tenant_id, role, status) \
+             VALUES ($1, $2, $3, $4, 'active') \
+             ON CONFLICT (user_id, tenant_id) DO NOTHING \
+             RETURNING id",
         )
         .bind(Uuid::new_v4())
         .bind(user_id)
@@ -175,7 +185,9 @@ impl MemberRepository for PgMembershipRepository {
                 .await
                 .map_err(repository_error)?;
             sqlx::query(
-                "INSERT INTO identity.password_tokens                     (id, selector, verifier_hash, user_id, purpose, created_at, expires_at)                  VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "INSERT INTO identity.password_tokens \
+                    (id, selector, verifier_hash, user_id, purpose, created_at, expires_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(Uuid::new_v4())
             .bind(&grant.invitation.selector.as_bytes()[..])
