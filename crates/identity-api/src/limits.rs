@@ -42,7 +42,29 @@ pub const RESET_REQUEST_PER_IP: RateLimit = RateLimit {
     window: Duration::hours(1),
 };
 
+/// Reset completions from one client IP. A verifier is 256 random bits, so
+/// this is not what stops guessing -- it bounds how much Argon2 hashing a
+/// single source can make the server do with well-formed links, and keeps a
+/// flood of attempts visible.
+pub const RESET_COMPLETE_PER_IP: RateLimit = RateLimit {
+    max: 20,
+    window: Duration::minutes(15),
+};
+
 const LOGIN: &str = "login";
+const RESET_COMPLETE: &str = "reset-complete";
+
+/// Counts a reset completion from `ip`; `429` when over.
+pub fn reset_complete_by_ip(
+    limiter: &dyn RateLimiter,
+    ip: ClientIp,
+    correlation_id: audit::CorrelationId,
+) -> Result<(), IdentityError> {
+    decide(
+        limiter.check(&RateKey::ip(RESET_COMPLETE, ip), RESET_COMPLETE_PER_IP),
+        correlation_id,
+    )
+}
 const RESET_REQUEST: &str = "reset-request";
 
 /// Counts a reset request from `ip`; `429` when over.

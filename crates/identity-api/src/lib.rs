@@ -56,6 +56,10 @@ pub fn identity_router(state: IdentityState) -> Router {
             "/auth/password-reset/request",
             post(reset_routes::request_password_reset),
         )
+        .route(
+            "/auth/password-reset/complete",
+            post(reset_routes::complete_password_reset),
+        )
         .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))
         .layer(Extension(state))
         .layer(middleware::from_fn(correlation::layer))

@@ -1,13 +1,14 @@
 use async_trait::async_trait;
 use audit::CorrelationId;
 use identity_domain::{
-    Clock, Email, MembershipRepository, Password, PasswordHasher, SessionRepository, TenantId,
-    UserRepository,
+    Clock, Email, Mailer, MembershipRepository, Password, PasswordHasher, PasswordTokenRepository,
+    SessionRepository, TenantId, UserRepository,
 };
 
 use crate::{
-    ActiveSession, AuthService, LoginError, LoginOutcome, Me, PasswordChangeError, ProfileError,
-    SelectTenantError, SessionError, TenantSelection,
+    ActiveSession, AuthService, CompleteResetError, LoginError, LoginOutcome, Me,
+    PasswordChangeError, PasswordResetService, ProfileError, SelectTenantError, SessionError,
+    TenantSelection,
 };
 
 /// The identity use cases as an object-safe trait, so a router can hold
@@ -114,5 +115,37 @@ where
         correlation_id: CorrelationId,
     ) -> Result<(), PasswordChangeError> {
         AuthService::change_password(self, session, current, new, correlation_id).await
+    }
+}
+
+/// Completing a password reset, as an object-safe trait for the router --
+/// the same façade role as [`Authentication`], for the other service.
+#[async_trait]
+pub trait PasswordResets: Send + Sync {
+    /// See [`PasswordResetService::complete`].
+    async fn complete_reset(
+        &self,
+        presented: &str,
+        new_password: Password,
+        correlation_id: CorrelationId,
+    ) -> Result<(), CompleteResetError>;
+}
+
+#[async_trait]
+impl<U, T, H, M, C> PasswordResets for PasswordResetService<U, T, H, M, C>
+where
+    U: UserRepository,
+    T: PasswordTokenRepository,
+    H: PasswordHasher,
+    M: Mailer,
+    C: Clock,
+{
+    async fn complete_reset(
+        &self,
+        presented: &str,
+        new_password: Password,
+        correlation_id: CorrelationId,
+    ) -> Result<(), CompleteResetError> {
+        PasswordResetService::complete(self, presented, new_password, correlation_id).await
     }
 }

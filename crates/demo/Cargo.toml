@@ -36,6 +36,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+audit.workspace = true
 # Brings up the database the three-migrators test and the boundary proof run on.
 serde_json.workspace = true
 testcontainers.workspace = true

@@ -277,6 +277,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
 
     let mut identity = IdentityState::new(
         Arc::new(authentication),
+        resets,
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         reset_queue,
     );

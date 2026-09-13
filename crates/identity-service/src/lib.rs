@@ -28,7 +28,7 @@ pub use auth::{
     UNSCOPED_SESSION_LIFETIME,
 };
 pub use clock::SystemClock;
-pub use facade::Authentication;
+pub use facade::{Authentication, PasswordResets};
 pub use password_change::PasswordChangeError;
 pub use profile::ProfileError;
 pub use rate_limit::InMemoryRateLimiter;

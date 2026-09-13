@@ -14,15 +14,15 @@ use axum::http::{Request, StatusCode, header};
 use identity_api::{IdentityState, identity_router};
 use identity_domain::{Email, Password, TenantId};
 use identity_service::{
-    ActiveSession, Authentication, InMemoryRateLimiter, LoginError, LoginOutcome, Me,
-    PasswordChangeError, ProfileError, ResetReceiver, SelectTenantError, SessionError, SystemClock,
-    TenantSelection, reset_queue,
+    ActiveSession, Authentication, CompleteResetError, InMemoryRateLimiter, LoginError,
+    LoginOutcome, Me, PasswordChangeError, PasswordResets, ProfileError, ResetReceiver,
+    SelectTenantError, SessionError, SystemClock, TenantSelection, reset_queue,
 };
 use tower::ServiceExt;
 
-/// An `Authentication` that counts every call and answers none of them. The
-/// reset request handler must never make one: it has no business knowing
-/// anything about accounts.
+/// Both use-case façades, counting every call and answering none. The reset
+/// request handler must never make one: it has no business knowing anything
+/// about accounts.
 #[derive(Default)]
 struct CountingAuth {
     calls: AtomicUsize,
@@ -87,6 +87,19 @@ impl Authentication for CountingAuth {
     }
 }
 
+#[async_trait]
+impl PasswordResets for CountingAuth {
+    async fn complete_reset(
+        &self,
+        _: &str,
+        _: Password,
+        _: CorrelationId,
+    ) -> Result<(), CompleteResetError> {
+        self.called();
+        Err(CompleteResetError::InvalidLink)
+    }
+}
+
 struct World {
     app: Router,
     auth: Arc<CountingAuth>,
@@ -97,6 +110,7 @@ fn world() -> World {
     let auth = Arc::new(CountingAuth::default());
     let (queue, receiver) = reset_queue(64);
     let state = IdentityState::new(
+        auth.clone(),
         auth.clone(),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         queue,

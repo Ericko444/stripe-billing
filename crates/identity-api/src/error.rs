@@ -38,6 +38,9 @@ pub enum ErrorKind {
         /// Seconds until the current window ends, for `Retry-After`.
         retry_after_secs: u64,
     },
+    /// A reset link that cannot be used: malformed, unknown, forged, expired,
+    /// superseded or already used. One kind, one body, for all of them.
+    InvalidResetLink,
     /// A new password breaks the policy. Safe to say so: it describes the
     /// rule, not the password, and only a caller setting a password sees it.
     PasswordPolicy,
@@ -100,6 +103,11 @@ impl IntoResponse for IdentityError {
                 "Not found",
                 "The requested resource was not found.",
             ),
+            ErrorKind::InvalidResetLink => (
+                StatusCode::BAD_REQUEST,
+                "Invalid link",
+                "This link is invalid or has expired. Request a new one.",
+            ),
             ErrorKind::PasswordPolicy => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "Password rejected",
@@ -123,6 +131,7 @@ impl IntoResponse for IdentityError {
             ErrorKind::NotFound => "not found",
             ErrorKind::Forbidden => "forbidden",
             ErrorKind::PasswordPolicy => "password policy",
+            ErrorKind::InvalidResetLink => "invalid reset link",
             ErrorKind::RateLimited { .. } => "rate limited",
         };
         let correlation_id = self.correlation_id.as_uuid();

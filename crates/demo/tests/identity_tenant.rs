@@ -87,6 +87,7 @@ async fn world() -> Result<World, Box<dyn Error>> {
         .with_state(unused_state())
         .layer(Extension(IdentityState::new(
             Arc::new(authentication),
+            Arc::new(NoResets),
             Arc::new(InMemoryRateLimiter::new(SystemClock)),
             identity_service::reset_queue(1).0,
         )));
@@ -224,4 +225,21 @@ async fn every_refusal_is_billings_one_identical_401() -> Result<(), Box<dyn Err
         "{bodies:?}"
     );
     Ok(())
+}
+
+/// The boundary proof never completes a password reset.
+struct NoResets;
+
+#[async_trait::async_trait]
+impl identity_service::PasswordResets for NoResets {
+    async fn complete_reset(
+        &self,
+        _: &str,
+        _: identity_domain::Password,
+        _: audit::CorrelationId,
+    ) -> Result<(), identity_service::CompleteResetError> {
+        Err(identity_service::CompleteResetError::Unavailable(
+            "not used by the boundary proof".into(),
+        ))
+    }
 }

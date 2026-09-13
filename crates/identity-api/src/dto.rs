@@ -165,3 +165,13 @@ pub struct ResetRequestAccepted {
 pub const RESET_REQUEST_ACCEPTED: ResetRequestAccepted = ResetRequestAccepted {
     message: "If an account exists for that address, a password reset link is on its way.",
 };
+
+/// `POST /auth/password-reset/complete` body. No `Debug`: it holds the whole
+/// credential and a password.
+#[derive(Deserialize)]
+pub struct CompleteResetRequest {
+    /// The token from the link's fragment.
+    pub token: String,
+    /// The password to set.
+    pub new_password: String,
+}

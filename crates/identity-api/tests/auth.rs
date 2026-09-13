@@ -176,6 +176,7 @@ const ROTATED_VERIFIER: [u8; 32] = [0x22; 32];
 fn state(outage: bool) -> IdentityState {
     IdentityState::new(
         Arc::new(ScriptedAuth { outage }),
+        Arc::new(NoResets),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         identity_service::reset_queue(8).0,
     )
@@ -639,4 +640,21 @@ async fn changing_the_password_answers_by_cause() -> Result<(), Box<dyn Error>> 
         assert_eq!(response.status(), expected, "{case}");
     }
     Ok(())
+}
+
+/// These tests never complete a reset; the double says so if one does.
+struct NoResets;
+
+#[async_trait]
+impl identity_service::PasswordResets for NoResets {
+    async fn complete_reset(
+        &self,
+        _: &str,
+        _: Password,
+        _: CorrelationId,
+    ) -> Result<(), identity_service::CompleteResetError> {
+        Err(identity_service::CompleteResetError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
 }

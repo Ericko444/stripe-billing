@@ -2,7 +2,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use identity_domain::RateLimiter;
-use identity_service::{Authentication, ResetQueue};
+use identity_service::{Authentication, PasswordResets, ResetQueue};
 
 /// What the identity routes and [`AuthenticatedSession`] need, carried as a
 /// request extension.
@@ -17,21 +17,24 @@ use identity_service::{Authentication, ResetQueue};
 #[derive(Clone)]
 pub struct IdentityState {
     authentication: Arc<dyn Authentication>,
+    password_resets: Arc<dyn PasswordResets>,
     limiter: Arc<dyn RateLimiter>,
     reset_queue: ResetQueue,
     trusted_proxy: Option<IpAddr>,
 }
 
 impl IdentityState {
-    /// State over the use cases, the rate limiter and the queue feeding the
-    /// password reset worker, trusting no proxy.
+    /// State over the session and password reset use cases, the rate limiter
+    /// and the queue feeding the reset worker, trusting no proxy.
     pub fn new(
         authentication: Arc<dyn Authentication>,
+        password_resets: Arc<dyn PasswordResets>,
         limiter: Arc<dyn RateLimiter>,
         reset_queue: ResetQueue,
     ) -> Self {
         Self {
             authentication,
+            password_resets,
             limiter,
             reset_queue,
             trusted_proxy: None,
@@ -48,6 +51,11 @@ impl IdentityState {
     /// The use cases.
     pub fn authentication(&self) -> &dyn Authentication {
         self.authentication.as_ref()
+    }
+
+    /// Completing password resets.
+    pub fn password_resets(&self) -> &dyn PasswordResets {
+        self.password_resets.as_ref()
     }
 
     /// The rate limiter.
