@@ -1,6 +1,6 @@
 [package]
 name = "identity-api"
-description = "Axum router factory for the identity module: session cookie, CSRF origin check, correlation id, problem+json. Exposes a Router, never a binary, and names no billing crate."
+description = "Axum router factory for the identity module: session cookie, session extractor, correlation id, problem+json. Exposes a Router, never a binary, and names no billing crate."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 audit.workspace = true
 axum.workspace = true
+identity-domain.workspace = true
+identity-service.workspace = true
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -18,6 +20,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 tokio.workspace = true
 tower = { workspace = true, features = ["util"] }
 

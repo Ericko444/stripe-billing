@@ -1,0 +1,333 @@
+//! `POST /auth/login`, `GET /auth/me` and `AuthenticatedSession`, through the
+//! real router against a scripted `Authentication`.
+
+use std::error::Error;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use audit::CorrelationId;
+use axum::Router;
+use axum::body::{Body, to_bytes};
+use axum::http::{Request, Response, StatusCode, header};
+use axum::routing::get;
+use identity_api::{AuthenticatedSession, IdentityState, identity_router};
+use identity_domain::{
+    Email, Membership, MembershipId, Password, Role, SessionId, SessionTenant, SplitToken,
+    TenantId, UserId,
+};
+use identity_service::{
+    ActiveSession, Authentication, LoginError, LoginOutcome, Me, SessionError, SessionScope,
+};
+use secrecy::ExposeSecret;
+use serde_json::Value;
+use time::{Duration, OffsetDateTime};
+use tower::ServiceExt;
+use uuid::Uuid;
+
+const PASSWORD: &str = "correct horse battery staple";
+const TOKEN_SELECTOR: [u8; 16] = [0xab; 16];
+const TOKEN_VERIFIER: [u8; 32] = [0xcd; 32];
+
+fn alice() -> UserId {
+    UserId::new(Uuid::from_u128(1))
+}
+
+fn tenant_a() -> Membership {
+    Membership {
+        id: MembershipId::new(Uuid::from_u128(10)),
+        user_id: alice(),
+        tenant_id: TenantId::new(Uuid::from_u128(100)),
+        tenant_name: "Tenant A".to_string(),
+        role: Role::Owner,
+    }
+}
+
+fn valid_wire() -> String {
+    SplitToken::from_bytes(TOKEN_SELECTOR, TOKEN_VERIFIER)
+        .to_wire()
+        .expose_secret()
+        .to_string()
+}
+
+fn expires_at() -> OffsetDateTime {
+    OffsetDateTime::UNIX_EPOCH + Duration::days(20_000)
+}
+
+/// Alice with one membership logs in with `PASSWORD`; `valid_wire()` is her
+/// session; anything else is refused. `outage` makes every call fail as
+/// unavailable.
+struct ScriptedAuth {
+    outage: bool,
+}
+
+#[async_trait]
+impl Authentication for ScriptedAuth {
+    async fn login(
+        &self,
+        email: &Email,
+        password: &Password,
+        _correlation_id: CorrelationId,
+    ) -> Result<LoginOutcome, LoginError> {
+        if self.outage {
+            return Err(LoginError::Unavailable("database is down".into()));
+        }
+        if email.as_str() != "alice@example.test" || password.expose_secret() != PASSWORD {
+            return Err(LoginError::InvalidCredentials);
+        }
+        Ok(LoginOutcome {
+            token: SplitToken::from_bytes(TOKEN_SELECTOR, TOKEN_VERIFIER),
+            user_id: alice(),
+            scope: SessionScope::Tenant(tenant_a()),
+            memberships: vec![tenant_a()],
+            expires_at: expires_at(),
+        })
+    }
+
+    async fn authenticate(&self, presented: &str) -> Result<ActiveSession, SessionError> {
+        if self.outage {
+            return Err(SessionError::Unavailable("database is down".into()));
+        }
+        if presented != valid_wire() {
+            return Err(SessionError::Unauthenticated);
+        }
+        Ok(ActiveSession {
+            id: SessionId::new(Uuid::from_u128(1000)),
+            user_id: alice(),
+            tenant: Some(SessionTenant {
+                tenant_id: tenant_a().tenant_id,
+                role: Role::Owner,
+            }),
+            authenticated_at: expires_at() - Duration::hours(8),
+            expires_at: expires_at(),
+        })
+    }
+
+    async fn me(&self, session: &ActiveSession) -> Result<Me, SessionError> {
+        Ok(Me {
+            user_id: session.user_id,
+            email: Email::parse("alice@example.test").map_err(|_| SessionError::Unauthenticated)?,
+            display_name: "Alice".to_string(),
+            tenant: session.tenant,
+            memberships: vec![tenant_a()],
+            expires_at: session.expires_at,
+        })
+    }
+}
+
+fn state(outage: bool) -> IdentityState {
+    IdentityState::new(Arc::new(ScriptedAuth { outage }))
+}
+
+fn router() -> Router {
+    identity_router(state(false))
+}
+
+fn login_request(body: &str) -> Result<Request<Body>, Box<dyn Error>> {
+    Ok(Request::builder()
+        .method("POST")
+        .uri("/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))?)
+}
+
+fn me_request(cookie: Option<&str>) -> Result<Request<Body>, Box<dyn Error>> {
+    let mut builder = Request::builder().uri("/auth/me");
+    if let Some(cookie) = cookie {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    Ok(builder.body(Body::empty())?)
+}
+
+async fn json(response: Response<Body>) -> Result<Value, Box<dyn Error>> {
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+/// A problem body with its per-request id removed, so two refusals can be
+/// compared byte for byte.
+async fn problem_without_id(response: Response<Body>) -> Result<Value, Box<dyn Error>> {
+    let mut body = json(response).await?;
+    if let Some(object) = body.as_object_mut() {
+        object.remove("correlation_id");
+    }
+    Ok(body)
+}
+
+fn login_body(email: &str, password: &str) -> String {
+    serde_json::json!({ "email": email, "password": password }).to_string()
+}
+
+#[tokio::test]
+async fn login_sets_the_session_cookie_and_keeps_the_token_out_of_the_body()
+-> Result<(), Box<dyn Error>> {
+    let response = router()
+        .oneshot(login_request(&login_body("Alice@Example.test", PASSWORD))?)
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert_eq!(
+        cookie,
+        format!(
+            "__Host-session={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800",
+            valid_wire()
+        )
+    );
+
+    let body = json(response).await?;
+    assert!(!body.to_string().contains(&valid_wire()));
+    assert_eq!(body["tenant"]["tenant_name"], "Tenant A");
+    assert_eq!(body["tenant"]["role"], "owner");
+    assert_eq!(body["memberships"][0]["tenant_name"], "Tenant A");
+    assert_eq!(body["expires_at"], "2024-10-04T00:00:00Z");
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_login_refusal_is_the_same_401_and_sets_no_cookie() -> Result<(), Box<dyn Error>> {
+    let mut bodies = Vec::new();
+    for (email, password) in [
+        ("alice@example.test", "wrong horse battery staple"),
+        ("nobody@example.test", PASSWORD),
+        ("not an address", PASSWORD),
+    ] {
+        let response = router()
+            .oneshot(login_request(&login_body(email, password))?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{email}");
+        assert!(response.headers().get(header::SET_COOKIE).is_none());
+        bodies.push(problem_without_id(response).await?);
+    }
+
+    assert!(bodies.windows(2).all(|pair| pair[0] == pair[1]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_body_that_does_not_parse_is_400() -> Result<(), Box<dyn Error>> {
+    for body in ["", "{", r#"{"email":"alice@example.test"}"#] {
+        let response = router().oneshot(login_request(body)?).await?;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_outage_is_a_500_that_says_nothing_about_it() -> Result<(), Box<dyn Error>> {
+    let response = identity_router(state(true))
+        .oneshot(login_request(&login_body("alice@example.test", PASSWORD))?)
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(!json(response).await?.to_string().contains("database"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn me_returns_the_callers_account_for_a_valid_session() -> Result<(), Box<dyn Error>> {
+    let cookie = format!("theme=dark; __Host-session={}", valid_wire());
+    let response = router().oneshot(me_request(Some(&cookie))?).await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json(response).await?;
+    assert_eq!(body["email"], "alice@example.test");
+    assert_eq!(
+        body["tenant"]["tenant_id"],
+        Uuid::from_u128(100).to_string()
+    );
+    assert_eq!(body["tenant"]["role"], "owner");
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_refused_session_is_the_same_401() -> Result<(), Box<dyn Error>> {
+    let mut bodies = Vec::new();
+    for cookie in [
+        None,
+        Some("__Host-session="),
+        Some("__Host-session=garbage"),
+        Some("session=aa.bb"),
+        Some(
+            "__Host-session=abababababababababababababababab.0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+    ] {
+        let response = router().oneshot(me_request(cookie)?).await?;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{cookie:?}");
+        bodies.push(problem_without_id(response).await?);
+    }
+
+    assert!(bodies.windows(2).all(|pair| pair[0] == pair[1]));
+    Ok(())
+}
+
+/// The property `demo` relies on: the extractor works on a router whose
+/// state type this crate has never seen.
+#[tokio::test]
+async fn the_extractor_works_under_a_foreign_state_type() -> Result<(), Box<dyn Error>> {
+    #[derive(Clone)]
+    struct SomeoneElsesState;
+
+    async fn whoami(session: AuthenticatedSession) -> String {
+        session
+            .tenant_id()
+            .map(|tenant| tenant.as_uuid().to_string())
+            .unwrap_or_default()
+    }
+
+    let router: Router = Router::new()
+        .route("/whoami", get(whoami))
+        .with_state(SomeoneElsesState)
+        .layer(axum::Extension(state(false)));
+
+    let authorised = router
+        .clone()
+        .oneshot(me_request_to(
+            "/whoami",
+            Some(&format!("__Host-session={}", valid_wire())),
+        )?)
+        .await?;
+    assert_eq!(authorised.status(), StatusCode::OK);
+    let bytes = to_bytes(authorised.into_body(), usize::MAX).await?;
+    assert_eq!(bytes, Uuid::from_u128(100).to_string().as_bytes());
+
+    let refused = router.oneshot(me_request_to("/whoami", None)?).await?;
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_router_missing_the_state_extension_fails_loudly() -> Result<(), Box<dyn Error>> {
+    async fn whoami(_session: AuthenticatedSession) -> &'static str {
+        "unreachable"
+    }
+    let router: Router = Router::new().route("/whoami", get(whoami));
+
+    let response = router
+        .oneshot(me_request_to(
+            "/whoami",
+            Some(&format!("__Host-session={}", valid_wire())),
+        )?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    Ok(())
+}
+
+fn me_request_to(uri: &str, cookie: Option<&str>) -> Result<Request<Body>, Box<dyn Error>> {
+    let mut builder = Request::builder().uri(uri);
+    if let Some(cookie) = cookie {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    Ok(builder.body(Body::empty())?)
+}

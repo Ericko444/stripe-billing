@@ -1,16 +1,48 @@
 //! The identity module's HTTP surface: a router factory, the session cookie,
-//! the request correlation id, and the `application/problem+json` error
-//! mapping.
+//! the session extractor, the request correlation id, and the
+//! `application/problem+json` error mapping.
 //!
 //! Like the billing module's `api`, this crate exposes a `Router`, never a
 //! binary: a host mounts it beside whatever else it serves. Unlike `api`, it
 //! authenticates -- that is the module's job -- and it names no billing
-//! crate. The host (`demo`) is the one place the two meet.
+//! crate. The host (`demo`) is the one place the two meet: it wraps
+//! [`AuthenticatedSession`] in a newtype satisfying billing's
+//! `TenantExtractor`, and nothing in billing changes for it.
+
+use axum::Router;
+use axum::extract::{DefaultBodyLimit, Extension};
+use axum::middleware;
+use axum::routing::{get, post};
 
 mod cookie;
 mod correlation;
+mod dto;
 mod error;
+mod routes;
+mod session_extract;
+mod state;
 
 pub use cookie::{SESSION_COOKIE, clearing_cookie, session_cookie, session_token};
 pub use correlation::{correlation_id, layer as correlation_layer};
 pub use error::{ErrorKind, IdentityError};
+pub use session_extract::AuthenticatedSession;
+pub use state::IdentityState;
+
+/// Largest request body an identity route reads. Every body here is a
+/// handful of short strings; the limit bounds what an unauthenticated caller
+/// can make the server buffer and parse.
+const BODY_LIMIT_BYTES: usize = 16 * 1024;
+
+/// Builds the identity routes: `POST /auth/login`, `GET /auth/me`.
+///
+/// Installs its own correlation layer and its own [`IdentityState`]
+/// extension. A host that also wants [`AuthenticatedSession`] on *other*
+/// routers installs the same state over those with `.layer(Extension(..))`.
+pub fn identity_router(state: IdentityState) -> Router {
+    Router::new()
+        .route("/auth/login", post(routes::login))
+        .route("/auth/me", get(routes::me))
+        .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))
+        .layer(Extension(state))
+        .layer(middleware::from_fn(correlation::layer))
+}
