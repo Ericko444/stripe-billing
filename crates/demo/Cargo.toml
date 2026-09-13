@@ -13,6 +13,9 @@ api.workspace = true
 # PgAuditSink the two standalone-audit write routes use.
 audit-pg.workspace = true
 domain.workspace = true
+# The identity module: `identity_tenant.rs` wraps its session extractor for
+# billing. `main` does not mount it yet (Phase 8, Task 14).
+identity-api.workspace = true
 persistence.workspace = true
 service.workspace = true
 stripe-adapter.workspace = true
@@ -31,10 +34,12 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-# Until `main` mounts the identity module (Phase 8, Task 14), `identity-pg`
-# is needed only by the three-migrators test; `testcontainers` brings up the
-# database it runs on.
+# Until `main` mounts the identity module (Phase 8, Task 14), these identity
+# crates are needed only by tests: the three-migrators test and the boundary
+# proof. `testcontainers` brings up the database both run on.
+identity-domain.workspace = true
 identity-pg.workspace = true
+identity-service.workspace = true
 serde_json.workspace = true
 testcontainers.workspace = true
 tower = { workspace = true, features = ["util"] }

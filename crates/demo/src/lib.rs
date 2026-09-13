@@ -6,5 +6,6 @@
 //! other crate's integration tests reach its `src/lib.rs`. A bin-only crate
 //! has no library target for an integration test to link against.
 
+pub mod identity_tenant;
 pub mod jwt;
 pub mod token;
