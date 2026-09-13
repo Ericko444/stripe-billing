@@ -24,6 +24,13 @@ use crate::state::IdentityState;
 /// audit rows and sending the mail all happen afterwards, in the reset
 /// worker.
 ///
+/// This is the timing defence, and it is structural rather than simulated:
+/// there is no dummy lookup, no artificial sleep, no attempt to make two
+/// code paths cost the same. The request path simply contains no work whose
+/// cost depends on the account, so there is nothing for a timer to measure.
+/// (Login, which must answer whether a password is right, takes the other
+/// approach: an unknown address is verified against a dummy Argon2id hash.)
+///
 /// Answers other than `202`, none of which depends on the address having an
 /// account: `400` for a body or address that does not parse, `429` when the
 /// client IP is over its limit. An address over *its* limit still gets `202`

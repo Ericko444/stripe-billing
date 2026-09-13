@@ -8,6 +8,29 @@ use crate::error::repository_error;
 /// Writes `event` once for every tenant `user_id` is an active member of, on
 /// the caller's transaction, and returns how many rows it wrote.
 ///
+/// # Why fan out
+///
+/// `audit.audit_log` requires a tenant on every row, and a password reset
+/// has none: it happens to a person, not to a tenant. Each tenant the person
+/// belongs to has a real interest in it -- their Owners should see that a
+/// member's password was reset -- so the event is recorded in each of them,
+/// with one correlation id tying the copies together.
+///
+/// The alternative was a `Scope { Tenant, Platform }` with a nullable
+/// `tenant_id`: a migration on `audit_log`, a changed `AuditEntry::new`,
+/// every billing call site touched, and tenant views that would have to
+/// join against *current* memberships -- showing a tenant events from before
+/// the person joined, and hiding events after they left. Fan-out records
+/// the membership as it was when the change happened.
+///
+/// Two costs, named:
+///
+/// - **One fact is N rows.** Counting resets means counting distinct
+///   correlation ids, not rows.
+/// - **A user with no active membership gets no row** for an account-level
+///   event: there is no tenant to record it under. The change itself still
+///   happens; there is simply no journal it belongs to.
+///
 /// The memberships are read inside the same transaction and locked
 /// `FOR SHARE`: a suspension racing this write waits for it to commit, so
 /// the tenants recorded are exactly the ones the user belonged to when the

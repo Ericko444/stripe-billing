@@ -11,6 +11,32 @@
 //! It has to live here, not in `identity-api`: `TenantExtractor` requires
 //! `FromRequestParts<api::AppState, Rejection = api::ApiError>`, and naming
 //! either type would make the identity module depend on billing.
+//!
+//! The claim is checkable: `git diff --stat` over `crates/api` (and
+//! `domain`, `service`, `persistence`, `stripe-adapter`) across the whole
+//! identity phase prints nothing.
+//!
+//! # What holding the boundary costs
+//!
+//! Billing's contract with a host is one value: a `TenantId`. Keeping that
+//! contract unchanged is the point, and it has three prices, accepted rather
+//! than overlooked:
+//!
+//! - **No role-based billing authorization.** Any active membership may use
+//!   billing's routes -- a Member can cancel the tenant's subscription. A role
+//!   check would need billing to receive a role, which is the `api` change
+//!   this seam exists to avoid.
+//! - **No `403` from billing.** This newtype cannot see which route it is
+//!   extracting for, and billing's `ApiError` has one refusal, `401`.
+//!   Refusing a Member here would answer a valid session with "not
+//!   authenticated" -- which the frontend reads as logged out -- and would
+//!   block reads along with writes.
+//! - **Billing's audit rows still say `Actor::System`.** Its request context
+//!   carries a tenant and a correlation id, not a user; naming the user would
+//!   again mean widening billing's contract.
+//!
+//! Each is a follow-up that starts with a deliberate change to `api`, not a
+//! workaround in the host.
 
 use api::{ApiError, AppState};
 use axum::extract::FromRequestParts;

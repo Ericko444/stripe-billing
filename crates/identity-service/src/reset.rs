@@ -173,8 +173,22 @@ where
     ///    reset or `InvitationAccepted` for an invitation. An invitation is
     ///    refused there if the account has a password by then.
     ///
-    /// No session is issued. Holding a link proves access to a mailbox, not
-    /// the new password; the user logs in with it, like anyone else.
+    /// # Which sessions end, and why all of them
+    ///
+    /// **Every session of the user, in every tenant, and no new one.** A reset
+    /// is performed by someone who is logged out, and is often prompted by a
+    /// suspected compromise -- so no existing session deserves the benefit of
+    /// the doubt: the one an attacker holds looks exactly like the owner's.
+    /// And no session is issued. Holding a link proves access to a mailbox,
+    /// not knowledge of the new password; logging the user straight in would
+    /// make a mail link equivalent to a login. They log in with the new
+    /// password, like anyone else.
+    ///
+    /// An *authenticated* password change differs on purpose
+    /// ([`AuthService::change_password`](crate::AuthService::change_password)):
+    /// it ends every **other** session but
+    /// keeps the caller's, because that caller has just proven the current
+    /// password -- something a stolen cookie alone cannot do.
     pub async fn complete(
         &self,
         presented: &str,

@@ -5,7 +5,7 @@ use thiserror::Error;
 
 /// Errors from the Postgres identity adapter's own setup, wrapping
 /// `sqlx::Error`. Repository methods return `identity_domain`'s opaque
-/// [`RepositoryError`] instead -- see [`repository_error`].
+/// [`RepositoryError`] instead -- see `repository_error`.
 #[derive(Debug, Error)]
 pub enum IdentityPgError {
     /// A database error.

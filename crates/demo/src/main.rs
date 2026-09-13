@@ -4,15 +4,15 @@
 //! Reads and validates its configuration once at startup, builds the
 //! Postgres pool, runs all three migrators (billing, audit, identity), wires
 //! the billing module's repositories, Stripe adapter and services, wires the
-//! identity module's repositories, Argon2id hasher and rate limiter, and
-//! serves one router under `/api/v1`:
+//! identity module's repositories, Argon2id hasher, rate limiter, reset
+//! worker and (logging) mailer, and serves one router under `/api/v1`:
 //!
 //! - `billing_router::<IdentityTenant>` -- billing's tenant-scoped routes,
 //!   behind a session from the identity module
 //!   ([`IdentityTenant`](demo::identity_tenant::IdentityTenant));
 //! - `webhook_router` -- Stripe's webhook, authenticated by its signature;
 //! - `identity_router` -- login, the session, tenant selection, password
-//!   change.
+//!   change, password reset, and the members routes.
 //!
 //! Over all of it, the identity state (so billing's routes can resolve a
 //! session) and the CSRF origin check (so the session cookie cannot be ridden

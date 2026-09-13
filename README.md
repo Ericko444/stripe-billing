@@ -1,11 +1,14 @@
 # stripe-billing
 
-A standalone billing / subscriptions module: a Rust workspace (Axum) plus a
-React/TypeScript demo host.
+Two standalone modules — **billing / subscriptions** and **identity** — in a
+Rust workspace (Axum), plus a React/TypeScript demo host that composes them.
 
-**It is a pluggable component.** The module owns billing and nothing else — no
-authentication, no user management, no routing, no UI shell. Anything a host
-product would already have, the module consumes rather than provides.
+**Each is a pluggable component.** Billing owns billing and nothing else — no
+authentication, no user management, no UI shell; it receives a tenant from
+whatever host mounts it. Identity owns users, tenant memberships, sessions and
+password reset, and has never heard of billing. Neither module's crates name
+the other's; the host (`demo`) is the one place they meet, and billing's `api`
+crate did not change for it (§6).
 
 ---
 
@@ -19,10 +22,9 @@ Stripe first and is mirrored afterwards, never the reverse.
 What a host supplies, and the module never implements:
 
 - **Authentication and identity.** The module receives a `TenantId` from the
-  host through a trait it does not implement. The `demo` binary mints tokens
-  so the API can be driven without a real login flow; it is scaffolding and is
-  labelled as such everywhere it appears.
-- **User management, permissions, routing, and the surrounding UI.**
+  host through a trait it does not implement. In this repository the host
+  satisfies that trait with a session from the identity module (§6).
+- **Permissions, routing, and the surrounding UI.**
 
 Out of scope / TODO later:
 
@@ -42,11 +44,15 @@ crates/
   persistence/     sqlx adapters implementing the domain ports
   stripe-adapter/  Stripe client, idempotency ledger, webhook verification
   api/             Axum router factory, wire DTOs, error → HTTP mapping
-  demo/            binary: composition root, config, demo-only auth
+  demo/            binary: composition root, config, seed, the seam between modules
   audit/           typed, append-only audit event model + the AuditSink port
   audit-pg/        Postgres adapter for audit: its own schema and migrator
+  identity-domain/  users, memberships, roles, sessions, tokens, ports — no I/O
+  identity-service/ use cases, Argon2id hasher, OS-random tokens, rate limiter
+  identity-pg/      Postgres adapter for identity: its own schema and migrator
+  identity-api/     Axum router factory, session cookie and extractor, CSRF check
 frontend/          React + TypeScript + Vite (the demo host)
-migrations/        thirteen numbered, idempotent SQL migrations
+migrations/        billing's thirteen numbered, idempotent SQL migrations
 ```
 
 | crate | depends on | kind |
@@ -59,6 +65,10 @@ migrations/        thirteen numbered, idempotent SQL migrations
 | `demo` | all of the above | **the only binary** |
 | `audit` | *nothing* | pure library, free-standing |
 | `audit-pg` | `audit` | adapter, free-standing |
+| `identity-domain` | `audit` | pure library |
+| `identity-service` | `identity-domain`, `audit` | library + computational adapters |
+| `identity-pg` | `identity-domain`, `audit`, `audit-pg` | adapter |
+| `identity-api` | `identity-domain`, `identity-service`, `audit` | library — a `Router` factory |
 
 **Dependency direction is strictly inward.** `domain` declares the ports —
 `SubscriptionRepository`, `BillingProvider`, `WebhookVerifier`,
@@ -85,6 +95,15 @@ write to the same table without either module depending on the other.
 rests on rather than a docstring. `audit-pg` is exempt: it exists to depend on
 `audit` and `sqlx`.
 
+**The identity crates are that second module**, with the same inward shape
+(`identity-api → identity-service → identity-domain ← identity-pg`) and both
+of its writers — identity and billing — sharing `audit` without naming each
+other. CI checks it in both directions: no `identity-*` manifest or dependency
+tree contains a billing crate, no billing crate's contains an `identity-*`
+crate, and `identity-domain` gains neither `sqlx`, `axum` nor `argon2`. The
+frontend mirrors it: `src/identity/` and `src/billing/` never import each
+other, and `host/` composes both.
+
 ## 3. Running it
 
 Four terminals. Postgres and Docker running; the Stripe CLI logged in to the
@@ -104,7 +123,7 @@ of the module is the point.
 
 ### Configuration
 
-Seven variables, all required, validated at startup; a missing one exits
+Eight variables are required, validated at startup; a missing one exits
 non-zero naming it. Copy `.env.example` to `.env` (gitignored).
 
 | Variable | Purpose | Secret |
@@ -112,12 +131,15 @@ non-zero naming it. Copy `.env.example` to `.env` (gitignored).
 | `DATABASE_URL` | Postgres connection for the mirror and ledger tables | yes |
 | `STRIPE_SECRET_KEY` | the `sk_…` key the write path uses | **yes** |
 | `STRIPE_WEBHOOK_SIGNING_SECRET` | the `whsec_…` printed by `stripe listen` | **yes** |
-| `BILLING_JWT_SECRET` | HS256 secret for `demo`'s token mint; `api` has no use for it | **yes** |
 | `CHECKOUT_SUCCESS_URL` | `http://localhost:5173/checkout/return` — host config, never a request field | no |
 | `CHECKOUT_CANCEL_URL` | `http://localhost:5173/` | no |
 | `PORT` | TCP port the server binds | no |
+| `IDENTITY_ALLOWED_ORIGINS` | origins a cookie-carrying write may come from (CSRF); `http://localhost:5173` | no |
+| `IDENTITY_PUBLIC_BASE_URL` | the frontend origin reset and invitation links point at | no |
 
-`RUST_LOG` is optional. Secrets become `SecretString` at the moment of
+`RUST_LOG` is optional, and so is `IDENTITY_TRUSTED_PROXY`: set it only
+behind a reverse proxy, to that proxy's address, and `X-Forwarded-For` is
+believed from it and nothing else (the rate limiter keys on client IP). Secrets become `SecretString` at the moment of
 reading, so a stray `#[derive(Debug)]` cannot put a Stripe key in a log line,
 and none is ever placed in a URL. The Stripe **API version is pinned at
 compile time** from the SDK, not configured — a bump is a `Cargo.toml` change
@@ -135,8 +157,12 @@ grep -c "sk_test\|sk_live\|whsec_" dist/assets/*.js     # 0
 ### Seeding
 
 `cargo run -p demo -- seed` creates two fixed-id tenants, each with a Stripe
-customer, two plans and one subscription. It needs four more variables, read
-only by the seed: `SEED_PLAN_{A,B}_STRIPE_PRICE_ID` and
+customer, two plans and one subscription, and two users:
+**`alice@example.test`** — Owner of Tenant A, Member of Tenant B — and
+**`bob@example.test`**, Owner of Tenant B only. Both get the password in
+`SEED_USER_PASSWORD` (15 characters or more), hashed with the live Argon2id
+parameters; re-seeding resets them to it. The billing half needs four more
+variables, read only by the seed: `SEED_PLAN_{A,B}_STRIPE_PRICE_ID` and
 `SEED_PLAN_{A,B}_STRIPE_PRODUCT_ID`. Point them at any two prices in your own
 test-mode account — the seed mirrors them rather than creating them, so a
 wrong id is a display-only mistake. The ids are fixed rather than random,
@@ -150,6 +176,8 @@ nothing to pay it with.
 
 At `http://localhost:5173`:
 
+0. Log in as `alice@example.test`. She has two memberships, so she picks a
+   tenant — Tenant A. (Bob, with one, goes straight in.)
 1. Subscription shows **incomplete**; invoices and cards are empty. All three
    are correct renderings of real seeded data.
 2. **Cancel** it → "no subscription".
@@ -159,7 +187,8 @@ At `http://localhost:5173`:
 5. The paid invoice and the attached card appear.
 6. Add a second card through the Payment Element — pending, then it appears.
    Set default, detach.
-7. Switch tenants in the header; the other tenant's data replaces it.
+7. Switch tenants in the header; the other tenant's data replaces it. The
+   session cookie survives the Checkout round trip and a page refresh.
 
 **Why cancel comes first**, since it looks arbitrary: attaching a card does
 not settle the existing subscription's open invoice — that invoice has its own
@@ -171,6 +200,28 @@ them.
 
 If a step hangs, both pending states poll for twenty seconds and then ask
 whether `stripe listen` is running — the most likely cause.
+
+### The password reset path
+
+There is no mail provider: the demo's `LogMailer` **writes each mail to the
+server log instead of sending it** — the one place a reset link reaches a log,
+and `demo` warns about it at every start.
+
+1. Log in as Alice in one tab. In a second (private) window, click **Forgot
+   your password?** and enter `alice@example.test`. The confirmation is the
+   one any address gets, known or not.
+2. Find `DEMO MAILER` in the `cargo run -p demo` output and open its link —
+   `http://localhost:5173/reset-password#token=…`. The token is in the
+   fragment, and the page strips it from the address bar on load.
+3. Set a new password (15–128 characters). No session is started: log in with
+   it.
+4. Open the same link again: **This link can't be used**.
+5. Back in the first tab, the next billing request lands on the login page —
+   the reset ended every session Alice had, in both tenants.
+
+Members are API-only in this slice. An Owner can `POST /api/v1/tenant/members`
+an address; a new address gets an invitation link in the same log, redeemed on
+the same page.
 
 ### What it looks like
 
@@ -187,7 +238,7 @@ Stripe call.
 ![Tenant A: an active Pro subscription, two saved cards, one paid invoice](docs/screenshots/tenant-a.jpg)
 
 **Tenant B**, one select away: no subscription, no cards, no invoices. Nothing
-about the request changed except the tenant in the token — the module reads
+about the request changed except the tenant in the session — the module reads
 the tenant from a host-supplied extractor and every repository method is scoped
 by it, so this is the isolation the tests assert, shown rather than claimed.
 
@@ -214,8 +265,9 @@ npm run build
 ```
 
 Integration tests bring up a disposable Postgres via `testcontainers` and need
-Docker. The 124 unit tests across the library crates do not — `service`'s 70,
-covering every use case and the webhook processor, run against doubles.
+Docker. The unit tests in the library crates do not — `service` and
+`identity-service` test every use case, the webhook processor included,
+against in-memory doubles.
 
 ---
 
@@ -251,14 +303,32 @@ a path are always *local* uuids, resolved to Stripe ids server-side.
 **Webhook**, no tenant context, authenticated by signature:
 `POST /webhooks/stripe`.
 
-**Demo scaffolding**, `demo` only: `POST /demo/token` mints a token for any
-`tenant_id` given to it — **not authentication**, no identity check of any
-kind. It exists so the routes above can be driven without a host. `demo` logs
-a warning naming it at every startup.
+**Identity** — `identity_router`, merged beside the two above by `demo`:
+
+| Method | Path | Auth | Does |
+|---|---|---|---|
+| POST | `/auth/login` | — | `200` + `Set-Cookie`; one membership → tenant session, several → pick one |
+| POST | `/auth/tenant` | session | scope the session to a tenant; rotates the cookie; not a member → 404 |
+| GET, PATCH | `/auth/me` | session | the caller's account and memberships; `PATCH` sets the display name |
+| POST | `/auth/password/change` | session | `204`; ends every *other* session |
+| POST | `/auth/logout` | session | `204` + clearing cookie |
+| POST | `/auth/password-reset/request` | — | `202` and one fixed body, whatever the address |
+| POST | `/auth/password-reset/complete` | — | `204`, no cookie; every unusable link is one `400` |
+| GET | `/tenant/members` | Owner/Admin | the session tenant's memberships |
+| POST | `/tenant/members` | Owner/Admin | `201`, the same body whether or not the address had an account |
+| POST | `/tenant/members/{id}/suspend` | Owner/Admin | `204`; another tenant's id is the same `404` as an unknown one |
+
+The session is a `__Host-session` cookie — `HttpOnly; Secure; SameSite=Strict;
+Path=/` — so no script can read it. Every cookie-carrying `POST`, `PATCH`,
+`PUT` or `DELETE`, to either module, must come from an origin in
+`IDENTITY_ALLOWED_ORIGINS` (`403` otherwise): `SameSite` is the first CSRF
+layer, the origin check the second.
 
 Errors are `application/problem+json` (RFC 9457) with a deliberately coarse
 `detail` that never carries the raw cause, and a `correlation_id` generated
-server-side and logged alongside — never accepted from an inbound header.
+server-side and logged alongside — never accepted from an inbound header. Both
+modules produce the same five members, so the frontend parses them with one
+function.
 
 ---
 
@@ -382,15 +452,104 @@ route authenticates by signature and has no tenant. On the generic router, a
 tenant extractor would become a precondition of it — a regression that
 surfaces as Stripe receiving 401s.
 
-**The frontend is a host that installs a feature.** `host/` owns the API
-client, the token and the tenant; `billing/` owns endpoints, hooks and
-components. `host/` imports nothing from `billing/` (`grep -rn "billing/"
-frontend/src/host/` prints nothing), and of the four things `billing/` imports
-back, none is the token — there is one authenticated `fetch` in the app.
+**The frontend is a host that installs two features.** `host/` owns the API
+client and the session state; `identity/` owns login, tenant picking and
+reset; `billing/` owns endpoints, hooks and components. `host/` imports nothing
+from `billing/` (`grep -rn "billing/" frontend/src/host/` prints nothing), and
+`identity/` and `billing/` never import each other (checked in CI). There is
+one `fetch` in the app, and it sends the cookie; no token exists in script.
 Every query key carries the tenant id, built through one factory, and the
 cache is cleared on switch. State this precisely: **cache partitioning, not
 authorization.** The server was never at risk; a key collision would have been
 a display bug. **The redirect is a UX signal; the webhook is the truth** —
 neither Checkout's return nor the Element's confirmation renders success on
-its own; both poll until the mirror reflects it. The token lives in React
-state only.
+its own; both poll until the mirror reflects it.
+---
+
+## 6. The identity module
+
+Users belong to several tenants with one role per membership (`owner`,
+`admin`, `member`), authenticate with a password, and hold a server-side
+session; a password can be reset by mail; an Owner or Admin can invite and
+suspend members. Every account-level change is written to the same audit
+journal billing uses. Six decisions carry it. Each is argued in full in the
+rustdoc where the code that implements it lives; these are the short forms.
+
+**1. The boundary held — and what that costs.** Billing's `api` defines
+`TenantExtractor` and nothing else about who the caller is. The identity
+module's `AuthenticatedSession` extractor is generic over any router state and
+reads its service from a request extension, so the host wraps it in a
+ten-line newtype, `IdentityTenant`, and billing's routes accept it.
+`git diff --stat` over `crates/api`, `domain`, `service`, `persistence` and
+`stripe-adapter` across the whole phase prints nothing. Holding it has three
+prices: no role-based authorization on billing routes (a Member can cancel the
+subscription), no `403` from billing (its one refusal is `401`, which the
+frontend reads as logged out), and billing's audit rows still say
+`Actor::System`. Each is a deliberate `api` change later, not a host
+workaround. → [`crates/demo/src/identity_tenant.rs`](crates/demo/src/identity_tenant.rs)
+
+**2. Argon2id, justified by a memory budget — and not used for tokens.**
+`m = 19456 KiB, t = 2, p = 1`, 32-byte output: OWASP's baseline. Every hash
+allocates 19 MiB, and hashing runs in `spawn_blocking` behind a 4-permit
+semaphore, so peak hashing memory is about 76 MiB however many logins arrive;
+excess logins queue instead of allocating. Stored PHC strings carry their
+parameters and a successful login rehashes a stale one, so raising `m` after
+measuring on real hardware is safe. Session, reset and invitation tokens are
+256 random bits stored as SHA-256 and compared in constant time: Argon2 slows
+the guessing of *low-entropy* secrets, a 256-bit token cannot be guessed, and
+a slow hash on every authenticated request would be a denial-of-service lever.
+→ [`argon2_hasher.rs`](crates/identity-service/src/argon2_hasher.rs),
+[`token.rs`](crates/identity-domain/src/token.rs)
+
+**3. Timing cannot enumerate accounts, because the request path does no
+account-dependent work.** `POST /auth/password-reset/request` parses the
+address, counts it, puts it on a bounded queue and answers `202` with one
+fixed body. Its handler's state holds a rate limiter and the queue — no
+repository — so it *cannot* look the address up. Looking up, issuing the
+token, the audit rows and the mail happen afterwards, in a worker. That is
+structural, not a simulation of equal work; a test asserts the handler makes
+zero repository calls. Login, which must answer, takes the other route: an
+unknown address verifies against a dummy Argon2id hash, so both paths pay the
+same cost. → [`reset_routes.rs`](crates/identity-api/src/reset_routes.rs)
+
+**4. A reset ends every session, in every tenant, and starts none.** It is
+done logged out and often prompted by suspected compromise, so no existing
+session deserves the benefit of the doubt; and logging the user in would make
+a mail link equivalent to a password. An *authenticated* password change keeps
+the caller's own session and ends the others, because that caller just proved
+the current password. The reset token is single-use (consumed under a row lock,
+so two concurrent completions succeed at most once), superseded by a newer
+one (`UNIQUE (user_id, purpose)`), and lives 15 minutes; an invitation lives
+72 hours and can only ever set a *first* password.
+→ [`reset.rs`](crates/identity-service/src/reset.rs)
+
+**5. Rate limits by address *and* by IP, because each stops what the other
+cannot.** A per-address limit stops a targeted attack on one victim spread
+across many IPs; a per-IP limit stops one source working through many
+addresses. Login: 10 per (address, IP) and 100 per IP per 15 minutes — never
+per address alone, which would let anyone lock a victim out. Reset request: 3
+per address per hour, **silently** (still `202`, or the limit itself would
+reveal the address is being targeted), and 20 per IP (`429`). Reset
+completion: 20 per IP per 15 minutes. The address key is a SHA-256
+fingerprint, IPv6 is keyed by its /64, and `X-Forwarded-For` is believed only
+from a configured proxy. Counters are in memory — per process, lost on
+restart — behind a port a shared store can implement.
+→ [`limits.rs`](crates/identity-api/src/limits.rs)
+
+**6. Account-level audit events fan out: one row per active membership.**
+`audit_log` requires a tenant, and a password reset happens to a person, not
+a tenant. Each tenant the person belongs to gets the row, in the same
+transaction and with one correlation id, and the memberships are read under
+`FOR SHARE` so the list is the one true at commit. The rejected alternative —
+a nullable tenant scope — meant a migration on `audit_log`, a changed
+`AuditEntry::new`, every billing call site touched, and tenant views that
+follow current membership rather than membership at the time. Two costs,
+named: one fact is N rows (count distinct correlation ids), and a user with no
+active membership gets no row. → [`fan_out.rs`](crates/identity-pg/src/fan_out.rs)
+
+**Named limits of this slice.** Members are added active, without the
+invitee's consent; there is no role change, no last-Owner guard (two Owners
+can suspend each other), and no route that deactivates a user, though the
+session lookup honours `deactivated_at`. The reset queue and the rate-limit
+counters are in-process: a restart loses queued requests (the user asks
+again), and several instances would need shared counters and an outbox.
