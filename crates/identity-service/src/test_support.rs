@@ -113,9 +113,26 @@ pub type CreatedSession = (NewSession, Option<AuditEntry>);
 pub struct FakeSessions {
     stored: Arc<Mutex<Vec<CreatedSession>>>,
     resolvable: Arc<Mutex<Vec<(Selector, StoredSession)>>>,
+    rotated: Arc<Mutex<Vec<(SessionId, CreatedSession)>>>,
+    gone: Arc<Mutex<Vec<SessionId>>>,
+    deleted: Arc<Mutex<Vec<SessionId>>>,
 }
 
 impl FakeSessions {
+    /// Makes a later `rotate` of `id` find nothing, as if another request
+    /// had rotated or deleted it first.
+    pub fn already_gone(&self, id: SessionId) {
+        lock(&self.gone).push(id);
+    }
+
+    pub fn rotated(&self) -> Vec<(SessionId, CreatedSession)> {
+        lock(&self.rotated).clone()
+    }
+
+    pub fn deleted(&self) -> Vec<SessionId> {
+        lock(&self.deleted).clone()
+    }
+
     /// Makes `session` findable by `selector`, as if the lookup query had
     /// matched it -- active user, active membership.
     pub fn resolvable(&self, selector: Selector, session: StoredSession) {
@@ -146,6 +163,24 @@ impl SessionRepository for FakeSessions {
             .find(|(candidate, _)| *candidate == selector)
             .map(|(_, session)| session.clone());
         ready(Ok(found))
+    }
+
+    fn rotate(
+        &self,
+        old: SessionId,
+        new: &NewSession,
+        audit: Option<&AuditEntry>,
+    ) -> impl Future<Output = Result<Option<SessionId>, RepositoryError>> + Send {
+        if lock(&self.gone).contains(&old) {
+            return ready(Ok(None));
+        }
+        lock(&self.rotated).push((old, (new.clone(), audit.cloned())));
+        ready(Ok(Some(SessionId::new(Uuid::new_v4()))))
+    }
+
+    fn delete(&self, id: SessionId) -> impl Future<Output = Result<(), RepositoryError>> + Send {
+        lock(&self.deleted).push(id);
+        ready(Ok(()))
     }
 }
 

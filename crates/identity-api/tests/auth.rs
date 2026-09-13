@@ -16,7 +16,8 @@ use identity_domain::{
     TenantId, UserId,
 };
 use identity_service::{
-    ActiveSession, Authentication, LoginError, LoginOutcome, Me, SessionError, SessionScope,
+    ActiveSession, Authentication, LoginError, LoginOutcome, Me, SelectTenantError, SessionError,
+    SessionScope, TenantSelection,
 };
 use secrecy::ExposeSecret;
 use serde_json::Value;
@@ -112,7 +113,32 @@ impl Authentication for ScriptedAuth {
             expires_at: session.expires_at,
         })
     }
+
+    async fn select_tenant(
+        &self,
+        _session: &ActiveSession,
+        tenant_id: TenantId,
+        _correlation_id: CorrelationId,
+    ) -> Result<TenantSelection, SelectTenantError> {
+        if tenant_id != tenant_a().tenant_id {
+            return Err(SelectTenantError::NotAMember);
+        }
+        Ok(TenantSelection {
+            token: SplitToken::from_bytes(ROTATED_SELECTOR, ROTATED_VERIFIER),
+            membership: tenant_a(),
+            memberships: vec![tenant_a()],
+            expires_at: expires_at(),
+            max_age: Duration::hours(1),
+        })
+    }
+
+    async fn logout(&self, _session: &ActiveSession) -> Result<(), SessionError> {
+        Ok(())
+    }
 }
+
+const ROTATED_SELECTOR: [u8; 16] = [0x11; 16];
+const ROTATED_VERIFIER: [u8; 32] = [0x22; 32];
 
 fn state(outage: bool) -> IdentityState {
     IdentityState::new(Arc::new(ScriptedAuth { outage }))
@@ -330,4 +356,90 @@ fn me_request_to(uri: &str, cookie: Option<&str>) -> Result<Request<Body>, Box<d
         builder = builder.header(header::COOKIE, cookie);
     }
     Ok(builder.body(Body::empty())?)
+}
+
+fn post_json(uri: &str, cookie: Option<&str>, body: &str) -> Result<Request<Body>, Box<dyn Error>> {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(cookie) = cookie {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    Ok(builder.body(Body::from(body.to_string()))?)
+}
+
+fn set_cookie(response: &Response<Body>) -> Option<String> {
+    response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+}
+
+#[tokio::test]
+async fn selecting_a_tenant_answers_with_a_rotated_cookie_for_the_remaining_lifetime()
+-> Result<(), Box<dyn Error>> {
+    let body = serde_json::json!({ "tenant_id": tenant_a().tenant_id.as_uuid() }).to_string();
+    let cookie = format!("__Host-session={}", valid_wire());
+
+    let response = router()
+        .oneshot(post_json("/auth/tenant", Some(&cookie), &body)?)
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let rotated = SplitToken::from_bytes(ROTATED_SELECTOR, ROTATED_VERIFIER);
+    assert_eq!(
+        set_cookie(&response),
+        Some(format!(
+            "__Host-session={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600",
+            rotated.to_wire().expose_secret()
+        ))
+    );
+    assert_eq!(json(response).await?["tenant"]["tenant_name"], "Tenant A");
+    Ok(())
+}
+
+#[tokio::test]
+async fn selecting_a_tenant_one_is_not_a_member_of_is_404() -> Result<(), Box<dyn Error>> {
+    let body = serde_json::json!({ "tenant_id": Uuid::from_u128(999) }).to_string();
+    let cookie = format!("__Host-session={}", valid_wire());
+
+    let response = router()
+        .oneshot(post_json("/auth/tenant", Some(&cookie), &body)?)
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(set_cookie(&response).is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn selecting_a_tenant_needs_a_session() -> Result<(), Box<dyn Error>> {
+    let body = serde_json::json!({ "tenant_id": tenant_a().tenant_id.as_uuid() }).to_string();
+    let response = router()
+        .oneshot(post_json("/auth/tenant", None, &body)?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    Ok(())
+}
+
+#[tokio::test]
+async fn logout_clears_the_cookie_with_or_without_a_live_session() -> Result<(), Box<dyn Error>> {
+    let live = format!("__Host-session={}", valid_wire());
+    for cookie in [
+        Some(live.as_str()),
+        Some("__Host-session=stale.token"),
+        None,
+    ] {
+        let response = router()
+            .oneshot(post_json("/auth/logout", cookie, "")?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT, "{cookie:?}");
+        assert_eq!(
+            set_cookie(&response).as_deref(),
+            Some("__Host-session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0")
+        );
+    }
+    Ok(())
 }

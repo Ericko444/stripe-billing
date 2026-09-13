@@ -24,5 +24,5 @@ pub use auth::{
 };
 pub use clock::SystemClock;
 pub use facade::Authentication;
-pub use session::{ActiveSession, Me, SessionError};
+pub use session::{ActiveSession, Me, SelectTenantError, SessionError, TenantSelection};
 pub use token::{TokenGenerationError, generate_token};

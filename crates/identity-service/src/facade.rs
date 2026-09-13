@@ -1,10 +1,14 @@
 use async_trait::async_trait;
 use audit::CorrelationId;
 use identity_domain::{
-    Clock, Email, MembershipRepository, Password, PasswordHasher, SessionRepository, UserRepository,
+    Clock, Email, MembershipRepository, Password, PasswordHasher, SessionRepository, TenantId,
+    UserRepository,
 };
 
-use crate::{ActiveSession, AuthService, LoginError, LoginOutcome, Me, SessionError};
+use crate::{
+    ActiveSession, AuthService, LoginError, LoginOutcome, Me, SelectTenantError, SessionError,
+    TenantSelection,
+};
 
 /// The identity use cases as an object-safe trait, so a router can hold
 /// `Arc<dyn Authentication>` without naming five type parameters -- the
@@ -24,6 +28,17 @@ pub trait Authentication: Send + Sync {
 
     /// See [`AuthService::me`].
     async fn me(&self, session: &ActiveSession) -> Result<Me, SessionError>;
+
+    /// See [`AuthService::select_tenant`].
+    async fn select_tenant(
+        &self,
+        session: &ActiveSession,
+        tenant_id: TenantId,
+        correlation_id: CorrelationId,
+    ) -> Result<TenantSelection, SelectTenantError>;
+
+    /// See [`AuthService::logout`].
+    async fn logout(&self, session: &ActiveSession) -> Result<(), SessionError>;
 }
 
 #[async_trait]
@@ -50,5 +65,18 @@ where
 
     async fn me(&self, session: &ActiveSession) -> Result<Me, SessionError> {
         AuthService::me(self, session).await
+    }
+
+    async fn select_tenant(
+        &self,
+        session: &ActiveSession,
+        tenant_id: TenantId,
+        correlation_id: CorrelationId,
+    ) -> Result<TenantSelection, SelectTenantError> {
+        AuthService::select_tenant(self, session, tenant_id, correlation_id).await
+    }
+
+    async fn logout(&self, session: &ActiveSession) -> Result<(), SessionError> {
+        AuthService::logout(self, session).await
     }
 }

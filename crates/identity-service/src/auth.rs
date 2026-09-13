@@ -181,7 +181,7 @@ where
 
 /// The audit entry for a tenant-scoped session starting: the user acted on
 /// themselves, within the tenant the session is scoped to.
-fn session_started(
+pub(crate) fn session_started(
     membership: &Membership,
     occurred_at: OffsetDateTime,
     correlation_id: CorrelationId,

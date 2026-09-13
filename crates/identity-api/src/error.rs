@@ -26,6 +26,9 @@ pub enum ErrorKind {
     /// both**, and one body: an unknown address, a wrong password, an expired
     /// session and a missing cookie are indistinguishable to the caller.
     Unauthorized,
+    /// The named resource does not exist **or is not the caller's** -- one
+    /// kind for both, so the status does not confirm that an id is real.
+    NotFound,
     /// A request body or parameter did not parse. The reason is logged.
     MalformedRequest(String),
     /// Something this module depends on failed. The reason is logged.
@@ -70,6 +73,11 @@ impl IntoResponse for IdentityError {
                 "Not authenticated",
                 "The request could not be authenticated.",
             ),
+            ErrorKind::NotFound => (
+                StatusCode::NOT_FOUND,
+                "Not found",
+                "The requested resource was not found.",
+            ),
             ErrorKind::MalformedRequest(_) => (
                 StatusCode::BAD_REQUEST,
                 "Malformed request",
@@ -85,6 +93,7 @@ impl IntoResponse for IdentityError {
         let reason = match &self.kind {
             ErrorKind::MalformedRequest(reason) | ErrorKind::Internal(reason) => reason.as_str(),
             ErrorKind::Unauthorized => "not authenticated",
+            ErrorKind::NotFound => "not found",
         };
         let correlation_id = self.correlation_id.as_uuid();
         if status.is_server_error() {
@@ -161,6 +170,7 @@ mod tests {
             render(ErrorKind::Unauthorized).await?.0,
             StatusCode::UNAUTHORIZED
         );
+        assert_eq!(render(ErrorKind::NotFound).await?.0, StatusCode::NOT_FOUND);
         assert_eq!(
             render(ErrorKind::MalformedRequest("x".into())).await?.0,
             StatusCode::BAD_REQUEST

@@ -20,6 +20,16 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+/// `POST /auth/tenant` body. The tenant is chosen by the caller -- and then
+/// checked against the caller's own active memberships, which is what makes
+/// accepting it from a body safe here when billing accepts a tenant from
+/// nowhere but the session.
+#[derive(Debug, Deserialize)]
+pub struct SelectTenantRequest {
+    /// The tenant to scope the session to.
+    pub tenant_id: Uuid,
+}
+
 /// A membership, for a tenant picker.
 #[derive(Debug, Serialize)]
 pub struct MembershipDto {

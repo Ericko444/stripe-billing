@@ -36,21 +36,7 @@ impl SessionRepository for PgSessionRepository {
         // exact inconsistency the audit journal exists to rule out.
         let mut tx = self.pool.begin().await.map_err(repository_error)?;
 
-        sqlx::query(
-            "INSERT INTO identity.sessions \
-                (id, selector, verifier_hash, user_id, tenant_id, authenticated_at, expires_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        )
-        .bind(id)
-        .bind(&session.selector.as_bytes()[..])
-        .bind(&session.verifier_hash.as_bytes()[..])
-        .bind(session.user_id.as_uuid())
-        .bind(session.tenant_id.map(|tenant| tenant.as_uuid()))
-        .bind(session.authenticated_at)
-        .bind(session.expires_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(repository_error)?;
+        insert_session(&mut tx, id, session).await?;
 
         if let Some(entry) = audit {
             audit_pg::insert(&mut tx, entry)
@@ -60,6 +46,47 @@ impl SessionRepository for PgSessionRepository {
 
         tx.commit().await.map_err(repository_error)?;
         Ok(SessionId::new(id))
+    }
+
+    async fn rotate(
+        &self,
+        old: SessionId,
+        new: &NewSession,
+        audit: Option<&AuditEntry>,
+    ) -> Result<Option<SessionId>, RepositoryError> {
+        let id = Uuid::new_v4();
+        let mut tx = self.pool.begin().await.map_err(repository_error)?;
+
+        // The delete decides whether this rotation happens at all: if another
+        // request already rotated (or logged out) this session, zero rows go
+        // and the transaction is abandoned with nothing inserted.
+        let deleted = sqlx::query("DELETE FROM identity.sessions WHERE id = $1")
+            .bind(old.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(repository_error)?;
+        if deleted.rows_affected() == 0 {
+            return Ok(None);
+        }
+
+        insert_session(&mut tx, id, new).await?;
+        if let Some(entry) = audit {
+            audit_pg::insert(&mut tx, entry)
+                .await
+                .map_err(repository_error)?;
+        }
+
+        tx.commit().await.map_err(repository_error)?;
+        Ok(Some(SessionId::new(id)))
+    }
+
+    async fn delete(&self, id: SessionId) -> Result<(), RepositoryError> {
+        sqlx::query("DELETE FROM identity.sessions WHERE id = $1")
+            .bind(id.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(repository_error)?;
+        Ok(())
     }
 
     async fn resolve(&self, selector: Selector) -> Result<Option<StoredSession>, RepositoryError> {
@@ -122,4 +149,27 @@ impl SessionRepository for PgSessionRepository {
                 .map_err(repository_error)?,
         }))
     }
+}
+
+async fn insert_session(
+    tx: &mut sqlx::PgConnection,
+    id: Uuid,
+    session: &NewSession,
+) -> Result<(), RepositoryError> {
+    sqlx::query(
+        "INSERT INTO identity.sessions \
+            (id, selector, verifier_hash, user_id, tenant_id, authenticated_at, expires_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(id)
+    .bind(&session.selector.as_bytes()[..])
+    .bind(&session.verifier_hash.as_bytes()[..])
+    .bind(session.user_id.as_uuid())
+    .bind(session.tenant_id.map(|tenant| tenant.as_uuid()))
+    .bind(session.authenticated_at)
+    .bind(session.expires_at)
+    .execute(tx)
+    .await
+    .map_err(repository_error)?;
+    Ok(())
 }

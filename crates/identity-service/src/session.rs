@@ -1,11 +1,46 @@
+use audit::CorrelationId;
 use identity_domain::{
-    Clock, Email, Membership, MembershipRepository, PasswordHasher, SessionId, SessionRepository,
-    SessionTenant, SplitToken, UserId, UserRepository,
+    Clock, Email, Membership, MembershipRepository, NewSession, PasswordHasher, SessionId,
+    SessionRepository, SessionTenant, SplitToken, TenantId, UserId, UserRepository,
 };
 use thiserror::Error;
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 
-use crate::AuthService;
+use crate::auth::session_started;
+use crate::token::generate_token;
+use crate::{AuthService, TENANT_SESSION_LIFETIME};
+
+/// A tenant picked for a session: the rotated token and what it now grants.
+#[derive(Debug)]
+pub struct TenantSelection {
+    /// The new credential. The one it replaces no longer works.
+    pub token: SplitToken,
+    /// The membership the session is now scoped to.
+    pub membership: Membership,
+    /// Every active membership, for the tenant switcher.
+    pub memberships: Vec<Membership>,
+    /// When the session stops being accepted -- unchanged by switching.
+    pub expires_at: OffsetDateTime,
+    /// How long that is from now, for the cookie's `Max-Age`.
+    pub max_age: Duration,
+}
+
+/// Why a tenant could not be picked.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SelectTenantError {
+    /// The caller has no active membership in that tenant -- or the tenant
+    /// does not exist. One variant for both, so the answer does not confirm
+    /// that some tenant id is real.
+    #[error("not a member of that tenant")]
+    NotAMember,
+    /// The session ended while the request was in flight: it expired, or a
+    /// concurrent request already rotated or logged it out.
+    #[error("not authenticated")]
+    Unauthenticated,
+    /// Something this module depends on failed. The message is for logs.
+    #[error("tenant selection unavailable: {0}")]
+    Unavailable(String),
+}
 
 /// A session that was presented, found, verified and unexpired -- what an
 /// authenticated request knows about its caller.
@@ -117,6 +152,76 @@ where
             expires_at: session.expires_at,
         })
     }
+
+    /// Scopes the caller's session to `tenant_id`, whether it was tenant-less
+    /// or scoped to another tenant.
+    ///
+    /// The token is **rotated**: a new one is issued and the old row deleted
+    /// in the same transaction as the `SessionStarted` audit entry. A token
+    /// that existed before the caller gained access to a tenant never grants
+    /// it -- the session-fixation defence -- and a switch leaves exactly one
+    /// live session. `authenticated_at` is carried over, so the new session
+    /// expires eight hours after the password was proven, not eight hours
+    /// after the switch: switching never extends a session.
+    pub async fn select_tenant(
+        &self,
+        session: &ActiveSession,
+        tenant_id: TenantId,
+        correlation_id: CorrelationId,
+    ) -> Result<TenantSelection, SelectTenantError> {
+        let unavailable =
+            |err: identity_domain::RepositoryError| SelectTenantError::Unavailable(err.to_string());
+        let memberships = self
+            .memberships
+            .active_for_user(session.user_id)
+            .await
+            .map_err(unavailable)?;
+        let membership = memberships
+            .iter()
+            .find(|membership| membership.tenant_id == tenant_id)
+            .cloned()
+            .ok_or(SelectTenantError::NotAMember)?;
+
+        let now = self.clock.now();
+        let expires_at = session.authenticated_at + TENANT_SESSION_LIFETIME;
+        if expires_at <= now {
+            return Err(SelectTenantError::Unauthenticated);
+        }
+
+        let token =
+            generate_token().map_err(|err| SelectTenantError::Unavailable(err.to_string()))?;
+        let replacement = NewSession {
+            selector: token.selector(),
+            verifier_hash: token.verifier().hash(),
+            user_id: session.user_id,
+            tenant_id: Some(tenant_id),
+            authenticated_at: session.authenticated_at,
+            expires_at,
+        };
+        let audit = session_started(&membership, now, correlation_id);
+        self.sessions
+            .rotate(session.id, &replacement, Some(&audit))
+            .await
+            .map_err(unavailable)?
+            .ok_or(SelectTenantError::Unauthenticated)?;
+
+        Ok(TenantSelection {
+            token,
+            membership,
+            memberships,
+            expires_at,
+            max_age: expires_at - now,
+        })
+    }
+
+    /// Ends the caller's session. Not audited: ending one's own session
+    /// changes nothing another party needs a record of.
+    pub async fn logout(&self, session: &ActiveSession) -> Result<(), SessionError> {
+        self.sessions
+            .delete(session.id)
+            .await
+            .map_err(|err| SessionError::Unavailable(err.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -140,12 +245,16 @@ mod tests {
     }
 
     fn world(users: Vec<User>) -> World {
+        world_with(users, vec![])
+    }
+
+    fn world_with(users: Vec<User>, memberships: Vec<Membership>) -> World {
         let sessions = FakeSessions::default();
         let clock = FixedClock::at_epoch_plus_days(20_000);
         World {
             service: AuthService::new(
                 FakeUsers::with(users),
-                FakeMemberships::default(),
+                FakeMemberships::with(memberships),
                 sessions.clone(),
                 FakeHasher::default(),
                 clock,
@@ -241,6 +350,145 @@ mod tests {
         assert_eq!(me.email, alice.email);
         assert_eq!(me.display_name, "Alice");
         assert_eq!(me.tenant, None);
+        Ok(())
+    }
+
+    fn membership_in(user: UserId, name: &str) -> Membership {
+        Membership {
+            id: identity_domain::MembershipId::new(Uuid::new_v4()),
+            user_id: user,
+            tenant_id: TenantId::new(Uuid::new_v4()),
+            tenant_name: name.to_string(),
+            role: Role::Member,
+        }
+    }
+
+    fn session_of(user: UserId, authenticated_at: OffsetDateTime) -> ActiveSession {
+        ActiveSession {
+            id: SessionId::new(Uuid::new_v4()),
+            user_id: user,
+            tenant: None,
+            authenticated_at,
+            expires_at: authenticated_at + Duration::minutes(10),
+        }
+    }
+
+    #[tokio::test]
+    async fn selecting_a_tenant_rotates_the_token_and_audits_the_start()
+    -> Result<(), Box<dyn Error>> {
+        let alice = UserId::new(Uuid::new_v4());
+        let tenant_b = membership_in(alice, "Tenant B");
+        let w = world_with(
+            vec![],
+            vec![membership_in(alice, "Tenant A"), tenant_b.clone()],
+        );
+        let session = session_of(alice, w.clock.now());
+        let correlation_id = CorrelationId::new(Uuid::new_v4());
+
+        let selection = w
+            .service
+            .select_tenant(&session, tenant_b.tenant_id, correlation_id)
+            .await?;
+
+        let rotated = w.sessions.rotated();
+        let [(old, (replacement, Some(entry)))] = rotated.as_slice() else {
+            return Err("expected one audited rotation".into());
+        };
+        assert_eq!(*old, session.id);
+        assert_eq!(replacement.tenant_id, Some(tenant_b.tenant_id));
+        assert_eq!(replacement.selector, selection.token.selector());
+        assert!(
+            replacement
+                .verifier_hash
+                .verifies(selection.token.verifier())
+        );
+        assert_eq!(entry.tenant_id().as_uuid(), tenant_b.tenant_id.as_uuid());
+        assert_eq!(entry.action(), audit::Action::SessionStarted);
+        assert_eq!(entry.correlation_id(), correlation_id);
+        assert_eq!(selection.membership, tenant_b);
+        Ok(())
+    }
+
+    /// Selecting at hour seven of an eight-hour session yields a session
+    /// that ends at hour eight -- not one that starts eight hours over.
+    #[tokio::test]
+    async fn switching_tenant_never_extends_the_absolute_lifetime() -> Result<(), Box<dyn Error>> {
+        let alice = UserId::new(Uuid::new_v4());
+        let tenant_a = membership_in(alice, "Tenant A");
+        let w = world_with(vec![], vec![tenant_a.clone()]);
+        let authenticated_at = w.clock.now() - Duration::hours(7);
+        let session = session_of(alice, authenticated_at);
+
+        let selection = w
+            .service
+            .select_tenant(
+                &session,
+                tenant_a.tenant_id,
+                CorrelationId::new(Uuid::new_v4()),
+            )
+            .await?;
+
+        assert_eq!(selection.expires_at, authenticated_at + Duration::hours(8));
+        assert_eq!(selection.max_age, Duration::hours(1));
+        let rotated = w.sessions.rotated();
+        assert!(matches!(
+            rotated.as_slice(),
+            [(_, (replacement, _))] if replacement.authenticated_at == authenticated_at
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_tenant_without_an_active_membership_is_not_a_member() -> Result<(), Box<dyn Error>> {
+        let alice = UserId::new(Uuid::new_v4());
+        let someone_elses = membership_in(UserId::new(Uuid::new_v4()), "Tenant X");
+        let w = world_with(
+            vec![],
+            vec![membership_in(alice, "Tenant A"), someone_elses.clone()],
+        );
+        let session = session_of(alice, w.clock.now());
+
+        for tenant in [someone_elses.tenant_id, TenantId::new(Uuid::new_v4())] {
+            let result = w
+                .service
+                .select_tenant(&session, tenant, CorrelationId::new(Uuid::new_v4()))
+                .await;
+            assert_eq!(result.err(), Some(SelectTenantError::NotAMember));
+        }
+        assert!(w.sessions.rotated().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_session_already_rotated_elsewhere_cannot_be_rotated_again()
+    -> Result<(), Box<dyn Error>> {
+        let alice = UserId::new(Uuid::new_v4());
+        let tenant_a = membership_in(alice, "Tenant A");
+        let w = world_with(vec![], vec![tenant_a.clone()]);
+        let session = session_of(alice, w.clock.now());
+        w.sessions.already_gone(session.id);
+
+        let result = w
+            .service
+            .select_tenant(
+                &session,
+                tenant_a.tenant_id,
+                CorrelationId::new(Uuid::new_v4()),
+            )
+            .await;
+
+        assert_eq!(result.err(), Some(SelectTenantError::Unauthenticated));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn logout_deletes_the_session() -> Result<(), Box<dyn Error>> {
+        let w = world(vec![]);
+        let session = session_of(UserId::new(Uuid::new_v4()), w.clock.now());
+
+        w.service.logout(&session).await?;
+
+        assert_eq!(w.sessions.deleted(), vec![session.id]);
         Ok(())
     }
 }

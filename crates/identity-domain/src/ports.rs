@@ -75,6 +75,20 @@ pub trait SessionRepository: Send + Sync {
         &self,
         selector: Selector,
     ) -> impl Future<Output = Result<Option<StoredSession>, RepositoryError>> + Send;
+
+    /// Replaces session `old` with `new`, and writes `audit`, in one
+    /// transaction. Returns `None` -- and changes nothing -- if `old` no
+    /// longer exists, so two concurrent rotations of one token cannot both
+    /// succeed and leave two live sessions behind.
+    fn rotate(
+        &self,
+        old: SessionId,
+        new: &NewSession,
+        audit: Option<&AuditEntry>,
+    ) -> impl Future<Output = Result<Option<SessionId>, RepositoryError>> + Send;
+
+    /// Deletes session `id`, if it still exists.
+    fn delete(&self, id: SessionId) -> impl Future<Output = Result<(), RepositoryError>> + Send;
 }
 
 /// The one clock the module reads.
