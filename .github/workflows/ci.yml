@@ -159,8 +159,8 @@ jobs:
               || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             base="$(git merge-base origin/dev HEAD)"
           fi
-          echo "Comparing migrations/ and crates/audit-pg/migrations/ against $base"
-          changed="$(git diff --name-only --diff-filter=MDR "$base" HEAD -- migrations/ crates/audit-pg/migrations/)"
+          echo "Comparing migrations/, crates/audit-pg/migrations/ and crates/identity-pg/migrations/ against $base"
+          changed="$(git diff --name-only --diff-filter=MDR "$base" HEAD -- migrations/ crates/audit-pg/migrations/ crates/identity-pg/migrations/)"
           if [ -n "$changed" ]; then
             echo "$changed" | while read -r f; do
               echo "::error file=$f::landed migration changed; add a new migration instead"

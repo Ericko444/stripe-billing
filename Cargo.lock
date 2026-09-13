@@ -731,6 +731,7 @@ dependencies = [
  "axum",
  "domain",
  "dotenvy",
+ "identity-pg",
  "jsonwebtoken",
  "persistence",
  "secrecy",
@@ -739,6 +740,7 @@ dependencies = [
  "service",
  "sqlx",
  "stripe-adapter",
+ "testcontainers",
  "thiserror",
  "time",
  "tokio",
@@ -1542,6 +1544,18 @@ dependencies = [
  "sha2 0.11.0",
  "subtle",
  "thiserror",
+]
+
+[[package]]
+name = "identity-pg"
+version = "0.1.0"
+dependencies = [
+ "audit-pg",
+ "sqlx",
+ "testcontainers",
+ "thiserror",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

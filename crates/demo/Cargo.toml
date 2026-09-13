@@ -31,7 +31,12 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# Until `main` mounts the identity module (Phase 8, Task 14), `identity-pg`
+# is needed only by the three-migrators test; `testcontainers` brings up the
+# database it runs on.
+identity-pg.workspace = true
 serde_json.workspace = true
+testcontainers.workspace = true
 tower = { workspace = true, features = ["util"] }
 
 [lints]
