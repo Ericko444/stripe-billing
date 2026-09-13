@@ -1,15 +1,24 @@
 //! Postgres adapter for the identity module: the `identity` schema, its
-//! migrator, and (as they land) the repositories implementing
-//! `identity-domain`'s ports.
+//! migrator, and the repositories implementing `identity-domain`'s ports.
 //!
 //! Runs against the same database as the billing module and the audit
 //! journal. Each of the three owns a schema and tracks its migrations in
 //! its own table, so none of them has to know the others exist -- the
 //! pattern `audit-pg` established.
+//!
+//! Every write that has an audit entry writes it with `audit_pg::insert` on
+//! the same transaction, so the business change and the record of it commit
+//! or fail together.
 
 mod error;
+mod membership_repository;
+mod session_repository;
+mod user_repository;
 
 pub use error::IdentityPgError;
+pub use membership_repository::PgMembershipRepository;
+pub use session_repository::PgSessionRepository;
+pub use user_repository::PgUserRepository;
 
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;

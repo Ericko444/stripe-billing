@@ -1574,10 +1574,13 @@ dependencies = [
 name = "identity-pg"
 version = "0.1.0"
 dependencies = [
+ "audit",
  "audit-pg",
+ "identity-domain",
  "sqlx",
  "testcontainers",
  "thiserror",
+ "time",
  "tokio",
  "uuid",
 ]

@@ -40,10 +40,12 @@ pub async fn fresh() -> Result<TestDb, Box<dyn Error>> {
     })
 }
 
-/// A fresh Postgres with `identity-pg`'s migrations applied.
+/// A fresh Postgres with `identity-pg`'s and `audit-pg`'s migrations
+/// applied -- the two schemas this crate's repositories write to.
 pub async fn setup() -> Result<TestDb, Box<dyn Error>> {
     let db = fresh().await?;
     identity_pg::run_migrations(&db.pool).await?;
+    audit_pg::run_migrations(&db.pool).await?;
     Ok(db)
 }
 

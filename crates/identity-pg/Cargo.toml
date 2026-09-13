@@ -8,22 +8,23 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+audit.workspace = true
+# Composes `audit_pg::insert` into this crate's own transactions, so an
+# identity write and its audit row commit together.
+audit-pg.workspace = true
+identity-domain.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
 
-# `audit-pg` is a dev-only edge here for now: proving this crate's migrator
-# coexists with the audit migrator on one database. It becomes a normal
-# dependency when the first repository writes an audit row.
-#
 # No billing crate appears here, not even as a dev-dependency -- CI's
 # "Identity does not depend on billing" check greps this manifest whole.
 # The proof that all three migrators share a database lives in `demo`, the
 # one crate that already names every module.
 [dev-dependencies]
-audit-pg.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true
-uuid.workspace = true
 
 [lints]
 workspace = true
