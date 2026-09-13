@@ -79,6 +79,11 @@ pub enum Action {
     /// record against otherwise -- and never visible to the requester, whose
     /// response is identical either way. Account-level, `Actor::Anonymous`.
     PasswordResetRequested,
+    /// A password was set through a reset link. Account-level,
+    /// `Actor::Anonymous` -- holding a link is not authenticating as the
+    /// user. Always written beside a `SessionsRevoked` with the same
+    /// correlation id: completing a reset ends every session.
+    PasswordResetCompleted,
     /// A user changed their own profile (today: the display name). An
     /// account-level action, recorded once per tenant the user is an active
     /// member of.

@@ -12,8 +12,8 @@ use identity_domain::{
     AccountEvent, Clock, DisplayName, Email, MailError, Mailer, Membership, MembershipRepository,
     NewPassword, NewPasswordToken, NewSession, OutgoingMail, Password, PasswordHash,
     PasswordHashError, PasswordHasher, PasswordTokenRepository, RepositoryError, Selector,
-    SessionId, SessionRepository, StoredSession, TokenPurpose, User, UserId, UserRepository,
-    Verification,
+    SessionId, SessionRepository, StoredPasswordToken, StoredSession, TokenPurpose, User, UserId,
+    UserRepository, Verification, VerifierHash,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -316,11 +316,27 @@ pub type ReplacedToken = (NewPasswordToken, Option<AccountEvent>);
 #[derive(Clone, Default)]
 pub struct FakeTokens {
     replaced: Arc<Mutex<Vec<ReplacedToken>>>,
+    outstanding: Arc<Mutex<Vec<NewPasswordToken>>>,
+    completed: Arc<Mutex<Vec<CompletedReset>>>,
 }
+
+/// A completed reset as the fake saw it: the user, the new hash, the events.
+pub type CompletedReset = (UserId, String, Vec<AccountEvent>);
 
 impl FakeTokens {
     pub fn replaced(&self) -> Vec<ReplacedToken> {
         lock(&self.replaced).clone()
+    }
+
+    pub fn completed(&self) -> Vec<CompletedReset> {
+        lock(&self.completed).clone()
+    }
+
+    /// Whether a token with this selector is still outstanding.
+    pub fn is_outstanding(&self, selector: Selector) -> bool {
+        lock(&self.outstanding)
+            .iter()
+            .any(|token| token.selector == selector)
     }
 }
 
@@ -331,7 +347,53 @@ impl PasswordTokenRepository for FakeTokens {
         event: Option<&AccountEvent>,
     ) -> impl Future<Output = Result<(), RepositoryError>> + Send {
         lock(&self.replaced).push((token.clone(), event.copied()));
+        let mut outstanding = lock(&self.outstanding);
+        outstanding.retain(|t| !(t.user_id == token.user_id && t.purpose == token.purpose));
+        outstanding.push(token.clone());
         ready(Ok(()))
+    }
+
+    fn find(
+        &self,
+        selector: Selector,
+    ) -> impl Future<Output = Result<Option<StoredPasswordToken>, RepositoryError>> + Send {
+        let found = lock(&self.outstanding)
+            .iter()
+            .find(|token| token.selector == selector)
+            .map(|token| StoredPasswordToken {
+                user_id: token.user_id,
+                purpose: token.purpose,
+                verifier_hash: token.verifier_hash,
+                expires_at: token.expires_at,
+            });
+        ready(Ok(found))
+    }
+
+    fn complete_reset(
+        &self,
+        selector: Selector,
+        expected: &VerifierHash,
+        now: OffsetDateTime,
+        new_hash: &PasswordHash,
+        events: &[AccountEvent],
+    ) -> impl Future<Output = Result<bool, RepositoryError>> + Send {
+        let mut outstanding = lock(&self.outstanding);
+        let Some(token) = outstanding.iter().find(|t| t.selector == selector).cloned() else {
+            return ready(Ok(false));
+        };
+        if &token.verifier_hash != expected
+            || token.purpose != TokenPurpose::PasswordReset
+            || token.expires_at <= now
+        {
+            return ready(Ok(false));
+        }
+        outstanding.retain(|t| t.user_id != token.user_id);
+        lock(&self.completed).push((
+            token.user_id,
+            new_hash.as_str().to_string(),
+            events.to_vec(),
+        ));
+        ready(Ok(true))
     }
 }
 
@@ -371,5 +433,12 @@ impl Mailer for FakeMailer {
             mail.correlation_id,
         ));
         ready(Ok(()))
+    }
+}
+
+impl FixedClock {
+    /// A clock stopped at `instant`.
+    pub fn at(instant: OffsetDateTime) -> Self {
+        Self(instant)
     }
 }

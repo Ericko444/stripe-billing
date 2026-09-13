@@ -1,5 +1,9 @@
+use std::sync::Arc;
+
 use audit::CorrelationId;
-use identity_domain::{Clock, Email, Mailer, PasswordTokenRepository, UserRepository};
+use identity_domain::{
+    Clock, Email, Mailer, PasswordHasher, PasswordTokenRepository, UserRepository,
+};
 use tokio::sync::mpsc;
 
 use crate::{IssueOutcome, PasswordResetService};
@@ -57,12 +61,13 @@ impl ResetQueue {
 /// must not stop the next request. The in-process queue does not survive a
 /// restart -- a lost request is recovered by the user asking again, and a
 /// deployment that needs better keeps an outbox table instead.
-pub async fn run_reset_worker<U, T, M, C>(
+pub async fn run_reset_worker<U, T, H, M, C>(
     mut receiver: ResetReceiver,
-    service: PasswordResetService<U, T, M, C>,
+    service: Arc<PasswordResetService<U, T, H, M, C>>,
 ) where
     U: UserRepository,
     T: PasswordTokenRepository,
+    H: PasswordHasher,
     M: Mailer,
     C: Clock,
 {
@@ -96,7 +101,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::test_support::{FakeMailer, FakeTokens, FakeUsers, FixedClock};
+    use crate::test_support::{FakeHasher, FakeMailer, FakeTokens, FakeUsers, FixedClock};
 
     fn job(address: &str) -> Result<ResetJob, Box<dyn Error>> {
         Ok(ResetJob {
@@ -116,13 +121,14 @@ mod tests {
             deactivated_at: None,
         };
         let mailer = FakeMailer::default();
-        let service = PasswordResetService::new(
+        let service = Arc::new(PasswordResetService::new(
             FakeUsers::with(vec![alice]),
             FakeTokens::default(),
+            FakeHasher::default(),
             mailer.clone(),
             FixedClock::at_epoch_plus_days(20_000),
             "http://localhost:5173",
-        );
+        ));
         let (queue, receiver) = reset_queue(8);
 
         assert!(queue.enqueue(job("alice@example.test")?));

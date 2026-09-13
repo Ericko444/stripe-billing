@@ -1,11 +1,12 @@
 use audit::{Action, Actor, CorrelationId, Target, TargetId};
 use identity_domain::{
-    AccountEvent, Clock, Email, Mailer, NewPasswordToken, OutgoingMail, PasswordTokenRepository,
-    SplitToken, TokenPurpose, UserRepository,
+    AccountEvent, Clock, Email, Mailer, NewPassword, NewPasswordToken, OutgoingMail, Password,
+    PasswordHasher, PasswordPolicyError, PasswordTokenRepository, SplitToken, TokenPurpose, UserId,
+    UserRepository,
 };
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
-use time::Duration;
+use time::{Duration, OffsetDateTime};
 
 use crate::token::generate_token;
 
@@ -14,16 +15,18 @@ use crate::token::generate_token;
 /// back; not long enough to sit usable in an inbox for a day.
 pub const RESET_TOKEN_LIFETIME: Duration = Duration::minutes(15);
 
-/// Issues password reset links, off the request path.
+/// Password reset: issuing links (off the request path, in the worker) and
+/// completing them.
 ///
-/// Nothing here runs while a caller waits. The HTTP handler only enqueues
-/// the address; this service runs later, in the reset worker. That is what
-/// makes the request's response -- body *and* timing -- independent of
+/// Nothing in `issue` runs while a caller waits. The HTTP handler only
+/// enqueues the address; `issue` runs later, in the reset worker. That is
+/// what makes the request's response -- body *and* timing -- independent of
 /// whether the address has an account: the work that depends on it does not
 /// happen until the response has been sent.
-pub struct PasswordResetService<U, T, M, C> {
+pub struct PasswordResetService<U, T, H, M, C> {
     users: U,
     tokens: T,
+    hasher: H,
     mailer: M,
     clock: C,
     link_base: String,
@@ -46,19 +49,49 @@ pub enum ResetError {
     Unavailable(String),
 }
 
-impl<U, T, M, C> PasswordResetService<U, T, M, C>
+/// Why a reset link was not honoured.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CompleteResetError {
+    /// The new password breaks the policy. Checked before the link is even
+    /// looked at, so a rejected password never uses up the link.
+    #[error("new password rejected: {0}")]
+    Policy(PasswordPolicyError),
+    /// Malformed, unknown, forged, expired, superseded or already used --
+    /// **one variant for all of them**, so the answer says nothing about
+    /// which, or about whether the link was ever real.
+    #[error("invalid or expired link")]
+    InvalidLink,
+    /// A dependency failed. The message is for logs.
+    #[error("password reset unavailable: {0}")]
+    Unavailable(String),
+}
+
+fn unavailable(err: &dyn std::fmt::Display) -> String {
+    err.to_string()
+}
+
+impl<U, T, H, M, C> PasswordResetService<U, T, H, M, C>
 where
     U: UserRepository,
     T: PasswordTokenRepository,
+    H: PasswordHasher,
     M: Mailer,
     C: Clock,
 {
     /// A service mailing links under `link_base` -- the frontend's origin,
     /// e.g. `http://localhost:5173`.
-    pub fn new(users: U, tokens: T, mailer: M, clock: C, link_base: impl Into<String>) -> Self {
+    pub fn new(
+        users: U,
+        tokens: T,
+        hasher: H,
+        mailer: M,
+        clock: C,
+        link_base: impl Into<String>,
+    ) -> Self {
         Self {
             users,
             tokens,
+            hasher,
             mailer,
             clock,
             link_base: link_base.into(),
@@ -78,19 +111,17 @@ where
         email: &Email,
         correlation_id: CorrelationId,
     ) -> Result<IssueOutcome, ResetError> {
-        let unavailable = |err: &dyn std::fmt::Display| ResetError::Unavailable(err.to_string());
-
         let Some(user) = self
             .users
             .find_by_email(email)
             .await
-            .map_err(|err| unavailable(&err))?
+            .map_err(|err| ResetError::Unavailable(unavailable(&err)))?
             .filter(|user| user.is_active())
         else {
             return Ok(IssueOutcome::NoActiveAccount);
         };
 
-        let token = generate_token().map_err(|err| unavailable(&err))?;
+        let token = generate_token().map_err(|err| ResetError::Unavailable(unavailable(&err)))?;
         let now = self.clock.now();
         let stored = NewPasswordToken {
             selector: token.selector(),
@@ -100,17 +131,11 @@ where
             created_at: now,
             expires_at: now + RESET_TOKEN_LIFETIME,
         };
-        let event = AccountEvent {
-            actor: Actor::Anonymous,
-            action: Action::PasswordResetRequested,
-            target: Target::User(TargetId::new(user.id.as_uuid())),
-            occurred_at: now,
-            correlation_id,
-        };
+        let event = anonymous(user.id, Action::PasswordResetRequested, now, correlation_id);
         self.tokens
             .replace(&stored, Some(&event))
             .await
-            .map_err(|err| unavailable(&err))?;
+            .map_err(|err| ResetError::Unavailable(unavailable(&err)))?;
 
         let mail = OutgoingMail {
             to: user.email,
@@ -121,8 +146,76 @@ where
         self.mailer
             .send(&mail)
             .await
-            .map_err(|err| unavailable(&err))?;
+            .map_err(|err| ResetError::Unavailable(unavailable(&err)))?;
         Ok(IssueOutcome::Issued)
+    }
+
+    /// Sets a new password through a reset link.
+    ///
+    /// In order, cheapest refusal first:
+    ///
+    /// 1. the new password against the policy -- a refusal here never touches
+    ///    the link, which stays usable;
+    /// 2. the link's form, its selector's row, its verifier (constant time),
+    ///    its purpose and its expiry by the module's clock -- one error for
+    ///    every failure, and no Argon2 cost for a link that was never going to
+    ///    work;
+    /// 3. the Argon2id hash of the new password;
+    /// 4. one transaction that re-checks the link under a row lock, consumes
+    ///    it, stores the hash, **deletes every session of the user in every
+    ///    tenant**, deletes every other outstanding link, and records
+    ///    `PasswordResetCompleted` and `SessionsRevoked` once per tenant.
+    ///
+    /// No session is issued. Holding a link proves access to a mailbox, not
+    /// the new password; the user logs in with it, like anyone else.
+    pub async fn complete(
+        &self,
+        presented: &str,
+        new: Password,
+        correlation_id: CorrelationId,
+    ) -> Result<(), CompleteResetError> {
+        let new = NewPassword::check(new).map_err(CompleteResetError::Policy)?;
+
+        let token = SplitToken::parse(presented).map_err(|_| CompleteResetError::InvalidLink)?;
+        let stored = self
+            .tokens
+            .find(token.selector())
+            .await
+            .map_err(|err| CompleteResetError::Unavailable(unavailable(&err)))?
+            .ok_or(CompleteResetError::InvalidLink)?;
+        let now = self.clock.now();
+        if !stored.verifier_hash.verifies(token.verifier())
+            || stored.purpose != TokenPurpose::PasswordReset
+            || stored.expires_at <= now
+        {
+            return Err(CompleteResetError::InvalidLink);
+        }
+
+        let hash = self
+            .hasher
+            .hash(&new)
+            .await
+            .map_err(|err| CompleteResetError::Unavailable(unavailable(&err)))?;
+        let events = [
+            anonymous(
+                stored.user_id,
+                Action::PasswordResetCompleted,
+                now,
+                correlation_id,
+            ),
+            anonymous(stored.user_id, Action::SessionsRevoked, now, correlation_id),
+        ];
+        let completed = self
+            .tokens
+            .complete_reset(token.selector(), &stored.verifier_hash, now, &hash, &events)
+            .await
+            .map_err(|err| CompleteResetError::Unavailable(unavailable(&err)))?;
+        if !completed {
+            // Used, superseded or expired between the check above and the
+            // row lock -- a concurrent completion won.
+            return Err(CompleteResetError::InvalidLink);
+        }
+        Ok(())
     }
 
     /// `{base}/reset-password#token={token}`.
@@ -140,25 +233,75 @@ where
     }
 }
 
+/// An account event with no authenticated actor behind it: whoever holds the
+/// mailbox or the link.
+fn anonymous(
+    user: UserId,
+    action: Action,
+    occurred_at: OffsetDateTime,
+    correlation_id: CorrelationId,
+) -> AccountEvent {
+    AccountEvent {
+        actor: Actor::Anonymous,
+        action,
+        target: Target::User(TargetId::new(user.as_uuid())),
+        occurred_at,
+        correlation_id,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::error::Error;
 
-    use identity_domain::{PasswordHash, User, UserId};
-    use time::OffsetDateTime;
+    use identity_domain::{PasswordHash, User};
     use uuid::Uuid;
 
     use super::*;
-    use crate::test_support::{FakeMailer, FakeTokens, FakeUsers, FixedClock};
+    use crate::test_support::{FakeHasher, FakeMailer, FakeTokens, FakeUsers, FixedClock};
 
-    type Service = PasswordResetService<FakeUsers, FakeTokens, FakeMailer, FixedClock>;
+    type Service = PasswordResetService<FakeUsers, FakeTokens, FakeHasher, FakeMailer, FixedClock>;
+
+    const NEW_PASSWORD: &str = "a much longer and newer passphrase";
 
     struct World {
-        service: Service,
+        users: FakeUsers,
         tokens: FakeTokens,
         mailer: FakeMailer,
         clock: FixedClock,
         alice: User,
+    }
+
+    impl World {
+        fn service_at(&self, clock: FixedClock) -> Service {
+            PasswordResetService::new(
+                self.users.clone(),
+                self.tokens.clone(),
+                FakeHasher::default(),
+                self.mailer.clone(),
+                clock,
+                "http://localhost:5173/",
+            )
+        }
+
+        fn service(&self) -> Service {
+            self.service_at(self.clock)
+        }
+
+        /// Issues a link for Alice and returns its token, as mailed.
+        async fn mailed_token(&self) -> Result<String, Box<dyn Error>> {
+            self.service()
+                .issue(&self.alice.email, CorrelationId::new(Uuid::new_v4()))
+                .await?;
+            let sent = self.mailer.sent();
+            let Some((_, _, link, _)) = sent.last() else {
+                return Err("no mail was sent".into());
+            };
+            Ok(link
+                .split_once("#token=")
+                .map(|(_, token)| token.to_string())
+                .unwrap_or_default())
+        }
     }
 
     fn world(mailer: FakeMailer) -> Result<World, Box<dyn Error>> {
@@ -174,21 +317,17 @@ mod tests {
         dave.email = Email::parse("dave@example.test")?;
         dave.deactivated_at = Some(OffsetDateTime::UNIX_EPOCH);
 
-        let tokens = FakeTokens::default();
-        let clock = FixedClock::at_epoch_plus_days(20_000);
         Ok(World {
-            service: PasswordResetService::new(
-                FakeUsers::with(vec![alice.clone(), dave]),
-                tokens.clone(),
-                mailer.clone(),
-                clock,
-                "http://localhost:5173/",
-            ),
-            tokens,
+            users: FakeUsers::with(vec![alice.clone(), dave]),
+            tokens: FakeTokens::default(),
             mailer,
-            clock,
+            clock: FixedClock::at_epoch_plus_days(20_000),
             alice,
         })
+    }
+
+    fn password(raw: &str) -> Password {
+        Password::new(raw.to_string())
     }
 
     #[tokio::test]
@@ -197,7 +336,7 @@ mod tests {
         let w = world(FakeMailer::default())?;
         let correlation_id = CorrelationId::new(Uuid::new_v4());
 
-        let outcome = w.service.issue(&w.alice.email, correlation_id).await?;
+        let outcome = w.service().issue(&w.alice.email, correlation_id).await?;
 
         assert_eq!(outcome, IssueOutcome::Issued);
         let replaced = w.tokens.replaced();
@@ -236,7 +375,7 @@ mod tests {
 
         for address in ["nobody@example.test", "dave@example.test"] {
             let outcome = w
-                .service
+                .service()
                 .issue(&Email::parse(address)?, CorrelationId::new(Uuid::new_v4()))
                 .await?;
             assert_eq!(outcome, IssueOutcome::NoActiveAccount, "{address}");
@@ -251,12 +390,148 @@ mod tests {
         let w = world(FakeMailer::failing())?;
 
         let result = w
-            .service
+            .service()
             .issue(&w.alice.email, CorrelationId::new(Uuid::new_v4()))
             .await;
 
         assert!(matches!(result, Err(ResetError::Unavailable(_))));
         assert_eq!(w.tokens.replaced().len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn completing_stores_the_new_hash_and_records_completion_and_revocation()
+    -> Result<(), Box<dyn Error>> {
+        let w = world(FakeMailer::default())?;
+        let wire = w.mailed_token().await?;
+        let correlation_id = CorrelationId::new(Uuid::new_v4());
+
+        w.service()
+            .complete(&wire, password(NEW_PASSWORD), correlation_id)
+            .await?;
+
+        let completed = w.tokens.completed();
+        let [(user, hash, events)] = completed.as_slice() else {
+            return Err("expected one completion".into());
+        };
+        assert_eq!(*user, w.alice.id);
+        assert_eq!(hash, &FakeHasher::hash_of(NEW_PASSWORD));
+        let actions: Vec<(Actor, Action)> = events.iter().map(|e| (e.actor, e.action)).collect();
+        assert_eq!(
+            actions,
+            vec![
+                (Actor::Anonymous, Action::PasswordResetCompleted),
+                (Actor::Anonymous, Action::SessionsRevoked),
+            ]
+        );
+        assert!(events.iter().all(|e| e.correlation_id == correlation_id));
+        Ok(())
+    }
+
+    /// R5 -- a reset link works for fifteen minutes by the module's clock,
+    /// and not one second more.
+    #[tokio::test]
+    async fn a_reset_token_is_refused_after_fifteen_minutes() -> Result<(), Box<dyn Error>> {
+        let w = world(FakeMailer::default())?;
+        let wire = w.mailed_token().await?;
+        let issued = w.clock.now();
+
+        let at_expiry = w.service_at(FixedClock::at(issued + Duration::minutes(15)));
+        let result = at_expiry
+            .complete(
+                &wire,
+                password(NEW_PASSWORD),
+                CorrelationId::new(Uuid::new_v4()),
+            )
+            .await;
+        assert_eq!(result.err(), Some(CompleteResetError::InvalidLink));
+
+        let just_before = w.service_at(FixedClock::at(
+            issued + Duration::minutes(15) - Duration::seconds(1),
+        ));
+        just_before
+            .complete(
+                &wire,
+                password(NEW_PASSWORD),
+                CorrelationId::new(Uuid::new_v4()),
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_policy_failure_leaves_the_link_usable() -> Result<(), Box<dyn Error>> {
+        let w = world(FakeMailer::default())?;
+        let wire = w.mailed_token().await?;
+        let token = SplitToken::parse(&wire)?;
+
+        let rejected = w
+            .service()
+            .complete(&wire, password("short"), CorrelationId::new(Uuid::new_v4()))
+            .await;
+
+        assert_eq!(
+            rejected.err(),
+            Some(CompleteResetError::Policy(PasswordPolicyError::TooShort))
+        );
+        assert!(w.tokens.is_outstanding(token.selector()));
+        w.service()
+            .complete(
+                &wire,
+                password(NEW_PASSWORD),
+                CorrelationId::new(Uuid::new_v4()),
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn every_bad_link_is_the_same_error() -> Result<(), Box<dyn Error>> {
+        let w = world(FakeMailer::default())?;
+        let wire = w.mailed_token().await?;
+        let token = SplitToken::parse(&wire)?;
+        let forged = SplitToken::from_bytes(*token.selector().as_bytes(), [0; 32])
+            .to_wire()
+            .expose_secret()
+            .to_string();
+        let unknown = SplitToken::from_bytes([9; 16], [9; 32])
+            .to_wire()
+            .expose_secret()
+            .to_string();
+
+        for presented in ["", "not-a-token", forged.as_str(), unknown.as_str()] {
+            let result = w
+                .service()
+                .complete(
+                    presented,
+                    password(NEW_PASSWORD),
+                    CorrelationId::new(Uuid::new_v4()),
+                )
+                .await;
+            assert_eq!(
+                result.err(),
+                Some(CompleteResetError::InvalidLink),
+                "{presented:?}"
+            );
+        }
+
+        // And a link that worked once is, the second time, the same error.
+        w.service()
+            .complete(
+                &wire,
+                password(NEW_PASSWORD),
+                CorrelationId::new(Uuid::new_v4()),
+            )
+            .await?;
+        let reused = w
+            .service()
+            .complete(
+                &wire,
+                password(NEW_PASSWORD),
+                CorrelationId::new(Uuid::new_v4()),
+            )
+            .await;
+        assert_eq!(reused.err(), Some(CompleteResetError::InvalidLink));
         Ok(())
     }
 }

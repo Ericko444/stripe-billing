@@ -69,6 +69,7 @@ fn action_kind(action: &Action) -> &'static str {
         Action::PasswordChanged => "password.changed",
         Action::SessionsRevoked => "sessions.revoked",
         Action::PasswordResetRequested => "password_reset.requested",
+        Action::PasswordResetCompleted => "password_reset.completed",
     }
 }
 

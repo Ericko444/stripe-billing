@@ -245,27 +245,32 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let state = AppState::new(verifier, handler, reads, writes, checkout_urls);
 
     // The identity module. The hasher computes its dummy hash here, at
-    // startup, so the first login does not pay for it.
+    // startup, so the first login does not pay for it -- and it is one hasher,
+    // cloned, so login, password change and reset all draw on the same
+    // bounded pool of concurrent hashes and the memory budget holds for all
+    // of them together.
+    let hasher = Argon2Hasher::new()?;
     let authentication = AuthService::new(
         PgUserRepository::new(pool.clone()),
         PgMembershipRepository::new(pool.clone()),
         PgSessionRepository::new(pool.clone()),
-        Argon2Hasher::new()?,
+        hasher.clone(),
         SystemClock,
     );
-    // Password reset runs in its own task, fed by a bounded queue: the
-    // request handler only enqueues, so its response cannot depend on whether
-    // an account exists. The demo mailer logs links instead of sending them --
-    // said loudly, every start.
-    let resets = PasswordResetService::new(
+    // Password reset: issuing runs in its own task, fed by a bounded queue --
+    // the request handler only enqueues, so its response cannot depend on
+    // whether an account exists. Completing runs on the request. The demo
+    // mailer logs links instead of sending them -- said loudly, every start.
+    let resets = Arc::new(PasswordResetService::new(
         PgUserRepository::new(pool.clone()),
         PgPasswordTokenRepository::new(pool.clone()),
+        hasher,
         LogMailer,
         SystemClock,
         config.identity_public_base_url,
-    );
+    ));
     let (reset_queue, reset_receiver) = reset_queue(RESET_QUEUE_CAPACITY);
-    tokio::spawn(run_reset_worker(reset_receiver, resets));
+    tokio::spawn(run_reset_worker(reset_receiver, Arc::clone(&resets)));
     tracing::warn!(
         "password reset and invitation links are written to this log by the demo mailer, not sent"
     );

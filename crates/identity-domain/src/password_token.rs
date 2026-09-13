@@ -47,6 +47,19 @@ pub struct NewPasswordToken {
     pub expires_at: OffsetDateTime,
 }
 
+/// An outstanding token as stored, found by its selector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredPasswordToken {
+    /// Whose password it sets.
+    pub user_id: UserId,
+    /// Reset or invitation.
+    pub purpose: TokenPurpose,
+    /// `SHA-256(verifier)`, to check a presented verifier against.
+    pub verifier_hash: VerifierHash,
+    /// When it stops working.
+    pub expires_at: OffsetDateTime,
+}
+
 /// A mail the module sends. The link is the whole credential, so it is a
 /// secret here and `Debug` does not print it; only a [`Mailer`] ever
 /// exposes it, into the message body.

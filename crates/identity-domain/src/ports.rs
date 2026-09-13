@@ -14,7 +14,8 @@ use time::OffsetDateTime;
 
 use crate::{
     AccountEvent, DisplayName, Email, Membership, NewPassword, NewPasswordToken, NewSession,
-    OutgoingMail, Password, PasswordHash, Selector, SessionId, StoredSession, User, UserId,
+    OutgoingMail, Password, PasswordHash, Selector, SessionId, StoredPasswordToken, StoredSession,
+    User, UserId, VerifierHash,
 };
 
 /// Finds and updates users.
@@ -126,6 +127,33 @@ pub trait PasswordTokenRepository: Send + Sync {
         token: &NewPasswordToken,
         event: Option<&AccountEvent>,
     ) -> impl Future<Output = Result<(), RepositoryError>> + Send;
+
+    /// The outstanding token with `selector`, if any -- expired or not; the
+    /// caller checks the verifier and the expiry.
+    fn find(
+        &self,
+        selector: Selector,
+    ) -> impl Future<Output = Result<Option<StoredPasswordToken>, RepositoryError>> + Send;
+
+    /// Consumes the password reset token with `selector` and sets its user's
+    /// password, all in one transaction, **only if** -- re-checked under a
+    /// row lock -- the token still exists, still has `expected` as its
+    /// verifier hash, is a reset token, and has not expired at `now`.
+    ///
+    /// When it proceeds it stores `new_hash`, deletes **every** session of
+    /// the user in every tenant, deletes every outstanding token of the user,
+    /// and records each of `events` once per active membership, and returns
+    /// `true`. Otherwise it changes nothing and returns `false` -- which is
+    /// what a second, concurrent completion of the same link sees once the
+    /// first has committed.
+    fn complete_reset(
+        &self,
+        selector: Selector,
+        expected: &VerifierHash,
+        now: OffsetDateTime,
+        new_hash: &PasswordHash,
+        events: &[AccountEvent],
+    ) -> impl Future<Output = Result<bool, RepositoryError>> + Send;
 }
 
 /// Sends the module's mail. The demo's implementation logs; a real one

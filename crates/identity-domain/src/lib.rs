@@ -34,7 +34,7 @@ pub use password::{
     MAX_PASSWORD_CHARS, MIN_PASSWORD_CHARS, NewPassword, Password, PasswordHash,
     PasswordPolicyError,
 };
-pub use password_token::{NewPasswordToken, OutgoingMail, TokenPurpose};
+pub use password_token::{NewPasswordToken, OutgoingMail, StoredPasswordToken, TokenPurpose};
 pub use ports::{
     Clock, MailError, Mailer, MembershipRepository, PasswordHashError, PasswordHasher,
     PasswordTokenRepository, RepositoryError, SessionRepository, UserRepository, Verification,

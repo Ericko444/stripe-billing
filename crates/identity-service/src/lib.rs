@@ -32,7 +32,9 @@ pub use facade::Authentication;
 pub use password_change::PasswordChangeError;
 pub use profile::ProfileError;
 pub use rate_limit::InMemoryRateLimiter;
-pub use reset::{IssueOutcome, PasswordResetService, RESET_TOKEN_LIFETIME, ResetError};
+pub use reset::{
+    CompleteResetError, IssueOutcome, PasswordResetService, RESET_TOKEN_LIFETIME, ResetError,
+};
 pub use reset_worker::{
     RESET_QUEUE_CAPACITY, ResetJob, ResetQueue, ResetReceiver, reset_queue, run_reset_worker,
 };
