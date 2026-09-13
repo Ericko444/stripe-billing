@@ -55,3 +55,80 @@ pub fn sqlstate(err: &sqlx::Error) -> Option<String> {
         .and_then(|db| db.code())
         .map(|code| code.into_owned())
 }
+
+/// Inserts a tenant named `name`.
+pub async fn tenant(pool: &PgPool, name: &str) -> Result<identity_domain::TenantId, sqlx::Error> {
+    let id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO identity.tenants (id, name) VALUES ($1, $2)")
+        .bind(id)
+        .bind(name)
+        .execute(pool)
+        .await?;
+    Ok(identity_domain::TenantId::new(id))
+}
+
+/// Inserts a user with `email` and an optional stored hash.
+pub async fn user(
+    pool: &PgPool,
+    email: &str,
+    hash: Option<&str>,
+) -> Result<identity_domain::UserId, sqlx::Error> {
+    let id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO identity.users (id, email_normalized, display_name, password_hash) \
+         VALUES ($1, $2, 'Alice', $3)",
+    )
+    .bind(id)
+    .bind(email)
+    .bind(hash)
+    .execute(pool)
+    .await?;
+    Ok(identity_domain::UserId::new(id))
+}
+
+/// Inserts a membership with the given role and status spellings.
+pub async fn membership(
+    pool: &PgPool,
+    user: identity_domain::UserId,
+    tenant: identity_domain::TenantId,
+    role: &str,
+    status: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO identity.memberships (id, user_id, tenant_id, role, status) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(user.as_uuid())
+    .bind(tenant.as_uuid())
+    .bind(role)
+    .bind(status)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Microsecond precision, matching `TIMESTAMPTZ`, so a round trip compares
+/// equal.
+pub fn now_micros() -> time::OffsetDateTime {
+    let now = time::OffsetDateTime::now_utc();
+    now.replace_nanosecond(now.nanosecond() / 1_000 * 1_000)
+        .unwrap_or(now)
+}
+
+/// A session row for `token`, eight hours long from now.
+pub fn session_for(
+    token: &identity_domain::SplitToken,
+    user: identity_domain::UserId,
+    tenant: Option<identity_domain::TenantId>,
+) -> identity_domain::NewSession {
+    let authenticated_at = now_micros();
+    identity_domain::NewSession {
+        selector: token.selector(),
+        verifier_hash: token.verifier().hash(),
+        user_id: user,
+        tenant_id: tenant,
+        authenticated_at,
+        expires_at: authenticated_at + time::Duration::hours(8),
+    }
+}

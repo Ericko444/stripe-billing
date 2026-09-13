@@ -1606,6 +1606,7 @@ name = "identity-service"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "async-trait",
  "audit",
  "getrandom 0.4.3",
  "identity-domain",

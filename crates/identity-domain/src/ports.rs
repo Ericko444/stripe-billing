@@ -13,7 +13,8 @@ use thiserror::Error;
 use time::OffsetDateTime;
 
 use crate::{
-    Email, Membership, NewPassword, NewSession, Password, PasswordHash, SessionId, User, UserId,
+    Email, Membership, NewPassword, NewSession, Password, PasswordHash, Selector, SessionId,
+    StoredSession, User, UserId,
 };
 
 /// Finds and updates users.
@@ -24,6 +25,12 @@ pub trait UserRepository: Send + Sync {
     fn find_by_email(
         &self,
         email: &Email,
+    ) -> impl Future<Output = Result<Option<User>, RepositoryError>> + Send;
+
+    /// The user with this id, active or not.
+    fn find(
+        &self,
+        user_id: UserId,
     ) -> impl Future<Output = Result<Option<User>, RepositoryError>> + Send;
 
     /// Replaces a user's password hash with one made under newer
@@ -56,6 +63,18 @@ pub trait SessionRepository: Send + Sync {
         session: &NewSession,
         audit: Option<&AuditEntry>,
     ) -> impl Future<Output = Result<SessionId, RepositoryError>> + Send;
+
+    /// The session with `selector`, if it exists **and** its user is active
+    /// **and**, when it is tenant-scoped, its membership is active. One
+    /// query, run on every authenticated request, so a suspension or a
+    /// deactivation takes effect on the next request rather than at expiry.
+    ///
+    /// Expired sessions are still returned: expiry is checked by the caller
+    /// against the module's one clock.
+    fn resolve(
+        &self,
+        selector: Selector,
+    ) -> impl Future<Output = Result<Option<StoredSession>, RepositoryError>> + Send;
 }
 
 /// The one clock the module reads.

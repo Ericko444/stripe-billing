@@ -35,6 +35,20 @@ impl UserRepository for PgUserRepository {
         row.map(|row| user_from_row(&row)).transpose()
     }
 
+    async fn find(&self, user_id: UserId) -> Result<Option<User>, RepositoryError> {
+        let row = sqlx::query(
+            "SELECT id, email_normalized, display_name, password_hash, deactivated_at \
+               FROM identity.users \
+              WHERE id = $1",
+        )
+        .bind(user_id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(repository_error)?;
+
+        row.map(|row| user_from_row(&row)).transpose()
+    }
+
     async fn rehash_password(
         &self,
         user_id: UserId,

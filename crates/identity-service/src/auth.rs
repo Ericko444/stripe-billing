@@ -19,11 +19,11 @@ pub const UNSCOPED_SESSION_LIFETIME: Duration = Duration::minutes(10);
 
 /// Login, and (as they land) the other session use cases.
 pub struct AuthService<U, M, S, H, C> {
-    users: U,
-    memberships: M,
-    sessions: S,
-    hasher: H,
-    clock: C,
+    pub(crate) users: U,
+    pub(crate) memberships: M,
+    pub(crate) sessions: S,
+    pub(crate) hasher: H,
+    pub(crate) clock: C,
 }
 
 /// What a session issued at login is scoped to.

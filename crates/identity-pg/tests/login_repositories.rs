@@ -6,78 +6,14 @@ use std::error::Error;
 
 use audit::{Action, Actor, AuditEntry, CorrelationId, SubjectId, Target, TargetId};
 use identity_domain::{
-    Email, MembershipRepository, NewSession, PasswordHash, Role, SessionRepository, SplitToken,
-    TenantId, UserId, UserRepository,
+    Email, MembershipRepository, PasswordHash, Role, SessionRepository, SplitToken, TenantId,
+    UserId, UserRepository,
 };
 use identity_pg::{PgMembershipRepository, PgSessionRepository, PgUserRepository};
-use sqlx::PgPool;
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
-async fn tenant(pool: &PgPool, name: &str) -> Result<TenantId, sqlx::Error> {
-    let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO identity.tenants (id, name) VALUES ($1, $2)")
-        .bind(id)
-        .bind(name)
-        .execute(pool)
-        .await?;
-    Ok(TenantId::new(id))
-}
-
-async fn user(pool: &PgPool, email: &str, hash: Option<&str>) -> Result<UserId, sqlx::Error> {
-    let id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO identity.users (id, email_normalized, display_name, password_hash) \
-         VALUES ($1, $2, 'Alice', $3)",
-    )
-    .bind(id)
-    .bind(email)
-    .bind(hash)
-    .execute(pool)
-    .await?;
-    Ok(UserId::new(id))
-}
-
-async fn membership(
-    pool: &PgPool,
-    user: UserId,
-    tenant: TenantId,
-    role: &str,
-    status: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO identity.memberships (id, user_id, tenant_id, role, status) \
-         VALUES ($1, $2, $3, $4, $5)",
-    )
-    .bind(Uuid::new_v4())
-    .bind(user.as_uuid())
-    .bind(tenant.as_uuid())
-    .bind(role)
-    .bind(status)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Microsecond precision, matching `TIMESTAMPTZ`, so a round trip compares
-/// equal.
-fn now_micros() -> OffsetDateTime {
-    let now = OffsetDateTime::now_utc();
-    now.replace_nanosecond(now.nanosecond() / 1_000 * 1_000)
-        .unwrap_or(now)
-}
-
-fn session_for(token: &SplitToken, user: UserId, tenant: Option<TenantId>) -> NewSession {
-    let authenticated_at = now_micros();
-    NewSession {
-        selector: token.selector(),
-        verifier_hash: token.verifier().hash(),
-        user_id: user,
-        tenant_id: tenant,
-        authenticated_at,
-        expires_at: authenticated_at + Duration::hours(8),
-    }
-}
+use common::{membership, session_for, tenant, user};
 
 fn session_started(user: UserId, tenant: TenantId, correlation: Uuid) -> AuditEntry {
     AuditEntry::new(

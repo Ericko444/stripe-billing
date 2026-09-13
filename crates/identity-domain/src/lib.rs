@@ -35,7 +35,7 @@ pub use ports::{
     SessionRepository, UserRepository, Verification,
 };
 pub use role::{Role, RoleParseError};
-pub use session::NewSession;
+pub use session::{NewSession, SessionTenant, StoredSession};
 pub use token::{
     SELECTOR_BYTES, Selector, SplitToken, TokenParseError, VERIFIER_BYTES, Verifier, VerifierHash,
 };

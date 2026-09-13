@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use audit::AuditEntry;
 use identity_domain::{
     Clock, Email, Membership, MembershipRepository, NewPassword, NewSession, Password,
-    PasswordHash, PasswordHashError, PasswordHasher, RepositoryError, SessionId, SessionRepository,
-    User, UserId, UserRepository, Verification,
+    PasswordHash, PasswordHashError, PasswordHasher, RepositoryError, Selector, SessionId,
+    SessionRepository, StoredSession, User, UserId, UserRepository, Verification,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -56,6 +56,17 @@ impl UserRepository for FakeUsers {
         ready(Ok(found))
     }
 
+    fn find(
+        &self,
+        user_id: UserId,
+    ) -> impl Future<Output = Result<Option<User>, RepositoryError>> + Send {
+        let found = lock(&self.users)
+            .iter()
+            .find(|user| user.id == user_id)
+            .cloned();
+        ready(Ok(found))
+    }
+
     fn rehash_password(
         &self,
         user_id: UserId,
@@ -95,16 +106,23 @@ impl MembershipRepository for FakeMemberships {
 }
 
 /// A session as created, with the audit entry it was created with.
-pub type StoredSession = (NewSession, Option<AuditEntry>);
+pub type CreatedSession = (NewSession, Option<AuditEntry>);
 
 /// Every session created, with the audit entry it was created with.
 #[derive(Clone, Default)]
 pub struct FakeSessions {
-    stored: Arc<Mutex<Vec<StoredSession>>>,
+    stored: Arc<Mutex<Vec<CreatedSession>>>,
+    resolvable: Arc<Mutex<Vec<(Selector, StoredSession)>>>,
 }
 
 impl FakeSessions {
-    pub fn stored(&self) -> Vec<StoredSession> {
+    /// Makes `session` findable by `selector`, as if the lookup query had
+    /// matched it -- active user, active membership.
+    pub fn resolvable(&self, selector: Selector, session: StoredSession) {
+        lock(&self.resolvable).push((selector, session));
+    }
+
+    pub fn stored(&self) -> Vec<CreatedSession> {
         lock(&self.stored).clone()
     }
 }
@@ -117,6 +135,17 @@ impl SessionRepository for FakeSessions {
     ) -> impl Future<Output = Result<SessionId, RepositoryError>> + Send {
         lock(&self.stored).push((session.clone(), audit.cloned()));
         ready(Ok(SessionId::new(Uuid::new_v4())))
+    }
+
+    fn resolve(
+        &self,
+        selector: Selector,
+    ) -> impl Future<Output = Result<Option<StoredSession>, RepositoryError>> + Send {
+        let found = lock(&self.resolvable)
+            .iter()
+            .find(|(candidate, _)| *candidate == selector)
+            .map(|(_, session)| session.clone());
+        ready(Ok(found))
     }
 }
 

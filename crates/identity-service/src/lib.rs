@@ -8,6 +8,8 @@
 mod argon2_hasher;
 mod auth;
 mod clock;
+mod facade;
+mod session;
 #[cfg(test)]
 mod test_support;
 mod token;
@@ -21,4 +23,6 @@ pub use auth::{
     UNSCOPED_SESSION_LIFETIME,
 };
 pub use clock::SystemClock;
+pub use facade::Authentication;
+pub use session::{ActiveSession, Me, SessionError};
 pub use token::{TokenGenerationError, generate_token};
