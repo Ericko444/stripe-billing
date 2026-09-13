@@ -74,6 +74,11 @@ pub enum Action {
     /// it, with the same correlation id, so an audit reader sees that the
     /// revocation happened rather than having to infer it.
     SessionsRevoked,
+    /// A password reset link was issued for an account. Recorded only when
+    /// the address belongs to an active account -- there is nothing to
+    /// record against otherwise -- and never visible to the requester, whose
+    /// response is identical either way. Account-level, `Actor::Anonymous`.
+    PasswordResetRequested,
     /// A user changed their own profile (today: the display name). An
     /// account-level action, recorded once per tenant the user is an active
     /// member of.

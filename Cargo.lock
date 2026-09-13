@@ -1428,7 +1428,9 @@ version = "0.1.0"
 dependencies = [
  "audit",
  "audit-pg",
+ "hex",
  "identity-domain",
+ "secrecy",
  "sqlx",
  "testcontainers",
  "thiserror",
@@ -1450,6 +1452,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

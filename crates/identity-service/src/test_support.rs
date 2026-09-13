@@ -9,9 +9,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use audit::AuditEntry;
 use identity_domain::{
-    AccountEvent, Clock, DisplayName, Email, Membership, MembershipRepository, NewPassword,
-    NewSession, Password, PasswordHash, PasswordHashError, PasswordHasher, RepositoryError,
-    Selector, SessionId, SessionRepository, StoredSession, User, UserId, UserRepository,
+    AccountEvent, Clock, DisplayName, Email, MailError, Mailer, Membership, MembershipRepository,
+    NewPassword, NewPasswordToken, NewSession, OutgoingMail, Password, PasswordHash,
+    PasswordHashError, PasswordHasher, PasswordTokenRepository, RepositoryError, Selector,
+    SessionId, SessionRepository, StoredSession, TokenPurpose, User, UserId, UserRepository,
     Verification,
 };
 use time::{Duration, OffsetDateTime};
@@ -305,5 +306,70 @@ impl FixedClock {
 impl Clock for FixedClock {
     fn now(&self) -> OffsetDateTime {
         self.0
+    }
+}
+
+/// A token as stored, with the account event it was stored with.
+pub type ReplacedToken = (NewPasswordToken, Option<AccountEvent>);
+
+/// Every reset or invitation token stored.
+#[derive(Clone, Default)]
+pub struct FakeTokens {
+    replaced: Arc<Mutex<Vec<ReplacedToken>>>,
+}
+
+impl FakeTokens {
+    pub fn replaced(&self) -> Vec<ReplacedToken> {
+        lock(&self.replaced).clone()
+    }
+}
+
+impl PasswordTokenRepository for FakeTokens {
+    fn replace(
+        &self,
+        token: &NewPasswordToken,
+        event: Option<&AccountEvent>,
+    ) -> impl Future<Output = Result<(), RepositoryError>> + Send {
+        lock(&self.replaced).push((token.clone(), event.copied()));
+        ready(Ok(()))
+    }
+}
+
+/// A mail as the fake received it: recipient, purpose, the link exposed,
+/// correlation id.
+pub type SentMail = (Email, TokenPurpose, String, audit::CorrelationId);
+
+/// Records every mail; `failing()` refuses to send.
+#[derive(Clone, Default)]
+pub struct FakeMailer {
+    sent: Arc<Mutex<Vec<SentMail>>>,
+    fail: bool,
+}
+
+impl FakeMailer {
+    pub fn failing() -> Self {
+        Self {
+            fail: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn sent(&self) -> Vec<SentMail> {
+        lock(&self.sent).clone()
+    }
+}
+
+impl Mailer for FakeMailer {
+    fn send(&self, mail: &OutgoingMail) -> impl Future<Output = Result<(), MailError>> + Send {
+        if self.fail {
+            return ready(Err(MailError("mail server unreachable".into())));
+        }
+        lock(&self.sent).push((
+            mail.to.clone(),
+            mail.purpose,
+            secrecy::ExposeSecret::expose_secret(&mail.link).to_string(),
+            mail.correlation_id,
+        ));
+        ready(Ok(()))
     }
 }

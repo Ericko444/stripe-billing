@@ -12,6 +12,8 @@ mod facade;
 mod password_change;
 mod profile;
 mod rate_limit;
+mod reset;
+mod reset_worker;
 mod session;
 #[cfg(test)]
 mod test_support;
@@ -30,5 +32,9 @@ pub use facade::Authentication;
 pub use password_change::PasswordChangeError;
 pub use profile::ProfileError;
 pub use rate_limit::InMemoryRateLimiter;
+pub use reset::{IssueOutcome, PasswordResetService, RESET_TOKEN_LIFETIME, ResetError};
+pub use reset_worker::{
+    RESET_QUEUE_CAPACITY, ResetJob, ResetQueue, ResetReceiver, reset_queue, run_reset_worker,
+};
 pub use session::{ActiveSession, Me, SelectTenantError, SessionError, TenantSelection};
 pub use token::{TokenGenerationError, generate_token};

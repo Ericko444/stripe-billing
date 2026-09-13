@@ -1,7 +1,6 @@
 use std::fmt;
 use std::net::{IpAddr, Ipv6Addr};
 
-use sha2::{Digest, Sha256};
 use time::Duration;
 
 use crate::Email;
@@ -83,7 +82,7 @@ impl RateKey {
 }
 
 fn address_hash(email: &Email) -> String {
-    hex::encode(Sha256::digest(email.as_str().as_bytes()))
+    email.fingerprint()
 }
 
 /// At most `max` events per `window`.

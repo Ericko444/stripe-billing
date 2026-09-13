@@ -16,6 +16,7 @@ identity-domain.workspace = true
 secrecy.workspace = true
 thiserror.workspace = true
 time.workspace = true
+tracing.workspace = true
 # `sync` for the semaphore bounding concurrent hashes, `rt` for
 # `spawn_blocking`. Named here rather than relied on through feature
 # unification: today `sqlx` happens to turn `sync` on for the whole

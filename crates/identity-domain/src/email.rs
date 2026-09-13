@@ -1,5 +1,6 @@
 use std::fmt;
 
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// Longest address accepted, in bytes: the path limit RFC 5321 places on a
@@ -47,6 +48,13 @@ impl Email {
     /// The normalised address.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// `hex(SHA-256(address))` -- a stable, non-reversible handle on an
+    /// address, for a log line or a rate-limit key that must not hold the
+    /// address itself. Two spellings of one address share a fingerprint.
+    pub fn fingerprint(&self) -> String {
+        hex::encode(Sha256::digest(self.0.as_bytes()))
     }
 }
 

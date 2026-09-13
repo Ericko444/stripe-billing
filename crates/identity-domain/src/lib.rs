@@ -19,6 +19,7 @@ mod account_event;
 mod email;
 mod ids;
 mod password;
+mod password_token;
 mod ports;
 mod rate_limit;
 mod role;
@@ -33,9 +34,10 @@ pub use password::{
     MAX_PASSWORD_CHARS, MIN_PASSWORD_CHARS, NewPassword, Password, PasswordHash,
     PasswordPolicyError,
 };
+pub use password_token::{NewPasswordToken, OutgoingMail, TokenPurpose};
 pub use ports::{
-    Clock, MembershipRepository, PasswordHashError, PasswordHasher, RepositoryError,
-    SessionRepository, UserRepository, Verification,
+    Clock, MailError, Mailer, MembershipRepository, PasswordHashError, PasswordHasher,
+    PasswordTokenRepository, RepositoryError, SessionRepository, UserRepository, Verification,
 };
 pub use rate_limit::{ClientIp, RateDecision, RateKey, RateLimit, RateLimiter};
 pub use role::{Role, RoleParseError};

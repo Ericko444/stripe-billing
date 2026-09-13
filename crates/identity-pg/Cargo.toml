@@ -23,6 +23,8 @@ uuid.workspace = true
 # The proof that all three migrators share a database lives in `demo`, the
 # one crate that already names every module.
 [dev-dependencies]
+hex.workspace = true
+secrecy.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true
 

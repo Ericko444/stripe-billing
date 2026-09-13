@@ -7,3 +7,4 @@
 //! library target for an integration test to link against.
 
 pub mod identity_tenant;
+pub mod log_mailer;

@@ -13,8 +13,8 @@ use thiserror::Error;
 use time::OffsetDateTime;
 
 use crate::{
-    AccountEvent, DisplayName, Email, Membership, NewPassword, NewSession, Password, PasswordHash,
-    Selector, SessionId, StoredSession, User, UserId,
+    AccountEvent, DisplayName, Email, Membership, NewPassword, NewPasswordToken, NewSession,
+    OutgoingMail, Password, PasswordHash, Selector, SessionId, StoredSession, User, UserId,
 };
 
 /// Finds and updates users.
@@ -112,6 +112,33 @@ pub trait SessionRepository: Send + Sync {
     /// Deletes session `id`, if it still exists.
     fn delete(&self, id: SessionId) -> impl Future<Output = Result<(), RepositoryError>> + Send;
 }
+
+/// Stores reset and invitation tokens.
+pub trait PasswordTokenRepository: Send + Sync {
+    /// Stores `token` in place of any outstanding token of the same user and
+    /// purpose, and records `event` once per active membership -- in one
+    /// transaction. Issuing a link therefore invalidates the previous one in
+    /// the same commit that creates the new one; the database's
+    /// `UNIQUE (user_id, purpose)` makes a second outstanding token
+    /// impossible whatever order this runs in.
+    fn replace(
+        &self,
+        token: &NewPasswordToken,
+        event: Option<&AccountEvent>,
+    ) -> impl Future<Output = Result<(), RepositoryError>> + Send;
+}
+
+/// Sends the module's mail. The demo's implementation logs; a real one
+/// talks to a mail provider and never logs a body.
+pub trait Mailer: Send + Sync {
+    /// Sends `mail`.
+    fn send(&self, mail: &OutgoingMail) -> impl Future<Output = Result<(), MailError>> + Send;
+}
+
+/// A mail could not be sent. The message is for logs.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("mail not sent: {0}")]
+pub struct MailError(pub String);
 
 /// The one clock the module reads.
 ///

@@ -13,11 +13,13 @@
 mod error;
 mod fan_out;
 mod membership_repository;
+mod password_token_repository;
 mod session_repository;
 mod user_repository;
 
 pub use error::IdentityPgError;
 pub use membership_repository::PgMembershipRepository;
+pub use password_token_repository::PgPasswordTokenRepository;
 pub use session_repository::PgSessionRepository;
 pub use user_repository::PgUserRepository;
 

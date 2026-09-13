@@ -41,6 +41,12 @@ pub enum Actor {
     /// The system itself acted -- webhook processing, scheduled work, or
     /// any path with no authenticated caller behind it.
     System,
+    /// Someone acted without authenticating -- a password reset requested
+    /// or completed by whoever holds the address or the link. Distinct from
+    /// `System`: a person caused it, the module just cannot say who. Carries
+    /// no payload -- in particular no IP address, which is personal data the
+    /// journal is designed never to hold.
+    Anonymous,
 }
 
 #[cfg(test)]

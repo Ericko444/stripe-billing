@@ -44,6 +44,7 @@ fn actor_columns(actor: &Actor) -> (&'static str, Option<Uuid>) {
     match actor {
         Actor::User(subject_id) => ("user", Some(subject_id.as_uuid())),
         Actor::System => ("system", None),
+        Actor::Anonymous => ("anonymous", None),
     }
 }
 
@@ -67,6 +68,7 @@ fn action_kind(action: &Action) -> &'static str {
         Action::UserUpdated => "user.updated",
         Action::PasswordChanged => "password.changed",
         Action::SessionsRevoked => "sessions.revoked",
+        Action::PasswordResetRequested => "password_reset.requested",
     }
 }
 
