@@ -113,6 +113,33 @@ impl fmt::Debug for NewPassword {
     }
 }
 
+/// A stored password hash: an Argon2id PHC string
+/// (`$argon2id$v=19$m=…,t=…,p=…$salt$hash`), which records its own
+/// algorithm, parameters and salt.
+///
+/// Not a secret in the way a password is, but it is offline-cracking
+/// material, so `Debug` is redacted all the same.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PasswordHash(String);
+
+impl PasswordHash {
+    /// Wraps a PHC string, as produced by a hasher or read from storage.
+    pub fn new(phc: String) -> Self {
+        Self(phc)
+    }
+
+    /// The PHC string, for storage or for a hasher to parse.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for PasswordHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PasswordHash(..)")
+    }
+}
+
 /// Why a new password was refused. Safe to show a caller: it describes the
 /// rule, not the password, and it is only ever returned for a password the
 /// caller is *setting*.

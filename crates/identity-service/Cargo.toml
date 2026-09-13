@@ -1,0 +1,24 @@
+[package]
+name = "identity-service"
+description = "Identity module use cases, plus the Argon2id implementation of identity-domain's hasher port. No dependency on the billing module."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+argon2.workspace = true
+identity-domain.workspace = true
+secrecy.workspace = true
+# `sync` for the semaphore bounding concurrent hashes, `rt` for
+# `spawn_blocking`. Named here rather than relied on through feature
+# unification: today `sqlx` happens to turn `sync` on for the whole
+# workspace, and nothing guarantees it keeps doing so.
+tokio = { workspace = true, features = ["sync", "rt"] }
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

@@ -10,6 +10,17 @@ members = ["crates/*"]
 [profile.dev]
 debug = "line-tables-only"
 
+# Argon2id at the identity module's live parameters (19 MiB, t=2) is a
+# memory-hard function doing tens of millions of unoptimised block operations
+# in a debug build -- seconds per login in `cargo run`, and slow tests. Only
+# the hashing crates are optimised; the workspace's own code stays debug.
+# `cargo test` inherits these overrides from `dev`.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
@@ -39,6 +50,7 @@ audit-pg = { path = "crates/audit-pg" }
 # and no billing crate names them -- both directions are checked in CI.
 identity-domain = { path = "crates/identity-domain" }
 identity-pg = { path = "crates/identity-pg" }
+identity-service = { path = "crates/identity-service" }
 
 # Stripe client, modular line. A release candidate over the stale 0.41 stable
 # line, so pinned exactly: a caret range would float across RCs, which may
@@ -66,6 +78,9 @@ async-stripe-core = { version = "=1.0.0-rc.8", features = ["customer", "setup_in
 # PaymentMethod detach + attach metadata for the payment-method routes.
 # default-features off, same discipline as the lines above.
 async-stripe-payment = { version = "=1.0.0-rc.8", default-features = false, features = ["payment_method"] }
+# Argon2id for password hashing in the identity module (RustCrypto, pure Rust).
+# Default features supply `alloc`, PHC strings and OS-random salts.
+argon2 = "0.6.0"
 async-trait = "0.1.92"
 axum = "0.8.9"
 dotenvy = "0.15.7"
