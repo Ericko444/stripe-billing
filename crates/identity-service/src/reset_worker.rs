@@ -33,6 +33,14 @@ pub fn reset_queue(capacity: usize) -> (ResetQueue, ResetReceiver) {
     (ResetQueue(sender), ResetReceiver(receiver))
 }
 
+impl ResetReceiver {
+    /// Takes one waiting job without waiting, if there is one. For tests that
+    /// assert what a request queued without running the worker.
+    pub fn try_recv(&mut self) -> Option<ResetJob> {
+        self.0.try_recv().ok()
+    }
+}
+
 impl ResetQueue {
     /// Queues `job` without waiting. `false` if the queue is full or the
     /// worker has stopped -- the caller answers the request the same way

@@ -21,6 +21,7 @@ mod csrf;
 mod dto;
 mod error;
 pub mod limits;
+mod reset_routes;
 mod routes;
 mod session_extract;
 mod state;
@@ -31,7 +32,7 @@ pub use correlation::{correlation_id, layer as correlation_layer};
 pub use csrf::{AllowedOrigins, origin_check};
 pub use error::{ErrorKind, IdentityError};
 pub use session_extract::AuthenticatedSession;
-pub use state::IdentityState;
+pub use state::{IdentityState, ResetRequests};
 
 /// Largest request body an identity route reads. Every body here is a
 /// handful of short strings; the limit bounds what an unauthenticated caller
@@ -51,6 +52,10 @@ pub fn identity_router(state: IdentityState) -> Router {
         .route("/auth/tenant", post(routes::select_tenant))
         .route("/auth/logout", post(routes::logout))
         .route("/auth/password/change", post(routes::change_password))
+        .route(
+            "/auth/password-reset/request",
+            post(reset_routes::request_password_reset),
+        )
         .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))
         .layer(Extension(state))
         .layer(middleware::from_fn(correlation::layer))

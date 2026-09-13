@@ -145,3 +145,23 @@ pub struct ChangePasswordRequest {
     /// The password to replace it with.
     pub new_password: String,
 }
+
+/// `POST /auth/password-reset/request` body.
+#[derive(Debug, Deserialize)]
+pub struct ResetRequest {
+    /// The address to send a link to, if it has an account.
+    pub email: String,
+}
+
+/// `POST /auth/password-reset/request` response -- one body, always, whatever
+/// the address. Nothing in it is computed from the request.
+#[derive(Debug, Serialize)]
+pub struct ResetRequestAccepted {
+    /// A fixed sentence the frontend may show as is.
+    pub message: &'static str,
+}
+
+/// The only body `POST /auth/password-reset/request` ever answers `202` with.
+pub const RESET_REQUEST_ACCEPTED: ResetRequestAccepted = ResetRequestAccepted {
+    message: "If an account exists for that address, a password reset link is on its way.",
+};

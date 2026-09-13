@@ -36,10 +36,16 @@ use axum::Router;
 use axum::extract::Extension;
 use axum::middleware;
 use demo::identity_tenant::IdentityTenant;
+use demo::log_mailer::LogMailer;
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use identity_api::{AllowedOrigins, IdentityState, identity_router, origin_check};
-use identity_pg::{PgMembershipRepository, PgSessionRepository, PgUserRepository};
-use identity_service::{Argon2Hasher, AuthService, InMemoryRateLimiter, SystemClock};
+use identity_pg::{
+    PgMembershipRepository, PgPasswordTokenRepository, PgSessionRepository, PgUserRepository,
+};
+use identity_service::{
+    Argon2Hasher, AuthService, InMemoryRateLimiter, PasswordResetService, RESET_QUEUE_CAPACITY,
+    SystemClock, reset_queue, run_reset_worker,
+};
 use persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgOutboundRequestRepository,
     PgPaymentMethodRepository, PgPlanRepository, PgSubscriptionRepository,
@@ -79,6 +85,9 @@ struct Config {
     /// The one proxy whose `X-Forwarded-For` is believed, if the demo sits
     /// behind one. Unset: the socket peer is the client.
     identity_trusted_proxy: Option<IpAddr>,
+    /// The frontend's own origin, which reset and invitation links point
+    /// at -- `{this}/reset-password#token=...`.
+    identity_public_base_url: String,
 }
 
 /// Why startup configuration could not be assembled. Each variant names the
@@ -125,6 +134,7 @@ impl Config {
         if identity_allowed_origins.is_empty() {
             return Err(ConfigError::Missing("IDENTITY_ALLOWED_ORIGINS"));
         }
+        let identity_public_base_url = required("IDENTITY_PUBLIC_BASE_URL")?;
         let identity_trusted_proxy = optional("IDENTITY_TRUSTED_PROXY")
             .map(|raw| {
                 raw.parse::<IpAddr>()
@@ -141,6 +151,7 @@ impl Config {
             port,
             identity_allowed_origins,
             identity_trusted_proxy,
+            identity_public_base_url,
         })
     }
 }
@@ -242,9 +253,27 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         Argon2Hasher::new()?,
         SystemClock,
     );
+    // Password reset runs in its own task, fed by a bounded queue: the
+    // request handler only enqueues, so its response cannot depend on whether
+    // an account exists. The demo mailer logs links instead of sending them --
+    // said loudly, every start.
+    let resets = PasswordResetService::new(
+        PgUserRepository::new(pool.clone()),
+        PgPasswordTokenRepository::new(pool.clone()),
+        LogMailer,
+        SystemClock,
+        config.identity_public_base_url,
+    );
+    let (reset_queue, reset_receiver) = reset_queue(RESET_QUEUE_CAPACITY);
+    tokio::spawn(run_reset_worker(reset_receiver, resets));
+    tracing::warn!(
+        "password reset and invitation links are written to this log by the demo mailer, not sent"
+    );
+
     let mut identity = IdentityState::new(
         Arc::new(authentication),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
+        reset_queue,
     );
     if let Some(proxy) = config.identity_trusted_proxy {
         identity = identity.with_trusted_proxy(proxy);
@@ -363,6 +392,7 @@ mod tests {
             "IDENTITY_ALLOWED_ORIGINS",
             "https://app.example, http://localhost:5173",
         ),
+        ("IDENTITY_PUBLIC_BASE_URL", "http://localhost:5173"),
     ];
 
     /// `FULL_ENV` with `name` removed and `extra` added.
@@ -416,6 +446,7 @@ mod tests {
             "CHECKOUT_CANCEL_URL",
             "PORT",
             "IDENTITY_ALLOWED_ORIGINS",
+            "IDENTITY_PUBLIC_BASE_URL",
         ] {
             let result = Config::from_env(getter(env_without(name, &[])));
             assert!(

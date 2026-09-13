@@ -177,6 +177,7 @@ fn state(outage: bool) -> IdentityState {
     IdentityState::new(
         Arc::new(ScriptedAuth { outage }),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
+        identity_service::reset_queue(8).0,
     )
 }
 

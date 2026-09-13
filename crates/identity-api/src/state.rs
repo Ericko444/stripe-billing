@@ -2,7 +2,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use identity_domain::RateLimiter;
-use identity_service::Authentication;
+use identity_service::{Authentication, ResetQueue};
 
 /// What the identity routes and [`AuthenticatedSession`] need, carried as a
 /// request extension.
@@ -18,15 +18,22 @@ use identity_service::Authentication;
 pub struct IdentityState {
     authentication: Arc<dyn Authentication>,
     limiter: Arc<dyn RateLimiter>,
+    reset_queue: ResetQueue,
     trusted_proxy: Option<IpAddr>,
 }
 
 impl IdentityState {
-    /// State over the given use cases and rate limiter, trusting no proxy.
-    pub fn new(authentication: Arc<dyn Authentication>, limiter: Arc<dyn RateLimiter>) -> Self {
+    /// State over the use cases, the rate limiter and the queue feeding the
+    /// password reset worker, trusting no proxy.
+    pub fn new(
+        authentication: Arc<dyn Authentication>,
+        limiter: Arc<dyn RateLimiter>,
+        reset_queue: ResetQueue,
+    ) -> Self {
         Self {
             authentication,
             limiter,
+            reset_queue,
             trusted_proxy: None,
         }
     }
@@ -52,4 +59,24 @@ impl IdentityState {
     pub fn trusted_proxy(&self) -> Option<IpAddr> {
         self.trusted_proxy
     }
+
+    /// What the reset request handler may touch, and all it may touch: the
+    /// rate limiter and the queue. No use case, and so no account data --
+    /// which is how "the response cannot depend on whether the account
+    /// exists" is a property of the code rather than of its timing.
+    pub fn reset_requests(&self) -> ResetRequests<'_> {
+        ResetRequests {
+            limiter: self.limiter.as_ref(),
+            queue: &self.reset_queue,
+        }
+    }
+}
+
+/// The narrow view of [`IdentityState`] the reset request handler works
+/// through. See [`IdentityState::reset_requests`].
+pub struct ResetRequests<'a> {
+    /// Counts requests per address and per IP.
+    pub limiter: &'a dyn RateLimiter,
+    /// Hands the address to the worker.
+    pub queue: &'a ResetQueue,
 }

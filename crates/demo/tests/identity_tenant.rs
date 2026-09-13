@@ -88,6 +88,7 @@ async fn world() -> Result<World, Box<dyn Error>> {
         .layer(Extension(IdentityState::new(
             Arc::new(authentication),
             Arc::new(InMemoryRateLimiter::new(SystemClock)),
+            identity_service::reset_queue(1).0,
         )));
 
     Ok(World {
