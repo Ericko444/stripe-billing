@@ -1,0 +1,5 @@
+# Migrations are checksummed byte for byte by sqlx, which refuses to start
+# when an applied migration no longer matches its file. With autocrlf on
+# Windows, the same migration would read as CRLF on one checkout and LF on
+# another -- and on CI -- so every SQL file is checked out with LF, always.
+*.sql text eol=lf
