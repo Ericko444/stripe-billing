@@ -1,11 +1,12 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use domain::{DomainError, PaymentMethodId, TenantId};
+use service::RequestContext;
 use uuid::Uuid;
 
 use crate::dto::{PaymentMethodDto, SetupIntentDto};
-use crate::{ApiError, AppState};
+use crate::{ApiError, AppState, CorrelationId};
 
 /// Parses a path segment as a [`PaymentMethodId`]. A segment that is not a
 /// uuid names no payment method, so it takes the same 404 path as an unknown
@@ -50,11 +51,17 @@ where
 pub(crate) async fn create_setup_intent<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
 ) -> Result<Json<SetupIntentDto>, ApiError>
 where
     T: Into<TenantId>,
 {
-    let snapshot = state.writes.create_setup_intent(tenant.into()).await?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
+    let snapshot = state
+        .writes
+        .create_setup_intent(ctx)
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(SetupIntentDto::from(snapshot)))
 }
 
@@ -68,16 +75,19 @@ where
 pub(crate) async fn set_default_payment_method<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
 ) -> Result<Json<PaymentMethodDto>, ApiError>
 where
     T: Into<TenantId>,
 {
     let id = parse_payment_method_id(&id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     let payment_method = state
         .writes
-        .set_default_payment_method(tenant.into(), id)
-        .await?;
+        .set_default_payment_method(ctx, id)
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(payment_method.into()))
 }
 
@@ -91,15 +101,18 @@ where
 pub(crate) async fn remove_payment_method<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError>
 where
     T: Into<TenantId>,
 {
     let id = parse_payment_method_id(&id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     state
         .writes
-        .remove_payment_method(tenant.into(), id)
-        .await?;
+        .remove_payment_method(ctx, id)
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -43,6 +43,8 @@ crates/
   stripe-adapter/  Stripe client, idempotency ledger, webhook verification
   api/             Axum router factory, wire DTOs, error → HTTP mapping
   demo/            binary: composition root, config, demo-only auth
+  audit/           typed, append-only audit event model + the AuditSink port
+  audit-pg/        Postgres adapter for audit: its own schema and migrator
 frontend/          React + TypeScript + Vite (the demo host)
 migrations/        thirteen numbered, idempotent SQL migrations
 ```
@@ -50,11 +52,13 @@ migrations/        thirteen numbered, idempotent SQL migrations
 | crate | depends on | kind |
 |---|---|---|
 | `domain` | *nothing* | pure library |
-| `service` | `domain` | pure library |
-| `persistence` | `domain` | adapter |
+| `service` | `domain`, `audit` | pure library |
+| `persistence` | `domain`, `audit`, `audit-pg` | adapter |
 | `stripe-adapter` | `domain` | adapter |
 | `api` | `domain`, `service` | library — a `Router` factory |
-| `demo` | all five | **the only binary** |
+| `demo` | all of the above | **the only binary** |
+| `audit` | *nothing* | pure library, free-standing |
+| `audit-pg` | `audit` | adapter, free-standing |
 
 **Dependency direction is strictly inward.** `domain` declares the ports —
 `SubscriptionRepository`, `BillingProvider`, `WebhookVerifier`,
@@ -71,6 +75,15 @@ Two absences carry the design:
 One edge breaks the picture, worth naming before it is found: `stripe-adapter`
 lists `persistence` as a **dev-dependency**, because the ledger tests run the
 real adapter against a real Postgres. It never appears in a production build.
+
+**`audit` and `audit-pg` sit outside this chain entirely.** They are a
+separate, typed audit journal, laid out so a second, not-yet-built module can
+write to the same table without either module depending on the other.
+`audit/Cargo.toml` must never gain `domain`, `service`, `persistence`,
+`stripe-adapter`, `api`, `axum`, or a Stripe client — checked in CI beside the
+`domain` boundary job, and it is the checkable proof that neutrality claim
+rests on rather than a docstring. `audit-pg` is exempt: it exists to depend on
+`audit` and `sqlx`.
 
 ## 3. Running it
 
@@ -311,6 +324,46 @@ customer id, never read from the payload. Nine event types are handled;
 everything else is acknowledged and ignored. **Almost everything returns
 200** — Stripe retries non-2xx for days, so a 500 on "we don't handle this"
 would queue a permanent retry against a handler that can never succeed.
+
+**Audit trail — append-only, and why soft delete does not apply here.** Every
+mirror table carries `deleted_at`; `audit.audit_log` has no such column, on
+purpose. A mirror row models *current* state a tenant can retract; an audit
+entry models a past fact, which never becomes untrue, so there is nothing to
+retract. A soft delete is still an `UPDATE`, and reusing the pattern would
+grant the one privilege — write access to an existing row — that lets a
+tampered entry look identical to a real one. Enforced at three independent
+layers, not by convention: `AuditSink` has exactly one method (no update, no
+delete); `audit_log` has no `deleted_at`; and the role the application writes
+as, `audit_writer`, is granted `INSERT` and `SELECT` only, nothing more,
+checked by the phase's own restricted-role integration test.
+**The erasure tension** (a "delete my account" request, in real tension with
+"never deletable") is answered by keeping personal data out of the row in the
+first place, not by an exception to append-only: every identifying field in
+`AuditEntry` is an opaque id — tenant, actor, target — never a name, an
+email, or free text (see the type property below). Erasing a person erases
+the record that resolves that id to a name, wherever identity is owned; the
+audit row survives as a fact that something happened, referencing an id that
+may no longer resolve to anything.
+
+**Secrets are structurally unrepresentable, not reviewed for.** `AuditEntry`
+has no free-form field anywhere — no `String`, no `HashMap<String, String>`,
+no `details: Option<String>` — so a password, token or secret has nowhere in
+the type to go. `Actor::User` takes an opaque `SubjectId`, not a raw string;
+the crate's own rustdoc includes a `compile_fail` doctest proving
+`Actor::User("a string")` does not compile. This is checkable by reading one
+file, the same standard the module holds its own `Money` and tenant-isolation
+guarantees to.
+
+**One shared database, two independent migrators.** `audit-pg` runs its own
+migrations against its own schema (`audit`), tracked in
+`audit._sqlx_migrations` rather than the billing module's own
+`_sqlx_migrations` — the two migrators run against one Postgres instance
+without colliding, in either order, idempotently. A host wires both:
+`persistence::run_migrations` and `audit_pg::run_migrations`, as `demo`'s
+composition root does. The connecting application role is not `audit_writer`
+itself — that role is `NOLOGIN` and carries no password, deliberately kept
+out of anything checked into git — a host grants its own role membership at
+deploy time: `GRANT audit_writer TO <app role>;`.
 
 **What a host must supply.** `TenantExtractor` (required): an Axum
 `FromRequestParts` extractor rejecting with the module's own `ApiError`, which

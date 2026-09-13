@@ -1,9 +1,11 @@
+use audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
 use domain::{
     BillingEvent, CustomerRepository, DomainError, EventApplication, PlanRepository,
     SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId, VerifiedEvent,
 };
 use serde_json::Value;
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
 
@@ -48,6 +50,7 @@ pub async fn apply<C, S, L>(
     plans: &L,
     event: &VerifiedEvent,
     on_missing: OnMissing,
+    correlation_id: Uuid,
 ) -> Result<EventOutcome, DomainError>
 where
     C: CustomerRepository,
@@ -88,6 +91,14 @@ where
         },
     };
 
+    let entry = AuditEntry::new(
+        audit::TenantId::new(tenant_id.as_uuid()),
+        Actor::System,
+        action_for(fields.status),
+        Target::Subscription(TargetId::new(subscription_id.as_uuid())),
+        event.created,
+        CorrelationId::new(correlation_id),
+    );
     let application = subscriptions
         .apply_event(
             tenant_id,
@@ -97,6 +108,7 @@ where
             fields.current_period_end,
             fields.cancel_at_period_end,
             event.created,
+            entry,
         )
         .await?;
 
@@ -184,6 +196,22 @@ fn billing_event_for(
                 subscription_id,
             }
         }
+    }
+}
+
+/// The same status -> outcome mapping [`billing_event_for`] makes, for the
+/// audit `Action` this write's entry carries. Kept as its own function
+/// rather than deriving one from the other: `BillingEvent` is a host-facing
+/// notification with tenant/id fields the audit log does not need, and
+/// tying the two together would make an unrelated change to one type
+/// (adding a field to `BillingEvent`, say) a compile break in `audit`.
+fn action_for(status: SubscriptionStatus) -> Action {
+    match status {
+        SubscriptionStatus::Active => Action::SubscriptionActivated,
+        SubscriptionStatus::Canceled | SubscriptionStatus::IncompleteExpired => {
+            Action::SubscriptionCanceled
+        }
+        SubscriptionStatus::PastDue | SubscriptionStatus::Incomplete => Action::SubscriptionUpdated,
     }
 }
 
@@ -321,6 +349,7 @@ mod tests {
             &InMemoryPlans::default(),
             event,
             OnMissing::NotApplied,
+            Uuid::new_v4(),
         )
         .await
     }
@@ -438,6 +467,17 @@ mod tests {
             found,
             Ok(Some(ref s)) if s.status == SubscriptionStatus::Active && s.cancel_at_period_end
         ));
+
+        let entries = subscriptions.apply_event_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant_id.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::SubscriptionActivated);
+        assert_eq!(
+            entry.target(),
+            audit::Target::Subscription(audit::TargetId::new(subscription_id.as_uuid()))
+        );
     }
 
     #[tokio::test]
@@ -488,6 +528,11 @@ mod tests {
             found,
             Ok(Some(ref s)) if s.status == SubscriptionStatus::Active && !s.cancel_at_period_end
         ));
+        assert_eq!(
+            subscriptions.apply_event_entries().len(),
+            2,
+            "a stale event is still audited -- Stripe reported a real event either way"
+        );
     }
 
     #[tokio::test]

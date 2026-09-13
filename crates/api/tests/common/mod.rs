@@ -18,7 +18,7 @@ use domain::{
     PaymentMethod, PaymentMethodId, Plan, PlanId, SetupIntentSnapshot, Subscription,
     SubscriptionId, SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
-use service::{EventOutcome, Reads, WebhookHandler, Writes};
+use service::{EventOutcome, Reads, RequestContext, WebhookHandler, Writes};
 use tracing_subscriber::fmt::MakeWriter;
 use uuid::Uuid;
 
@@ -192,7 +192,7 @@ impl Writes for UnusedWrites {
 
     async fn create_setup_intent(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
     ) -> Result<SetupIntentSnapshot, DomainError> {
         Err(DomainError::Provider(
             "UnusedWrites: the write path is not exercised by this test".to_string(),
@@ -201,7 +201,7 @@ impl Writes for UnusedWrites {
 
     async fn change_plan(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _subscription_id: SubscriptionId,
         _plan_id: PlanId,
     ) -> Result<Subscription, DomainError> {
@@ -212,7 +212,7 @@ impl Writes for UnusedWrites {
 
     async fn cancel_subscription(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _subscription_id: SubscriptionId,
         _at_period_end: bool,
     ) -> Result<Subscription, DomainError> {
@@ -223,7 +223,7 @@ impl Writes for UnusedWrites {
 
     async fn set_default_payment_method(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _payment_method_id: PaymentMethodId,
     ) -> Result<PaymentMethod, DomainError> {
         Err(DomainError::Provider(
@@ -233,7 +233,7 @@ impl Writes for UnusedWrites {
 
     async fn remove_payment_method(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _payment_method_id: PaymentMethodId,
     ) -> Result<(), DomainError> {
         Err(DomainError::Provider(
@@ -243,7 +243,7 @@ impl Writes for UnusedWrites {
 
     async fn start_checkout_session(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _plan_id: PlanId,
         _success_url: &str,
         _cancel_url: &str,
@@ -346,8 +346,9 @@ impl Writes for StubWrites {
 
     async fn create_setup_intent(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
     ) -> Result<SetupIntentSnapshot, DomainError> {
+        let tenant = ctx.tenant_id;
         let customer = self.ensure_customer(tenant).await?;
         lock(&self.setup_intent_calls).push((tenant, customer.clone()));
         Ok(SetupIntentSnapshot {
@@ -357,10 +358,11 @@ impl Writes for StubWrites {
 
     async fn change_plan(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         plan_id: PlanId,
     ) -> Result<Subscription, DomainError> {
+        let tenant = ctx.tenant_id;
         let mut subscriptions = lock(&self.subscriptions);
         let subscription = subscriptions
             .iter_mut()
@@ -374,10 +376,11 @@ impl Writes for StubWrites {
 
     async fn cancel_subscription(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         at_period_end: bool,
     ) -> Result<Subscription, DomainError> {
+        let tenant = ctx.tenant_id;
         let mut subscriptions = lock(&self.subscriptions);
         let subscription = subscriptions
             .iter_mut()
@@ -397,9 +400,10 @@ impl Writes for StubWrites {
 
     async fn set_default_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<PaymentMethod, DomainError> {
+        let tenant = ctx.tenant_id;
         let mut payment_methods = lock(&self.payment_methods);
         // Ownership check first: an unknown or cross-tenant id 404s here the
         // same way `WriteService` does, and never records a call.
@@ -427,9 +431,10 @@ impl Writes for StubWrites {
 
     async fn remove_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<(), DomainError> {
+        let tenant = ctx.tenant_id;
         let mut payment_methods = lock(&self.payment_methods);
         let row = payment_methods
             .iter_mut()
@@ -444,11 +449,12 @@ impl Writes for StubWrites {
 
     async fn start_checkout_session(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         plan_id: PlanId,
         _success_url: &str,
         _cancel_url: &str,
     ) -> Result<CheckoutSessionSnapshot, DomainError> {
+        let tenant = ctx.tenant_id;
         // Resolve the plan tenant-scoped first, like `WriteService` -- a
         // cross-tenant or unknown id 404s here and records no call.
         let price_id = lock(&self.plans)

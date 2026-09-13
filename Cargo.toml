@@ -25,6 +25,15 @@ service = { path = "crates/service" }
 persistence = { path = "crates/persistence" }
 stripe-adapter = { path = "crates/stripe-adapter" }
 api = { path = "crates/api" }
+# The audit journal (Phase 7): typed events + the `AuditSink` port, no I/O.
+# Named separately from the six crates above -- it is deliberately not part
+# of this module's own inward dependency chain; a second, not-yet-built
+# module depends on it too, and neither module may depend on the other.
+audit = { path = "crates/audit" }
+# Postgres adapter for `audit` -- its own schema, migrator and grant. Kept
+# separate from `audit` itself so the identity module can depend on the
+# model without compiling sqlx to do it.
+audit-pg = { path = "crates/audit-pg" }
 
 # Stripe client, modular line. A release candidate over the stale 0.41 stable
 # line, so pinned exactly: a caret range would float across RCs, which may

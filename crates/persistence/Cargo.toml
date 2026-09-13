@@ -10,6 +10,11 @@ publish.workspace = true
 [dependencies]
 domain.workspace = true
 async-trait.workspace = true
+# Both audit-side crates: `audit` to name `AuditEntry` in the `PaymentMethodRepository::remove`
+# signature, `audit-pg` to call its `insert` inside the same transaction as
+# the business write (D1(h) -- the transaction stays inside this crate).
+audit.workspace = true
+audit-pg.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true

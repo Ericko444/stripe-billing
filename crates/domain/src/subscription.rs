@@ -1,10 +1,11 @@
 use core::fmt;
 use std::future::Future;
 
+use audit::AuditEntry;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::{CustomerId, DomainError, PlanId, TenantId};
+use crate::{CustomerId, DomainError, PlanId, SubscriptionSnapshot, TenantId};
 
 /// Identifies a `Subscription`. Distinct from other entities' ids so the
 /// compiler rejects passing the wrong id where a subscription id is expected.
@@ -212,6 +213,16 @@ pub trait SubscriptionRepository {
     /// zero-rows result is read as "a newer event already applied" rather
     /// than "no such row" -- this method cannot tell the two apart, and does
     /// not need to for its one caller.
+    ///
+    /// Takes `entry` directly: this method now has exactly one caller (the
+    /// webhook path -- `change_plan` and `cancel` each moved to their own
+    /// method in Tasks 8/9), so there is no second caller an `AuditEntry`
+    /// parameter could starve of one, the same reasoning
+    /// [`PaymentMethodRepository::set_default`](crate::PaymentMethodRepository::set_default)
+    /// gives. Written **regardless of Applied vs. Stale**, matching every
+    /// other audited write in this module: Stripe reported a real event
+    /// either way, and a rejected write is itself evidence worth keeping
+    /// (e.g. for debugging out-of-order delivery).
     #[allow(clippy::too_many_arguments)]
     fn apply_event(
         &self,
@@ -222,6 +233,7 @@ pub trait SubscriptionRepository {
         current_period_end: OffsetDateTime,
         cancel_at_period_end: bool,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> impl Future<Output = Result<EventApplication, DomainError>> + Send;
 
     /// Repoints a subscription at a different local plan.
@@ -254,6 +266,69 @@ pub trait SubscriptionRepository {
         id: SubscriptionId,
         plan_id: PlanId,
     ) -> impl Future<Output = Result<(), DomainError>> + Send;
+
+    /// Repoints the subscription at `plan_id` **and** applies Stripe's
+    /// returned `snapshot`, in one transaction with the audit entry that
+    /// records the change.
+    ///
+    /// This exists because `Writes::change_plan` was, before this method,
+    /// the one place outside the webhook path making **two** separate
+    /// writes to a subscription row -- `set_plan` then `apply_event`, each
+    /// its own statement, each its own connection. A crash between them
+    /// left the mirror pointed at the new plan with the old status, a
+    /// latent gap that predates auditing. There is no honest single write
+    /// for an audit entry to be atomic *with* when the operation itself
+    /// was two writes, so this method fixes the underlying gap first: one
+    /// transaction, both writes, then the entry.
+    ///
+    /// The *authority* split `set_plan` and [`apply_event`](Self::apply_event)
+    /// document is preserved exactly, only the transaction boundary
+    /// changes: the plan repoint is still unguarded (no webhook ever writes
+    /// `plan_id`), and `snapshot` still goes through the same ordering
+    /// predicate `apply_event` uses, so a `customer.subscription.updated`
+    /// webhook racing this call still cannot be regressed by it. Returns
+    /// the row's state **after** both writes, re-read within the same
+    /// transaction -- the same "return whatever is authoritative regardless
+    /// of Applied vs. Stale" contract `service`'s `apply_subscription_snapshot`
+    /// helper already relied on when this was two separate calls.
+    ///
+    /// **Precondition:** the row identified by `(tenant_id, id)` exists and
+    /// is not soft-deleted -- the same precondition `set_plan` and
+    /// `apply_event` each already document; the caller looked the row up
+    /// first (`Writes::change_plan` does, before ever reaching Stripe).
+    #[allow(clippy::too_many_arguments)]
+    fn change_plan(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        plan_id: PlanId,
+        snapshot: SubscriptionSnapshot,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> impl Future<Output = Result<Subscription, DomainError>> + Send;
+
+    /// Applies a cancellation `snapshot` and audits it in one transaction.
+    ///
+    /// A separate method from [`apply_event`](Self::apply_event), the same
+    /// reasoning as [`PaymentMethodRepository::remove`](crate::PaymentMethodRepository::remove):
+    /// `apply_event` is also called from the webhook path, which has no
+    /// correlation id to attach yet. Unlike [`change_plan`](Self::change_plan)
+    /// there is only the one guarded write here -- `Writes::cancel_subscription`
+    /// never touches `plan_id` -- so this method is `apply_event` plus the
+    /// audit insert, not a merge of two writes.
+    ///
+    /// **Precondition:** the row identified by `(tenant_id, id)` exists,
+    /// is not soft-deleted, and is not already `Canceled` -- the caller
+    /// (`Writes::cancel_subscription`) checks all three before ever
+    /// reaching Stripe, so there is always a real cancellation to audit.
+    fn cancel(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        snapshot: SubscriptionSnapshot,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> impl Future<Output = Result<Subscription, DomainError>> + Send;
 }
 
 #[cfg(test)]

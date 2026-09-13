@@ -13,7 +13,7 @@ use domain::{
     PaymentMethod, PaymentMethodId, Plan, PlanId, SetupIntentSnapshot, Subscription,
     SubscriptionId, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
-use service::{EventOutcome, Reads, WebhookHandler, Writes};
+use service::{EventOutcome, Reads, RequestContext, WebhookHandler, Writes};
 use tracing_subscriber::fmt::MakeWriter;
 
 /// The one message every `Unused*` double's error carries -- these fakes
@@ -89,14 +89,14 @@ impl Writes for UnusedWrites {
 
     async fn create_setup_intent(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
     ) -> Result<SetupIntentSnapshot, DomainError> {
         Err(DomainError::Provider(UNUSED.to_string()))
     }
 
     async fn change_plan(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _subscription_id: SubscriptionId,
         _plan_id: PlanId,
     ) -> Result<Subscription, DomainError> {
@@ -105,7 +105,7 @@ impl Writes for UnusedWrites {
 
     async fn cancel_subscription(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _subscription_id: SubscriptionId,
         _at_period_end: bool,
     ) -> Result<Subscription, DomainError> {
@@ -114,7 +114,7 @@ impl Writes for UnusedWrites {
 
     async fn set_default_payment_method(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _payment_method_id: PaymentMethodId,
     ) -> Result<PaymentMethod, DomainError> {
         Err(DomainError::Provider(UNUSED.to_string()))
@@ -122,7 +122,7 @@ impl Writes for UnusedWrites {
 
     async fn remove_payment_method(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _payment_method_id: PaymentMethodId,
     ) -> Result<(), DomainError> {
         Err(DomainError::Provider(UNUSED.to_string()))
@@ -130,7 +130,7 @@ impl Writes for UnusedWrites {
 
     async fn start_checkout_session(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _plan_id: PlanId,
         _success_url: &str,
         _cancel_url: &str,

@@ -9,6 +9,10 @@ publish.workspace = true
 
 [dependencies]
 domain.workspace = true
+# Constructs `AuditEntry` values for the audited write paths -- the
+# equivalent of `domain`'s own dependency on `audit` for the ports that take
+# one, one layer up.
+audit.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

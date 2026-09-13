@@ -1,3 +1,4 @@
+use audit::AuditEntry;
 use domain::{
     CustomerId, DomainError, EventApplication, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
     InvoiceRepository, InvoiceStatus, Money, SubscriptionId, TenantId,
@@ -220,12 +221,21 @@ impl InvoiceRepository for PgInvoiceRepository {
         amount: Money,
         status: InvoiceStatus,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> Result<EventApplication, DomainError> {
-        // One statement: insert the mirror if it is new, otherwise update it
-        // only when this event is not older than the last one applied. The
-        // `AS inv` alias lets the DO UPDATE predicate name the existing row;
-        // `rows_affected() == 0` means the conflict fired and the predicate
-        // rejected it -- the stale signal, resolved by Postgres.
+        // One transaction (D1(h)): insert the mirror if it is new, otherwise
+        // update it only when this event is not older than the last one
+        // applied. The `AS inv` alias lets the DO UPDATE predicate name the
+        // existing row; `rows_affected() == 0` means the conflict fired and
+        // the predicate rejected it -- the stale signal, resolved by
+        // Postgres. The audit entry commits with the write either way.
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
         let result = sqlx::query(
             "INSERT INTO billing.invoices AS inv \
                  (id, tenant_id, customer_id, subscription_id, stripe_invoice_id, \
@@ -251,15 +261,27 @@ impl InvoiceRepository for PgInvoiceRepository {
         .bind(currency_code(amount.currency()))
         .bind(status.as_str())
         .bind(event_created_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(RepositoryError::from)
         .map_err(to_domain_error)?;
 
-        if result.rows_affected() == 0 {
-            Ok(EventApplication::Stale)
+        let application = if result.rows_affected() == 0 {
+            EventApplication::Stale
         } else {
-            Ok(EventApplication::Applied)
-        }
+            EventApplication::Applied
+        };
+
+        audit_pg::insert(&mut tx, &entry)
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        tx.commit()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        Ok(application)
     }
 }

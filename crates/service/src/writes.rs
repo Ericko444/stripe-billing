@@ -13,13 +13,16 @@
 //! is what keeps the read tests running in a millisecond.
 
 use async_trait::async_trait;
+use audit::{Action, Actor, AuditEntry, AuditSink, CorrelationId, Target, TargetId};
 use domain::{
     BillingProvider, CancellationTiming, CheckoutSessionParams, CheckoutSessionSnapshot,
     CreateCustomerParams, CustomerRepository, DomainError, PaymentMethod, PaymentMethodId,
     PaymentMethodRepository, PlanId, PlanRepository, SetupIntentSnapshot, Subscription,
-    SubscriptionId, SubscriptionRepository, SubscriptionSnapshot, SubscriptionStatus, TenantId,
+    SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId,
 };
 use time::OffsetDateTime;
+
+use crate::RequestContext;
 
 /// Object-safe façade over the write use cases.
 ///
@@ -59,7 +62,7 @@ pub trait Writes: Send + Sync {
     /// method to the customer.
     async fn create_setup_intent(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
     ) -> Result<SetupIntentSnapshot, DomainError>;
 
     /// Changes the tenant's subscription to `plan_id` (a **local** plan id,
@@ -71,25 +74,26 @@ pub trait Writes: Send + Sync {
     /// [`DomainError::NotFound`] with **no outbound call**; so is an unknown
     /// `plan_id`.
     ///
-    /// On success the mirror is updated by **two** writes, deliberately
-    /// separate because they answer to different authorities:
+    /// On success the mirror is updated by
+    /// [`SubscriptionRepository::change_plan`], one transaction covering
+    /// both the plan repoint and the Stripe-reported snapshot -- merged
+    /// from two separate writes specifically so an audit entry would have
+    /// one honest write to be atomic with (see that method's own rustdoc).
+    /// The *authority* split is unchanged, only the transaction boundary is:
     ///
-    /// - [`SubscriptionRepository::set_plan`] repoints `plan_id` at the plan
-    ///   *this caller* named. Unguarded: no webhook ever writes that column,
-    ///   so there is no event to be stale against.
-    /// - The snapshot Stripe returned goes through
-    ///   [`SubscriptionRepository::apply_event`]'s ordering guard, so a
-    ///   `customer.subscription.updated` webhook racing this call cannot be
-    ///   regressed by it (or vice versa) -- this is the one place outside the
-    ///   webhook path that writes those columns, and it borrows the webhook
-    ///   path's own safety.
+    /// - The plan repoint answers only to *this caller*. Unguarded: no
+    ///   webhook ever writes that column, so there is no event to be stale
+    ///   against.
+    /// - The snapshot Stripe returned goes through the same ordering guard
+    ///   `apply_event` uses elsewhere, so a `customer.subscription.updated`
+    ///   webhook racing this call cannot be regressed by it (or vice versa).
     ///
     /// A stale snapshot therefore leaves status and period bounds at the
     /// newer webhook's values while `plan_id` still moves, which is correct:
     /// the caller's plan choice is not something a webhook can be newer than.
     async fn change_plan(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         plan_id: PlanId,
     ) -> Result<Subscription, DomainError>;
@@ -107,7 +111,7 @@ pub trait Writes: Send + Sync {
     /// `apply_event`, exactly as in `change_plan`.
     async fn cancel_subscription(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         at_period_end: bool,
     ) -> Result<Subscription, DomainError>;
@@ -126,7 +130,7 @@ pub trait Writes: Send + Sync {
     /// default cleared and new one set together, never two and never none.
     async fn set_default_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<PaymentMethod, DomainError>;
 
@@ -145,7 +149,7 @@ pub trait Writes: Send + Sync {
     /// here -- the card is gone either way.
     async fn remove_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<(), DomainError>;
 
@@ -165,95 +169,70 @@ pub trait Writes: Send + Sync {
     /// logged.
     async fn start_checkout_session(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         plan_id: PlanId,
         success_url: &str,
         cancel_url: &str,
     ) -> Result<CheckoutSessionSnapshot, DomainError>;
 }
 
-/// Applies a direct (non-webhook) [`SubscriptionSnapshot`] through
-/// [`SubscriptionRepository::apply_event`], then returns the row's current
-/// state regardless of whether this particular write was admitted.
-///
-/// Shared by [`Writes::change_plan`] and [`Writes::cancel_subscription`]:
-/// both call a provider method that returns a fresh `SubscriptionSnapshot`
-/// and must apply it the same guarded way, and duplicating that dance
-/// invites the two copies to quietly drift.
-///
-/// `event_created_at` is `OffsetDateTime::now_utc()` -- there is no Stripe
-/// event here, only an API response, so "now" is this write's honest
-/// timestamp for the ordering guard. Re-reading the row afterward (rather
-/// than trusting the snapshot) is what makes a `Stale` result harmless: the
-/// caller always sees whatever is currently authoritative, never a state the
-/// guard just rejected.
-async fn apply_subscription_snapshot<S: SubscriptionRepository + Send + Sync>(
-    subscriptions: &S,
-    tenant: TenantId,
-    subscription_id: SubscriptionId,
-    snapshot: SubscriptionSnapshot,
-) -> Result<Subscription, DomainError> {
-    // `EventApplication::Applied` vs `Stale` is deliberately not branched on
-    // here -- the re-`find` below returns the row's current state either
-    // way, which is exactly right for both outcomes.
-    let _application = subscriptions
-        .apply_event(
-            tenant,
-            subscription_id,
-            snapshot.status,
-            snapshot.current_period_start,
-            snapshot.current_period_end,
-            snapshot.cancel_at_period_end,
-            OffsetDateTime::now_utc(),
-        )
-        .await?;
-    subscriptions
-        .find(tenant, subscription_id)
-        .await?
-        .ok_or(DomainError::NotFound)
-}
-
-/// Holds the [`BillingProvider`] and the four repositories a mutating call
-/// touches.
+/// Holds the [`BillingProvider`], the four repositories a mutating call
+/// touches, and an [`AuditSink`] for the two write routes with no local
+/// write of their own to be atomic with (`create_setup_intent`,
+/// `start_checkout_session` -- see their own docs, and `AuditSink`'s).
+/// Every other write's audit entry travels through its own repository
+/// method instead (D1(h)) and never touches this field.
 ///
 /// Generic over each port, matching [`ReadService`](crate::ReadService) and
-/// `WebhookProcessor`: `demo` monomorphises the concrete `stripe-adapter`
-/// and `persistence` types, and nothing is boxed on the write path. The
-/// `dyn` boundary is `Arc<dyn Writes>` on `AppState`, and nowhere else.
+/// `WebhookProcessor`: `demo` monomorphises the concrete `stripe-adapter`,
+/// `persistence` and `audit-pg` types, and nothing is boxed on the write
+/// path. The `dyn` boundary is `Arc<dyn Writes>` on `AppState`, and nowhere
+/// else.
 ///
-/// All five dependencies were taken from the start, like `ReadService`'s
-/// four, so `AppState` and every host's wiring stayed fixed as the trait
-/// filled in.
+/// All five original dependencies were taken from the start, like
+/// `ReadService`'s four, so `AppState` and every host's wiring stayed fixed
+/// as the trait filled in; `audit_sink` is the one addition, made when the
+/// two standalone-audit routes actually needed it.
 #[allow(dead_code)]
-pub struct WriteService<P, C, S, M, L> {
+pub struct WriteService<P, C, S, M, L, K> {
     provider: P,
     customers: C,
     subscriptions: S,
     payment_methods: M,
     plans: L,
+    audit_sink: K,
 }
 
-impl<P, C, S, M, L> WriteService<P, C, S, M, L> {
-    /// Wraps the provider and the four write repositories.
-    pub fn new(provider: P, customers: C, subscriptions: S, payment_methods: M, plans: L) -> Self {
+impl<P, C, S, M, L, K> WriteService<P, C, S, M, L, K> {
+    /// Wraps the provider, the four write repositories, and the audit sink.
+    pub fn new(
+        provider: P,
+        customers: C,
+        subscriptions: S,
+        payment_methods: M,
+        plans: L,
+        audit_sink: K,
+    ) -> Self {
         Self {
             provider,
             customers,
             subscriptions,
             payment_methods,
             plans,
+            audit_sink,
         }
     }
 }
 
 #[async_trait]
-impl<P, C, S, M, L> Writes for WriteService<P, C, S, M, L>
+impl<P, C, S, M, L, K> Writes for WriteService<P, C, S, M, L, K>
 where
     P: BillingProvider,
     C: CustomerRepository + Send + Sync,
     S: SubscriptionRepository + Send + Sync,
     M: PaymentMethodRepository + Send + Sync,
     L: PlanRepository + Send + Sync,
+    K: AuditSink + Send + Sync,
 {
     async fn ensure_customer(&self, tenant: TenantId) -> Result<String, DomainError> {
         // Already linked? Hand back that id and never touch Stripe. This is
@@ -293,20 +272,58 @@ where
 
     async fn create_setup_intent(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
     ) -> Result<SetupIntentSnapshot, DomainError> {
+        let tenant = ctx.tenant_id;
         let stripe_customer_id = self.ensure_customer(tenant).await?;
-        self.provider
+        let snapshot = self
+            .provider
             .create_setup_intent(tenant, &stripe_customer_id)
+            .await?;
+
+        // No local write here at all (F2) -- there is nothing for an audit
+        // entry to be atomic with, so it goes through `AuditSink` standalone
+        // rather than a repository method's transaction. `ensure_customer`
+        // just guaranteed this tenant has a linked customer row; this
+        // re-derives its local id (the same lookup `ensure_customer` already
+        // does internally) because that id, not the Stripe one, is what a
+        // `Target` can name.
+        let customer_id = self
+            .customers
+            .list(tenant)
+            .await?
+            .into_iter()
+            .find(|c| c.stripe_customer_id.as_deref() == Some(stripe_customer_id.as_str()))
+            .map(|c| c.id)
+            .ok_or_else(|| {
+                DomainError::Repository(
+                    "ensure_customer reported a linked customer that list() cannot find"
+                        .to_string(),
+                )
+            })?;
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::SetupIntentCreated,
+            Target::Customer(TargetId::new(customer_id.as_uuid())),
+            OffsetDateTime::now_utc(),
+            CorrelationId::new(ctx.correlation_id),
+        );
+        self.audit_sink
+            .record(entry)
             .await
+            .map_err(|err| DomainError::Repository(err.to_string()))?;
+
+        Ok(snapshot)
     }
 
     async fn change_plan(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         plan_id: PlanId,
     ) -> Result<Subscription, DomainError> {
+        let tenant = ctx.tenant_id;
         let subscription = self
             .subscriptions
             .find(tenant, subscription_id)
@@ -329,24 +346,34 @@ where
             .await?;
 
         // Stripe accepted the change, so the mirror may now be repointed at
-        // the new plan. Two separate writes because they answer to two
-        // different authorities: `set_plan` records what *this caller* asked
-        // for (unguarded -- no webhook writes `plan_id`), while the snapshot
-        // below records what *Stripe* reported and goes through the webhook
-        // ordering guard. See `SubscriptionRepository::set_plan`'s rustdoc.
+        // the new plan. One transaction, one port method
+        // (`SubscriptionRepository::change_plan`, not the standalone
+        // `set_plan` + `apply_event` this used to be) -- see that method's
+        // rustdoc for why the two writes needed merging before this could be
+        // audited honestly (F5). The *authority* split is unchanged: the
+        // plan repoint still answers only to this caller, the snapshot still
+        // goes through the webhook ordering guard.
+        let now = OffsetDateTime::now_utc();
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::SubscriptionPlanChanged,
+            Target::Subscription(TargetId::new(subscription_id.as_uuid())),
+            now,
+            CorrelationId::new(ctx.correlation_id),
+        );
         self.subscriptions
-            .set_plan(tenant, subscription_id, plan_id)
-            .await?;
-
-        apply_subscription_snapshot(&self.subscriptions, tenant, subscription_id, snapshot).await
+            .change_plan(tenant, subscription_id, plan_id, snapshot, now, entry)
+            .await
     }
 
     async fn cancel_subscription(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         subscription_id: SubscriptionId,
         at_period_end: bool,
     ) -> Result<Subscription, DomainError> {
+        let tenant = ctx.tenant_id;
         let subscription = self
             .subscriptions
             .find(tenant, subscription_id)
@@ -367,14 +394,26 @@ where
             .cancel_subscription(tenant, &subscription.stripe_subscription_id, timing)
             .await?;
 
-        apply_subscription_snapshot(&self.subscriptions, tenant, subscription_id, snapshot).await
+        let now = OffsetDateTime::now_utc();
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::SubscriptionCanceled,
+            Target::Subscription(TargetId::new(subscription_id.as_uuid())),
+            now,
+            CorrelationId::new(ctx.correlation_id),
+        );
+        self.subscriptions
+            .cancel(tenant, subscription_id, snapshot, now, entry)
+            .await
     }
 
     async fn set_default_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<PaymentMethod, DomainError> {
+        let tenant = ctx.tenant_id;
         let payment_method = self
             .payment_methods
             .find(tenant, payment_method_id)
@@ -405,9 +444,18 @@ where
             .await?;
 
         // Then the mirror, in one guarded-free statement (old default
-        // cleared and new one set together).
+        // cleared and new one set together), audited in the same
+        // transaction (D1(h)).
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::PaymentMethodSetDefault,
+            Target::PaymentMethod(TargetId::new(payment_method_id.as_uuid())),
+            OffsetDateTime::now_utc(),
+            CorrelationId::new(ctx.correlation_id),
+        );
         self.payment_methods
-            .set_default(tenant, payment_method.customer_id, payment_method_id)
+            .set_default(tenant, payment_method.customer_id, payment_method_id, entry)
             .await?;
 
         self.payment_methods
@@ -418,9 +466,10 @@ where
 
     async fn remove_payment_method(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         payment_method_id: PaymentMethodId,
     ) -> Result<(), DomainError> {
+        let tenant = ctx.tenant_id;
         let payment_method = self
             .payment_methods
             .find(tenant, payment_method_id)
@@ -434,17 +483,25 @@ where
             .detach_payment_method(tenant, &payment_method.stripe_payment_method_id)
             .await?;
 
-        // Then the mirror. `Applied` vs `Stale` is not branched on: a stale
-        // result means a `payment_method.detached` webhook already
-        // soft-deleted the row, which is not an error -- the card is gone
-        // either way.
+        // Then the mirror, audited in the same transaction (D1(h)). `Applied`
+        // vs `Stale` is not branched on: a stale result means a
+        // `payment_method.detached` webhook already soft-deleted the row,
+        // which is not an error -- the card is gone either way, and the
+        // entry is written regardless (Stripe already confirmed the detach
+        // above, so the request happened either way -- see
+        // `PaymentMethodRepository::remove`'s own docs).
+        let now = OffsetDateTime::now_utc();
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::PaymentMethodDetached,
+            Target::PaymentMethod(TargetId::new(payment_method_id.as_uuid())),
+            now,
+            CorrelationId::new(ctx.correlation_id),
+        );
         let _application = self
             .payment_methods
-            .detach_event(
-                tenant,
-                &payment_method.stripe_payment_method_id,
-                OffsetDateTime::now_utc(),
-            )
+            .remove(tenant, &payment_method.stripe_payment_method_id, now, entry)
             .await?;
 
         Ok(())
@@ -452,7 +509,7 @@ where
 
     async fn start_checkout_session(
         &self,
-        tenant: TenantId,
+        ctx: RequestContext,
         plan_id: PlanId,
         success_url: &str,
         cancel_url: &str,
@@ -460,6 +517,7 @@ where
         // Resolve the plan first: an unknown or cross-tenant id 404s here,
         // before `ensure_customer` could create a Stripe customer and before
         // the provider is reached.
+        let tenant = ctx.tenant_id;
         let plan = self
             .plans
             .find(tenant, plan_id)
@@ -468,7 +526,8 @@ where
 
         let stripe_customer_id = self.ensure_customer(tenant).await?;
 
-        self.provider
+        let snapshot = self
+            .provider
             .create_checkout_session(
                 tenant,
                 CheckoutSessionParams {
@@ -478,7 +537,28 @@ where
                     cancel_url: cancel_url.to_string(),
                 },
             )
+            .await?;
+
+        // No local write here at all (F2), the same reasoning as
+        // `create_setup_intent`: the local `subscriptions` row is created
+        // later, by the `customer.subscription.created` webhook once the
+        // customer completes checkout. `plan_id` is already this method's
+        // own parameter, so unlike `create_setup_intent` there is no extra
+        // lookup needed for the target.
+        let entry = AuditEntry::new(
+            audit::TenantId::new(tenant.as_uuid()),
+            Actor::System,
+            Action::CheckoutSessionStarted,
+            Target::Plan(TargetId::new(plan_id.as_uuid())),
+            OffsetDateTime::now_utc(),
+            CorrelationId::new(ctx.correlation_id),
+        );
+        self.audit_sink
+            .record(entry)
             .await
+            .map_err(|err| DomainError::Repository(err.to_string()))?;
+
+        Ok(snapshot)
     }
 }
 
@@ -493,7 +573,7 @@ mod tests {
     use super::*;
     use crate::test_support::{
         CallLog, InMemoryCustomers, InMemoryPaymentMethods, InMemoryPlans, InMemorySubscriptions,
-        StubBillingProvider,
+        StubAuditSink, StubBillingProvider,
     };
 
     type TestWrites = WriteService<
@@ -502,12 +582,20 @@ mod tests {
         InMemorySubscriptions,
         InMemoryPaymentMethods,
         InMemoryPlans,
+        StubAuditSink,
     >;
 
     /// Compiles only if `Writes` is dyn-compatible -- the property the
     /// `#[async_trait]` decision exists for.
     #[allow(dead_code)]
     fn assert_dyn_compatible(_w: &dyn Writes) {}
+
+    /// Wraps `tenant` in a `RequestContext` with a fresh correlation id --
+    /// every test below cares about the tenant only, so this keeps the
+    /// `RequestContext` plumbing out of each call site.
+    fn ctx(tenant: TenantId) -> RequestContext {
+        RequestContext::new(tenant, Uuid::new_v4())
+    }
 
     /// A `WriteService` over the in-memory doubles. Seed and inspect through
     /// the fields: `svc.customers.seed(..)`, `svc.provider.create_customer_calls()`.
@@ -518,6 +606,7 @@ mod tests {
             InMemorySubscriptions::default(),
             InMemoryPaymentMethods::default(),
             InMemoryPlans::default(),
+            StubAuditSink::default(),
         )
     }
 
@@ -597,6 +686,7 @@ mod tests {
             InMemorySubscriptions::default(),
             InMemoryPaymentMethods::with_call_log(log),
             InMemoryPlans::default(),
+            StubAuditSink::default(),
         )
     }
 
@@ -638,7 +728,7 @@ mod tests {
         let tenant = TenantId::new(Uuid::new_v4());
         let svc = service();
 
-        let snapshot = svc.create_setup_intent(tenant).await?;
+        let snapshot = svc.create_setup_intent(ctx(tenant)).await?;
 
         // ensure_customer created a customer (provider hit once), and the
         // SetupIntent was for that same id.
@@ -654,12 +744,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_setup_intent_writes_a_standalone_audit_entry() -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let correlation_id = Uuid::new_v4();
+
+        svc.create_setup_intent(RequestContext::new(tenant, correlation_id))
+            .await?;
+
+        let entries = svc.audit_sink.entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::SetupIntentCreated);
+        assert!(matches!(entry.target(), audit::Target::Customer(_)));
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn create_setup_intent_reuses_a_linked_customer() -> Result<(), Box<dyn Error>> {
         let tenant = TenantId::new(Uuid::new_v4());
         let svc = service();
         svc.customers.seed(linked_customer(tenant, "cus_linked"));
 
-        svc.create_setup_intent(tenant).await?;
+        svc.create_setup_intent(ctx(tenant)).await?;
 
         assert_eq!(svc.provider.create_customer_calls(), 0);
         assert_eq!(
@@ -701,7 +811,7 @@ mod tests {
         let new_plan_id = new_plan.id;
         svc.plans.seed(new_plan);
 
-        let updated = svc.change_plan(tenant, sub_id, new_plan_id).await?;
+        let updated = svc.change_plan(ctx(tenant), sub_id, new_plan_id).await?;
 
         // The provider was called with the subscription's own Stripe ids and
         // the target plan's price -- never the local uuids.
@@ -723,6 +833,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn change_plan_builds_an_audit_entry_naming_the_tenant_target_and_correlation_id()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let sub = subscription(tenant, SubscriptionStatus::Active, None);
+        let sub_id = sub.id;
+        svc.subscriptions.seed(sub);
+        let new_plan = plan(tenant, "price_audit");
+        let new_plan_id = new_plan.id;
+        svc.plans.seed(new_plan);
+        let correlation_id = Uuid::new_v4();
+
+        svc.change_plan(
+            RequestContext::new(tenant, correlation_id),
+            sub_id,
+            new_plan_id,
+        )
+        .await?;
+
+        let entries = svc.subscriptions.change_plan_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::SubscriptionPlanChanged);
+        assert_eq!(
+            entry.target(),
+            audit::Target::Subscription(audit::TargetId::new(sub_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn change_plan_for_another_tenants_subscription_is_not_found()
     -> Result<(), Box<dyn Error>> {
         let mine = TenantId::new(Uuid::new_v4());
@@ -735,7 +879,9 @@ mod tests {
         let their_plan_id = their_plan.id;
         svc.plans.seed(their_plan);
 
-        let result = svc.change_plan(mine, their_sub_id, their_plan_id).await;
+        let result = svc
+            .change_plan(ctx(mine), their_sub_id, their_plan_id)
+            .await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
         assert!(svc.provider.change_plan_calls().is_empty());
@@ -751,7 +897,7 @@ mod tests {
         svc.subscriptions.seed(sub);
 
         let result = svc
-            .change_plan(tenant, sub_id, PlanId::new(Uuid::new_v4()))
+            .change_plan(ctx(tenant), sub_id, PlanId::new(Uuid::new_v4()))
             .await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
@@ -775,7 +921,7 @@ mod tests {
         let new_plan_id = new_plan.id;
         svc.plans.seed(new_plan);
 
-        let returned = svc.change_plan(tenant, sub_id, new_plan_id).await?;
+        let returned = svc.change_plan(ctx(tenant), sub_id, new_plan_id).await?;
 
         // Stripe was still called (the plan change itself is not skipped),
         // but the guard rejected the write as stale, so the row -- and the
@@ -799,7 +945,7 @@ mod tests {
         let stripe_subscription_id = sub.stripe_subscription_id.clone();
         svc.subscriptions.seed(sub);
 
-        let updated = svc.cancel_subscription(tenant, sub_id, true).await?;
+        let updated = svc.cancel_subscription(ctx(tenant), sub_id, true).await?;
 
         assert_eq!(
             svc.provider.cancel_calls(),
@@ -818,13 +964,40 @@ mod tests {
         let stripe_subscription_id = sub.stripe_subscription_id.clone();
         svc.subscriptions.seed(sub);
 
-        let updated = svc.cancel_subscription(tenant, sub_id, false).await?;
+        let updated = svc.cancel_subscription(ctx(tenant), sub_id, false).await?;
 
         assert_eq!(
             svc.provider.cancel_calls(),
             vec![(stripe_subscription_id, CancellationTiming::Immediate)]
         );
         assert_eq!(updated.status, SubscriptionStatus::Canceled);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancel_builds_an_audit_entry_naming_the_tenant_target_and_correlation_id()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let sub = subscription(tenant, SubscriptionStatus::Active, None);
+        let sub_id = sub.id;
+        svc.subscriptions.seed(sub);
+        let correlation_id = Uuid::new_v4();
+
+        svc.cancel_subscription(RequestContext::new(tenant, correlation_id), sub_id, true)
+            .await?;
+
+        let entries = svc.subscriptions.cancel_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::SubscriptionCanceled);
+        assert_eq!(
+            entry.target(),
+            audit::Target::Subscription(audit::TargetId::new(sub_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
     }
 
@@ -837,7 +1010,7 @@ mod tests {
         let their_sub_id = their_sub.id;
         svc.subscriptions.seed(their_sub);
 
-        let result = svc.cancel_subscription(mine, their_sub_id, true).await;
+        let result = svc.cancel_subscription(ctx(mine), their_sub_id, true).await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
         assert!(svc.provider.cancel_calls().is_empty());
@@ -853,7 +1026,7 @@ mod tests {
         let sub_id = sub.id;
         svc.subscriptions.seed(sub);
 
-        let returned = svc.cancel_subscription(tenant, sub_id, true).await?;
+        let returned = svc.cancel_subscription(ctx(tenant), sub_id, true).await?;
 
         assert_eq!(returned.status, SubscriptionStatus::Canceled);
         assert!(
@@ -881,7 +1054,7 @@ mod tests {
         svc.payment_methods.seed(old_default);
         svc.payment_methods.seed(new_default);
 
-        let returned = svc.set_default_payment_method(tenant, new_id).await?;
+        let returned = svc.set_default_payment_method(ctx(tenant), new_id).await?;
 
         assert!(returned.is_default);
         assert_eq!(returned.id, new_id);
@@ -898,6 +1071,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_default_builds_an_audit_entry_naming_the_tenant_target_and_correlation_id()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let customer = linked_customer(tenant, "cus_pm_audit");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let pm = payment_method(tenant, customer_id, false);
+        let pm_id = pm.id;
+        svc.payment_methods.seed(pm);
+        let correlation_id = Uuid::new_v4();
+
+        svc.set_default_payment_method(RequestContext::new(tenant, correlation_id), pm_id)
+            .await?;
+
+        let entries = svc.payment_methods.set_default_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::PaymentMethodSetDefault);
+        assert_eq!(
+            entry.target(),
+            audit::Target::PaymentMethod(audit::TargetId::new(pm_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn set_default_calls_the_provider_before_the_repository() -> Result<(), Box<dyn Error>> {
         let log: CallLog = CallLog::default();
         let svc = service_for_ordering(log.clone(), false);
@@ -909,7 +1112,7 @@ mod tests {
         let pm_id = pm.id;
         svc.payment_methods.seed(pm);
 
-        svc.set_default_payment_method(tenant, pm_id).await?;
+        svc.set_default_payment_method(ctx(tenant), pm_id).await?;
 
         assert_eq!(
             *log.lock().unwrap_or_else(|p| p.into_inner()),
@@ -938,7 +1141,7 @@ mod tests {
         svc.payment_methods.seed(old_default);
         svc.payment_methods.seed(target);
 
-        let result = svc.set_default_payment_method(tenant, target_id).await;
+        let result = svc.set_default_payment_method(ctx(tenant), target_id).await;
 
         assert!(matches!(result, Err(DomainError::Provider(_))));
         let rows = svc.payment_methods.list(tenant).await?;
@@ -978,7 +1181,7 @@ mod tests {
         let their_pm_id = their_pm.id;
         svc.payment_methods.seed(their_pm);
 
-        let result = svc.set_default_payment_method(mine, their_pm_id).await;
+        let result = svc.set_default_payment_method(ctx(mine), their_pm_id).await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
         assert!(
@@ -1002,7 +1205,7 @@ mod tests {
         let stripe_pm_id = pm.stripe_payment_method_id.clone();
         svc.payment_methods.seed(pm);
 
-        svc.remove_payment_method(tenant, pm_id).await?;
+        svc.remove_payment_method(ctx(tenant), pm_id).await?;
 
         assert_eq!(svc.provider.detach_calls(), vec![stripe_pm_id]);
         assert_eq!(
@@ -1010,6 +1213,36 @@ mod tests {
             None,
             "the row must be soft-deleted after a successful detach"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_builds_an_audit_entry_naming_the_tenant_target_and_correlation_id()
+    -> Result<(), Box<dyn Error>> {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let customer = linked_customer(tenant, "cus_rm_audit");
+        let customer_id = customer.id;
+        svc.customers.seed(customer);
+        let pm = payment_method(tenant, customer_id, true);
+        let pm_id = pm.id;
+        svc.payment_methods.seed(pm);
+        let correlation_id = Uuid::new_v4();
+
+        svc.remove_payment_method(RequestContext::new(tenant, correlation_id), pm_id)
+            .await?;
+
+        let entries = svc.payment_methods.removed_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::PaymentMethodDetached);
+        assert_eq!(
+            entry.target(),
+            audit::Target::PaymentMethod(audit::TargetId::new(pm_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
     }
 
@@ -1025,7 +1258,7 @@ mod tests {
         let pm_id = pm.id;
         svc.payment_methods.seed(pm);
 
-        svc.remove_payment_method(tenant, pm_id).await?;
+        svc.remove_payment_method(ctx(tenant), pm_id).await?;
 
         assert_eq!(
             *log.lock().unwrap_or_else(|p| p.into_inner()),
@@ -1049,7 +1282,7 @@ mod tests {
         let pm_id = pm.id;
         svc.payment_methods.seed(pm);
 
-        let result = svc.remove_payment_method(tenant, pm_id).await;
+        let result = svc.remove_payment_method(ctx(tenant), pm_id).await;
 
         assert!(matches!(result, Err(DomainError::Provider(_))));
         assert!(
@@ -1078,7 +1311,7 @@ mod tests {
         let pm_id = pm.id;
         svc.payment_methods.seed(pm);
 
-        svc.remove_payment_method(tenant, pm_id).await?;
+        svc.remove_payment_method(ctx(tenant), pm_id).await?;
 
         assert_eq!(svc.provider.detach_calls().len(), 1);
         // Stale is not an error; the webhook path owns the row now.
@@ -1099,7 +1332,7 @@ mod tests {
         let their_pm_id = their_pm.id;
         svc.payment_methods.seed(their_pm);
 
-        let result = svc.remove_payment_method(mine, their_pm_id).await;
+        let result = svc.remove_payment_method(ctx(mine), their_pm_id).await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
         assert!(
@@ -1121,7 +1354,7 @@ mod tests {
         svc.plans.seed(plan);
 
         let snapshot = svc
-            .start_checkout_session(tenant, plan_id, "https://ok", "https://cancel")
+            .start_checkout_session(ctx(tenant), plan_id, "https://ok", "https://cancel")
             .await?;
 
         assert!(snapshot.url.contains("price_checkout"));
@@ -1135,13 +1368,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn start_checkout_session_writes_a_standalone_audit_entry() -> Result<(), Box<dyn Error>>
+    {
+        let tenant = TenantId::new(Uuid::new_v4());
+        let svc = service();
+        let plan = plan(tenant, "price_audit_checkout");
+        let plan_id = plan.id;
+        svc.plans.seed(plan);
+        let correlation_id = Uuid::new_v4();
+
+        svc.start_checkout_session(
+            RequestContext::new(tenant, correlation_id),
+            plan_id,
+            "https://ok",
+            "https://cancel",
+        )
+        .await?;
+
+        let entries = svc.audit_sink.entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::CheckoutSessionStarted);
+        assert_eq!(
+            entry.target(),
+            audit::Target::Plan(audit::TargetId::new(plan_id.as_uuid()))
+        );
+        assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn start_checkout_unknown_plan_is_not_found_and_reaches_nothing()
     -> Result<(), Box<dyn Error>> {
         let tenant = TenantId::new(Uuid::new_v4());
         let svc = service();
 
         let result = svc
-            .start_checkout_session(tenant, PlanId::new(Uuid::new_v4()), "a", "b")
+            .start_checkout_session(ctx(tenant), PlanId::new(Uuid::new_v4()), "a", "b")
             .await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));
@@ -1162,7 +1427,7 @@ mod tests {
         svc.plans.seed(their_plan);
 
         let result = svc
-            .start_checkout_session(mine, their_plan_id, "a", "b")
+            .start_checkout_session(ctx(mine), their_plan_id, "a", "b")
             .await;
 
         assert!(matches!(result, Err(DomainError::NotFound)));

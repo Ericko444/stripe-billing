@@ -248,6 +248,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "audit"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "audit-pg"
+version = "0.1.0"
+dependencies = [
+ "audit",
+ "persistence",
+ "sqlx",
+ "testcontainers",
+ "thiserror",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -704,6 +727,7 @@ version = "0.1.0"
 dependencies = [
  "api",
  "async-trait",
+ "audit-pg",
  "axum",
  "domain",
  "dotenvy",
@@ -795,6 +819,7 @@ name = "domain"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "audit",
  "serde",
  "serde_json",
  "thiserror",
@@ -1951,6 +1976,8 @@ name = "persistence"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "audit",
+ "audit-pg",
  "domain",
  "serde_json",
  "sqlx",
@@ -2561,6 +2588,7 @@ name = "service"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "audit",
  "domain",
  "serde_json",
  "thiserror",

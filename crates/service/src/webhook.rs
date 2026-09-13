@@ -124,6 +124,15 @@ where
     K: BillingEventSink,
 {
     async fn handle(&self, event: VerifiedEvent) -> Result<EventOutcome, DomainError> {
+        // One correlation id per delivery -- minted once here, not once per
+        // branch below, so every audit entry a single call to `handle`
+        // produces (today, always at most one) shares the same id. A truly
+        // duplicate delivery never reaches this method at all: the route's
+        // own dedup on `stripe_event_id` (`WebhookReceipt::Duplicate`) is
+        // upstream of `handle`, so a fresh id here is still one per
+        // genuine delivery, not one per redelivery of the same event.
+        let correlation_id = uuid::Uuid::new_v4();
+
         // No match on anything but the type string. An unrecognised type is
         // acknowledged, never rejected. The subscription lifecycle
         // events share one handler: same `data.object` shape, same
@@ -140,6 +149,7 @@ where
                     &self.plans,
                     &event,
                     subscription_lifecycle::OnMissing::Create,
+                    correlation_id,
                 )
                 .await?
             }
@@ -150,6 +160,7 @@ where
                     &self.plans,
                     &event,
                     subscription_lifecycle::OnMissing::NotApplied,
+                    correlation_id,
                 )
                 .await?
             }
@@ -163,6 +174,7 @@ where
                     &self.invoices,
                     &event,
                     invoice_events::Kind::Paid,
+                    correlation_id,
                 )
                 .await?
             }
@@ -173,6 +185,7 @@ where
                     &self.invoices,
                     &event,
                     invoice_events::Kind::PaymentFailed,
+                    correlation_id,
                 )
                 .await?
             }
@@ -181,6 +194,7 @@ where
                     &self.customers,
                     &self.payment_methods,
                     &event,
+                    correlation_id,
                 )
                 .await?
             }
@@ -189,6 +203,7 @@ where
                     &self.customers,
                     &self.payment_methods,
                     &event,
+                    correlation_id,
                 )
                 .await?
             }
