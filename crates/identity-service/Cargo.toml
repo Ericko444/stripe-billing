@@ -1,6 +1,6 @@
 [package]
 name = "identity-service"
-description = "Identity module use cases, plus the Argon2id implementation of identity-domain's hasher port. No dependency on the billing module."
+description = "Identity module use cases, plus the Argon2id, OS-random token and clock implementations of identity-domain's ports. No dependency on the billing module."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,12 @@ publish.workspace = true
 
 [dependencies]
 argon2.workspace = true
+audit.workspace = true
+getrandom.workspace = true
 identity-domain.workspace = true
 secrecy.workspace = true
+thiserror.workspace = true
+time.workspace = true
 # `sync` for the semaphore bounding concurrent hashes, `rt` for
 # `spawn_blocking`. Named here rather than relied on through feature
 # unification: today `sqlx` happens to turn `sync` on for the whole
@@ -19,6 +23,7 @@ tokio = { workspace = true, features = ["sync", "rt"] }
 
 [dev-dependencies]
 tokio.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

@@ -1590,9 +1590,14 @@ name = "identity-service"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "audit",
+ "getrandom 0.4.3",
  "identity-domain",
  "secrecy",
+ "thiserror",
+ "time",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

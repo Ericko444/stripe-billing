@@ -84,6 +84,10 @@ argon2 = "0.6.0"
 async-trait = "0.1.92"
 axum = "0.8.9"
 dotenvy = "0.15.7"
+# OS CSPRNG for the identity module's 256-bit token verifiers. Already in the
+# lock file (argon2's salts and rand both use it); named directly so token
+# generation depends on the OS source on purpose, not through a PRNG.
+getrandom = "0.4.3"
 # Webhook signature verification. `hmac::Mac::verify_slice` is the
 # constant-time comparison; `hex` decodes the `v1` signatures from the header.
 # No cryptography is implemented here -- `Hmac<Sha256>` over `sha2` does the
