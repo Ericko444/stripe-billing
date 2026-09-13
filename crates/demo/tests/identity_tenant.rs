@@ -88,6 +88,7 @@ async fn world() -> Result<World, Box<dyn Error>> {
         .layer(Extension(IdentityState::new(
             Arc::new(authentication),
             Arc::new(NoResets),
+            Arc::new(NoMembers),
             Arc::new(InMemoryRateLimiter::new(SystemClock)),
             identity_service::reset_queue(1).0,
         )));
@@ -239,6 +240,33 @@ impl identity_service::PasswordResets for NoResets {
         _: audit::CorrelationId,
     ) -> Result<(), identity_service::CompleteResetError> {
         Err(identity_service::CompleteResetError::Unavailable(
+            "not used by the boundary proof".into(),
+        ))
+    }
+}
+
+/// The boundary proof never manages members.
+struct NoMembers;
+
+#[async_trait::async_trait]
+impl identity_service::Members for NoMembers {
+    async fn list_members(
+        &self,
+        _: &identity_service::ActiveSession,
+    ) -> Result<Vec<identity_domain::TenantMember>, identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by the boundary proof".into(),
+        ))
+    }
+
+    async fn add_member(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: &identity_domain::Email,
+        _: identity_domain::Role,
+        _: audit::CorrelationId,
+    ) -> Result<identity_domain::TenantMember, identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
             "not used by the boundary proof".into(),
         ))
     }

@@ -70,6 +70,9 @@ fn action_kind(action: &Action) -> &'static str {
         Action::SessionsRevoked => "sessions.revoked",
         Action::PasswordResetRequested => "password_reset.requested",
         Action::PasswordResetCompleted => "password_reset.completed",
+        Action::UserCreated => "user.created",
+        Action::MembershipGranted => "membership.granted",
+        Action::InvitationAccepted => "invitation.accepted",
     }
 }
 
@@ -82,5 +85,6 @@ fn target_columns(target: &Target) -> (&'static str, Option<Uuid>) {
         Target::Plan(id) => ("plan", Some(id.as_uuid())),
         Target::Invoice(id) => ("invoice", Some(id.as_uuid())),
         Target::User(id) => ("user", Some(id.as_uuid())),
+        Target::Membership(id) => ("membership", Some(id.as_uuid())),
     }
 }

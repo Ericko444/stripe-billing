@@ -100,6 +100,28 @@ impl PasswordResets for CountingAuth {
     }
 }
 
+#[async_trait]
+impl identity_service::Members for CountingAuth {
+    async fn list_members(
+        &self,
+        _: &ActiveSession,
+    ) -> Result<Vec<identity_domain::TenantMember>, identity_service::MembersError> {
+        self.called();
+        Ok(Vec::new())
+    }
+
+    async fn add_member(
+        &self,
+        _: &ActiveSession,
+        _: &identity_domain::Email,
+        _: identity_domain::Role,
+        _: CorrelationId,
+    ) -> Result<identity_domain::TenantMember, identity_service::MembersError> {
+        self.called();
+        Err(identity_service::MembersError::Forbidden)
+    }
+}
+
 struct World {
     app: Router,
     auth: Arc<CountingAuth>,
@@ -110,6 +132,7 @@ fn world() -> World {
     let auth = Arc::new(CountingAuth::default());
     let (queue, receiver) = reset_queue(64);
     let state = IdentityState::new(
+        auth.clone(),
         auth.clone(),
         auth.clone(),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),

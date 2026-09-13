@@ -3,7 +3,7 @@
 //! `identity-service` is `Serialize`, so a field added there cannot silently
 //! become a field on the wire.
 
-use identity_domain::{Membership, SessionTenant};
+use identity_domain::{Membership, SessionTenant, TenantMember};
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcOffset};
 use uuid::Uuid;
@@ -174,4 +174,52 @@ pub struct CompleteResetRequest {
     pub token: String,
     /// The password to set.
     pub new_password: String,
+}
+
+/// `POST /tenant/members` body.
+#[derive(Debug, Deserialize)]
+pub struct AddMemberRequest {
+    /// The address to add.
+    pub email: String,
+    /// `owner`, `admin` or `member`.
+    pub role: String,
+}
+
+/// One member of the session's tenant.
+///
+/// No display name, and nothing that says whether the account has a password
+/// yet: either would tell the tenant whether the address already had an
+/// account elsewhere.
+#[derive(Debug, Serialize)]
+pub struct MemberDto {
+    /// The membership's id.
+    pub membership_id: Uuid,
+    /// The member's id.
+    pub user_id: Uuid,
+    /// The member's address.
+    pub email: String,
+    /// `owner`, `admin` or `member`.
+    pub role: &'static str,
+    /// `active` or `suspended`.
+    pub status: &'static str,
+}
+
+impl From<&TenantMember> for MemberDto {
+    fn from(member: &TenantMember) -> Self {
+        Self {
+            membership_id: member.membership_id.as_uuid(),
+            user_id: member.user_id.as_uuid(),
+            email: member.email.as_str().to_string(),
+            role: member.role.as_str(),
+            status: member.status.as_str(),
+        }
+    }
+}
+
+/// `GET /tenant/members` response -- `items`, like the billing module's
+/// lists.
+#[derive(Debug, Serialize)]
+pub struct MembersDto {
+    /// The members, ordered by address.
+    pub items: Vec<MemberDto>,
 }

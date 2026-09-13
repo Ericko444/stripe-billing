@@ -177,6 +177,7 @@ fn state(outage: bool) -> IdentityState {
     IdentityState::new(
         Arc::new(ScriptedAuth { outage }),
         Arc::new(NoResets),
+        Arc::new(NoMembers),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         identity_service::reset_queue(8).0,
     )
@@ -654,6 +655,33 @@ impl identity_service::PasswordResets for NoResets {
         _: CorrelationId,
     ) -> Result<(), identity_service::CompleteResetError> {
         Err(identity_service::CompleteResetError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
+}
+
+/// These tests never manage members; the double says so if one does.
+struct NoMembers;
+
+#[async_trait]
+impl identity_service::Members for NoMembers {
+    async fn list_members(
+        &self,
+        _: &identity_service::ActiveSession,
+    ) -> Result<Vec<identity_domain::TenantMember>, identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
+
+    async fn add_member(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: &identity_domain::Email,
+        _: identity_domain::Role,
+        _: CorrelationId,
+    ) -> Result<identity_domain::TenantMember, identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }

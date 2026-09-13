@@ -18,6 +18,7 @@
 mod account_event;
 mod email;
 mod ids;
+mod member;
 mod password;
 mod password_token;
 mod ports;
@@ -30,14 +31,21 @@ mod user;
 pub use account_event::AccountEvent;
 pub use email::{Email, EmailError};
 pub use ids::{MembershipId, SessionId, TenantId, UserId};
+pub use member::{
+    GrantOutcome, MemberGrant, MembershipStatus, MembershipStatusParseError, PendingInvitation,
+    TenantMember,
+};
 pub use password::{
     MAX_PASSWORD_CHARS, MIN_PASSWORD_CHARS, NewPassword, Password, PasswordHash,
     PasswordPolicyError,
 };
-pub use password_token::{NewPasswordToken, OutgoingMail, StoredPasswordToken, TokenPurpose};
+pub use password_token::{
+    MailPurpose, NewPasswordToken, OutgoingMail, StoredPasswordToken, TokenPurpose,
+};
 pub use ports::{
-    Clock, MailError, Mailer, MembershipRepository, PasswordHashError, PasswordHasher,
-    PasswordTokenRepository, RepositoryError, SessionRepository, UserRepository, Verification,
+    Clock, MailError, Mailer, MemberRepository, MembershipRepository, PasswordHashError,
+    PasswordHasher, PasswordTokenRepository, RepositoryError, SessionRepository, UserRepository,
+    Verification,
 };
 pub use rate_limit::{ClientIp, RateDecision, RateKey, RateLimit, RateLimiter};
 pub use role::{Role, RoleParseError};

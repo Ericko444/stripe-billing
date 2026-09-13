@@ -21,6 +21,7 @@ mod csrf;
 mod dto;
 mod error;
 pub mod limits;
+mod members_routes;
 mod reset_routes;
 mod routes;
 mod session_extract;
@@ -40,7 +41,8 @@ pub use state::{IdentityState, ResetRequests};
 const BODY_LIMIT_BYTES: usize = 16 * 1024;
 
 /// Builds the identity routes: `POST /auth/login`, `GET` and `PATCH /auth/me`,
-/// `POST /auth/tenant`, `POST /auth/logout`.
+/// `POST /auth/tenant`, `POST /auth/logout`, `POST /auth/password/change`,
+/// the two password reset routes, and `GET` and `POST /tenant/members`.
 ///
 /// Installs its own correlation layer and its own [`IdentityState`]
 /// extension. A host that also wants [`AuthenticatedSession`] on *other*
@@ -59,6 +61,10 @@ pub fn identity_router(state: IdentityState) -> Router {
         .route(
             "/auth/password-reset/complete",
             post(reset_routes::complete_password_reset),
+        )
+        .route(
+            "/tenant/members",
+            get(members_routes::list_members).post(members_routes::add_member),
         )
         .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))
         .layer(Extension(state))

@@ -13,9 +13,10 @@ use thiserror::Error;
 use time::OffsetDateTime;
 
 use crate::{
-    AccountEvent, DisplayName, Email, Membership, NewPassword, NewPasswordToken, NewSession,
-    OutgoingMail, Password, PasswordHash, Selector, SessionId, StoredPasswordToken, StoredSession,
-    User, UserId, VerifierHash,
+    AccountEvent, DisplayName, Email, GrantOutcome, MemberGrant, Membership, NewPassword,
+    NewPasswordToken, NewSession, OutgoingMail, Password, PasswordHash, Selector, SessionId,
+    StoredPasswordToken, StoredSession, TenantId, TenantMember, TokenPurpose, User, UserId,
+    VerifierHash,
 };
 
 /// Finds and updates users.
@@ -74,6 +75,34 @@ pub trait MembershipRepository: Send + Sync {
         &self,
         user_id: UserId,
     ) -> impl Future<Output = Result<Vec<Membership>, RepositoryError>> + Send;
+}
+
+/// A tenant's members, as its Owners and Admins manage them.
+pub trait MemberRepository: Send + Sync {
+    /// Every membership of `tenant_id`, active and suspended, ordered by
+    /// address.
+    fn list(
+        &self,
+        tenant_id: TenantId,
+    ) -> impl Future<Output = Result<Vec<TenantMember>, RepositoryError>> + Send;
+
+    /// Adds `grant.email` to `grant.tenant_id`, in one transaction:
+    ///
+    /// - finds the account with that address, or creates one with
+    ///   `grant.new_user_id` and **no password** -- recording `UserCreated`
+    ///   (target: the user) in the tenant;
+    /// - inserts the membership, active, with `grant.membership_id` --
+    ///   recording `MembershipGranted` (target: the membership) in the
+    ///   tenant; both rows name `grant.granted_by` as the actor;
+    /// - if the account has no password, new or not, stores
+    ///   `grant.invitation` in place of any outstanding invitation.
+    ///
+    /// If the account already has a membership in the tenant, changes
+    /// nothing and returns [`GrantOutcome::AlreadyMember`].
+    fn grant(
+        &self,
+        grant: &MemberGrant,
+    ) -> impl Future<Output = Result<GrantOutcome, RepositoryError>> + Send;
 }
 
 /// Stores sessions.
@@ -135,10 +164,12 @@ pub trait PasswordTokenRepository: Send + Sync {
         selector: Selector,
     ) -> impl Future<Output = Result<Option<StoredPasswordToken>, RepositoryError>> + Send;
 
-    /// Consumes the password reset token with `selector` and sets its user's
-    /// password, all in one transaction, **only if** -- re-checked under a
-    /// row lock -- the token still exists, still has `expected` as its
-    /// verifier hash, is a reset token, and has not expired at `now`.
+    /// Consumes the token with `selector` and sets its user's password, all in
+    /// one transaction, **only if** -- re-checked under a row lock -- the
+    /// token still exists, still has `expected` as its verifier hash, is of
+    /// `purpose`, and has not expired at `now`. An invitation additionally
+    /// requires that the user still has no password: it sets a first
+    /// password, and never replaces one.
     ///
     /// When it proceeds it stores `new_hash`, deletes **every** session of
     /// the user in every tenant, deletes every outstanding token of the user,
@@ -146,9 +177,10 @@ pub trait PasswordTokenRepository: Send + Sync {
     /// `true`. Otherwise it changes nothing and returns `false` -- which is
     /// what a second, concurrent completion of the same link sees once the
     /// first has committed.
-    fn complete_reset(
+    fn redeem(
         &self,
         selector: Selector,
+        purpose: TokenPurpose,
         expected: &VerifierHash,
         now: OffsetDateTime,
         new_hash: &PasswordHash,

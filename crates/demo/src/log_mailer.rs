@@ -7,7 +7,7 @@
 //! `main` warns at startup that it is in use, and a real `Mailer` hands the
 //! body to a mail provider and logs, at most, that a mail was sent.
 
-use identity_domain::{MailError, Mailer, OutgoingMail, TokenPurpose};
+use identity_domain::{MailError, MailPurpose, Mailer, OutgoingMail};
 use secrecy::ExposeSecret;
 
 /// Logs each mail, link included, at `warn` so it stands out.
@@ -17,8 +17,9 @@ pub struct LogMailer;
 impl Mailer for LogMailer {
     async fn send(&self, mail: &OutgoingMail) -> Result<(), MailError> {
         let subject = match mail.purpose {
-            TokenPurpose::PasswordReset => "Reset your password",
-            TokenPurpose::Invitation => "You have been invited -- choose a password",
+            MailPurpose::PasswordReset => "Reset your password",
+            MailPurpose::Invitation => "You have been invited -- choose a password",
+            MailPurpose::AddedToTenant => "You have been added to a tenant -- log in to see it",
         };
         tracing::warn!(
             correlation_id = %mail.correlation_id.as_uuid(),

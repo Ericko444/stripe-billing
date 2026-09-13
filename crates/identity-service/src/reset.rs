@@ -1,19 +1,24 @@
 use audit::{Action, Actor, CorrelationId, Target, TargetId};
 use identity_domain::{
-    AccountEvent, Clock, Email, Mailer, NewPassword, NewPasswordToken, OutgoingMail, Password,
-    PasswordHasher, PasswordPolicyError, PasswordTokenRepository, SplitToken, TokenPurpose, UserId,
-    UserRepository,
+    AccountEvent, Clock, Email, MailPurpose, Mailer, NewPassword, NewPasswordToken, OutgoingMail,
+    Password, PasswordHasher, PasswordPolicyError, PasswordTokenRepository, SplitToken,
+    TokenPurpose, UserId, UserRepository,
 };
-use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 
-use crate::token::generate_token;
+use crate::token::{generate_token, password_link};
 
 /// How long a reset link works: short, because it is a bearer credential
 /// travelling through a mailbox. Long enough to switch to a mail client and
 /// back; not long enough to sit usable in an inbox for a day.
 pub const RESET_TOKEN_LIFETIME: Duration = Duration::minutes(15);
+
+/// How long an invitation link works: longer, because an invitee is not
+/// waiting at a keyboard for it -- someone else added them, at a moment of
+/// that person's choosing. Still single use, and it can only ever set a
+/// *first* password.
+pub const INVITATION_TOKEN_LIFETIME: Duration = Duration::hours(72);
 
 /// Password reset: issuing links (off the request path, in the worker) and
 /// completing them.
@@ -139,8 +144,8 @@ where
 
         let mail = OutgoingMail {
             to: user.email,
-            purpose: TokenPurpose::PasswordReset,
-            link: self.link_for(&token),
+            purpose: MailPurpose::PasswordReset,
+            link: password_link(&self.link_base, &token),
             correlation_id,
         };
         self.mailer
@@ -150,21 +155,23 @@ where
         Ok(IssueOutcome::Issued)
     }
 
-    /// Sets a new password through a reset link.
+    /// Sets a password through a link: a reset link, or an invitation link --
+    /// one route and one page serve both.
     ///
     /// In order, cheapest refusal first:
     ///
     /// 1. the new password against the policy -- a refusal here never touches
     ///    the link, which stays usable;
-    /// 2. the link's form, its selector's row, its verifier (constant time),
-    ///    its purpose and its expiry by the module's clock -- one error for
-    ///    every failure, and no Argon2 cost for a link that was never going to
-    ///    work;
+    /// 2. the link's form, its selector's row, its verifier (constant time)
+    ///    and its expiry by the module's clock -- one error for every
+    ///    failure, and no Argon2 cost for a link that was never going to work;
     /// 3. the Argon2id hash of the new password;
     /// 4. one transaction that re-checks the link under a row lock, consumes
     ///    it, stores the hash, **deletes every session of the user in every
-    ///    tenant**, deletes every other outstanding link, and records
-    ///    `PasswordResetCompleted` and `SessionsRevoked` once per tenant.
+    ///    tenant**, deletes every other outstanding link, and records, once
+    ///    per tenant, `PasswordResetCompleted` and `SessionsRevoked` for a
+    ///    reset or `InvitationAccepted` for an invitation. An invitation is
+    ///    refused there if the account has a password by then.
     ///
     /// No session is issued. Holding a link proves access to a mailbox, not
     /// the new password; the user logs in with it, like anyone else.
@@ -184,10 +191,7 @@ where
             .map_err(|err| CompleteResetError::Unavailable(unavailable(&err)))?
             .ok_or(CompleteResetError::InvalidLink)?;
         let now = self.clock.now();
-        if !stored.verifier_hash.verifies(token.verifier())
-            || stored.purpose != TokenPurpose::PasswordReset
-            || stored.expires_at <= now
-        {
+        if !stored.verifier_hash.verifies(token.verifier()) || stored.expires_at <= now {
             return Err(CompleteResetError::InvalidLink);
         }
 
@@ -196,40 +200,35 @@ where
             .hash(&new)
             .await
             .map_err(|err| CompleteResetError::Unavailable(unavailable(&err)))?;
-        let events = [
-            anonymous(
-                stored.user_id,
-                Action::PasswordResetCompleted,
-                now,
-                correlation_id,
-            ),
-            anonymous(stored.user_id, Action::SessionsRevoked, now, correlation_id),
-        ];
+        let event = |action| anonymous(stored.user_id, action, now, correlation_id);
+        let events = match stored.purpose {
+            TokenPurpose::PasswordReset => vec![
+                event(Action::PasswordResetCompleted),
+                event(Action::SessionsRevoked),
+            ],
+            // No `SessionsRevoked`: an account without a password has never
+            // had a session to revoke.
+            TokenPurpose::Invitation => vec![event(Action::InvitationAccepted)],
+        };
         let completed = self
             .tokens
-            .complete_reset(token.selector(), &stored.verifier_hash, now, &hash, &events)
+            .redeem(
+                token.selector(),
+                stored.purpose,
+                &stored.verifier_hash,
+                now,
+                &hash,
+                &events,
+            )
             .await
             .map_err(|err| CompleteResetError::Unavailable(unavailable(&err)))?;
         if !completed {
             // Used, superseded or expired between the check above and the
-            // row lock -- a concurrent completion won.
+            // row lock -- a concurrent completion won -- or an invitation to
+            // an account that has had a password set since.
             return Err(CompleteResetError::InvalidLink);
         }
         Ok(())
-    }
-
-    /// `{base}/reset-password#token={token}`.
-    ///
-    /// The token rides in the **fragment**. A fragment is never sent to a
-    /// server, so the credential stays out of access logs, proxy logs and the
-    /// `Referer` of anything the reset page loads; the page reads it with
-    /// script and sends it in a request body.
-    fn link_for(&self, token: &SplitToken) -> SecretString {
-        SecretString::from(format!(
-            "{}/reset-password#token={}",
-            self.link_base.trim_end_matches('/'),
-            token.to_wire().expose_secret()
-        ))
     }
 }
 
@@ -255,6 +254,7 @@ mod tests {
     use std::error::Error;
 
     use identity_domain::{PasswordHash, User};
+    use secrecy::ExposeSecret;
     use uuid::Uuid;
 
     use super::*;
@@ -356,7 +356,7 @@ mod tests {
             return Err("expected one mail".into());
         };
         assert_eq!(to, &w.alice.email);
-        assert_eq!(*purpose, TokenPurpose::PasswordReset);
+        assert_eq!(*purpose, MailPurpose::PasswordReset);
         assert_eq!(*mail_correlation, correlation_id);
 
         // The mailed link carries the stored token -- in the fragment.
@@ -456,6 +456,49 @@ mod tests {
                 CorrelationId::new(Uuid::new_v4()),
             )
             .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_invitation_link_is_redeemed_on_the_same_route_and_audited_as_accepted()
+    -> Result<(), Box<dyn Error>> {
+        let w = world(FakeMailer::default())?;
+        let token = SplitToken::from_bytes([5; 16], [5; 32]);
+        let issued = w.clock.now();
+        w.tokens
+            .replace(
+                &NewPasswordToken {
+                    selector: token.selector(),
+                    verifier_hash: token.verifier().hash(),
+                    user_id: w.alice.id,
+                    purpose: TokenPurpose::Invitation,
+                    created_at: issued,
+                    expires_at: issued + INVITATION_TOKEN_LIFETIME,
+                },
+                None,
+            )
+            .await?;
+        let wire = token.to_wire().expose_secret().to_string();
+
+        // Still good after a day -- where a reset link would long be dead.
+        w.service_at(FixedClock::at(issued + Duration::hours(24)))
+            .complete(
+                &wire,
+                password(NEW_PASSWORD),
+                CorrelationId::new(Uuid::new_v4()),
+            )
+            .await?;
+
+        let completed = w.tokens.completed();
+        let [(user, _, events)] = completed.as_slice() else {
+            return Err("expected one completion".into());
+        };
+        assert_eq!(*user, w.alice.id);
+        let actions: Vec<(Actor, Action)> = events.iter().map(|e| (e.actor, e.action)).collect();
+        assert_eq!(
+            actions,
+            vec![(Actor::Anonymous, Action::InvitationAccepted)]
+        );
         Ok(())
     }
 

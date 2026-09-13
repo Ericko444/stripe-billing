@@ -104,6 +104,7 @@ fn app() -> Router {
     identity_router(IdentityState::new(
         Arc::new(NoAuth),
         Arc::new(ScriptedResets::default()),
+        Arc::new(NoMembers),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         reset_queue(1).0,
     ))
@@ -225,4 +226,31 @@ async fn completions_from_one_ip_are_limited() -> Result<(), Box<dyn Error>> {
     let limited = app.oneshot(request(GOOD_TOKEN, NEW_PASSWORD)?).await?;
     assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
     Ok(())
+}
+
+/// These tests never manage members.
+struct NoMembers;
+
+#[async_trait]
+impl identity_service::Members for NoMembers {
+    async fn list_members(
+        &self,
+        _: &identity_service::ActiveSession,
+    ) -> Result<Vec<identity_domain::TenantMember>, identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
+
+    async fn add_member(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: &identity_domain::Email,
+        _: identity_domain::Role,
+        _: CorrelationId,
+    ) -> Result<identity_domain::TenantMember, identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
 }

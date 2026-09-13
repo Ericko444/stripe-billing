@@ -79,9 +79,10 @@ impl PasswordTokenRepository for PgPasswordTokenRepository {
         row.as_ref().map(stored_from_row).transpose()
     }
 
-    async fn complete_reset(
+    async fn redeem(
         &self,
         selector: Selector,
+        purpose: TokenPurpose,
         expected: &VerifierHash,
         now: OffsetDateTime,
         new_hash: &PasswordHash,
@@ -109,7 +110,7 @@ impl PasswordTokenRepository for PgPasswordTokenRepository {
         // The verifier was already compared in constant time by the caller;
         // this equality is between two *stored* hashes of one row.
         if &stored.verifier_hash != expected
-            || stored.purpose != TokenPurpose::PasswordReset
+            || stored.purpose != purpose
             || stored.expires_at <= now
         {
             return Ok(false);
@@ -126,14 +127,22 @@ impl PasswordTokenRepository for PgPasswordTokenRepository {
             .execute(&mut *tx)
             .await
             .map_err(repository_error)?;
-        sqlx::query(
-            "UPDATE identity.users SET password_hash = $2, updated_at = now() WHERE id = $1",
+        // An invitation sets a *first* password. If one was set in the
+        // meantime -- by a reset completed while the invitation was still
+        // outstanding -- the invitation is refused rather than let a 72-hour
+        // link overwrite it.
+        let updated = sqlx::query(
+            "UPDATE identity.users SET password_hash = $2, updated_at = now()               WHERE id = $1 AND ($3 <> 'invitation' OR password_hash IS NULL)",
         )
         .bind(user)
         .bind(new_hash.as_str())
+        .bind(purpose.as_str())
         .execute(&mut *tx)
         .await
         .map_err(repository_error)?;
+        if updated.rows_affected() == 0 {
+            return Ok(false);
+        }
         sqlx::query("DELETE FROM identity.sessions WHERE user_id = $1")
             .bind(user)
             .execute(&mut *tx)

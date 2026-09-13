@@ -41,6 +41,9 @@ pub enum ErrorKind {
     /// A reset link that cannot be used: malformed, unknown, forged, expired,
     /// superseded or already used. One kind, one body, for all of them.
     InvalidResetLink,
+    /// The address is already a member of this tenant. Safe to say: the
+    /// tenant can list its own members.
+    AlreadyMember,
     /// A new password breaks the policy. Safe to say so: it describes the
     /// rule, not the password, and only a caller setting a password sees it.
     PasswordPolicy,
@@ -108,6 +111,11 @@ impl IntoResponse for IdentityError {
                 "Invalid link",
                 "This link is invalid or has expired. Request a new one.",
             ),
+            ErrorKind::AlreadyMember => (
+                StatusCode::CONFLICT,
+                "Already a member",
+                "That address is already a member of this tenant.",
+            ),
             ErrorKind::PasswordPolicy => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "Password rejected",
@@ -130,6 +138,7 @@ impl IntoResponse for IdentityError {
             ErrorKind::Unauthorized => "not authenticated",
             ErrorKind::NotFound => "not found",
             ErrorKind::Forbidden => "forbidden",
+            ErrorKind::AlreadyMember => "already a member",
             ErrorKind::PasswordPolicy => "password policy",
             ErrorKind::InvalidResetLink => "invalid reset link",
             ErrorKind::RateLimited { .. } => "rate limited",

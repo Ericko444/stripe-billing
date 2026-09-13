@@ -88,4 +88,14 @@ pub enum Action {
     /// account-level action, recorded once per tenant the user is an active
     /// member of.
     UserUpdated,
+    /// An account was created by adding its address to a tenant. Recorded in
+    /// that tenant only, `Actor::User` (the Owner or Admin who added it),
+    /// always beside the `MembershipGranted` it came with.
+    UserCreated,
+    /// A user was given a role in a tenant by one of its Owners or Admins.
+    /// Recorded in that tenant; the target is the membership.
+    MembershipGranted,
+    /// A first password was set through an invitation link. Account-level,
+    /// `Actor::Anonymous`, for the reason `PasswordResetCompleted` is.
+    InvitationAccepted,
 }

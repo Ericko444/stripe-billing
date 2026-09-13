@@ -16,7 +16,8 @@ export function readTokenFromFragment(hash: string): string | null {
 }
 
 /**
- * Set a new password through the mailed link.
+ * Set a password through a mailed link -- a reset link, or an invitation to
+ * an account that has no password yet. One page and one endpoint serve both.
  *
  * The token is read once, on first render, and then removed from the address
  * bar with `history.replaceState` -- so it is not left in the browser history,
@@ -58,7 +59,10 @@ export function ResetPasswordForm({
         role="alert"
       >
         <h1 className="panel-title is-prominent">This link can't be used</h1>
-        <p>It is invalid, has expired, or was already used. Reset links work once, for 15 minutes.</p>
+        <p>
+          It is invalid, has expired, or was already used. Links work once: a reset link for 15
+          minutes, an invitation for 72 hours.
+        </p>
         <Button variant="primary" onClick={onRequestNewLink}>
           Request a new link
         </Button>

@@ -41,6 +41,8 @@ pub enum Target {
     /// A user of the identity module -- the person an account-level action
     /// happened to.
     User(TargetId),
+    /// A user's membership of one tenant, in the identity module.
+    Membership(TargetId),
 }
 
 #[cfg(test)]

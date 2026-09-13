@@ -27,6 +27,18 @@ impl TokenPurpose {
     }
 }
 
+/// Which mail the module is sending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MailPurpose {
+    /// A password reset link.
+    PasswordReset,
+    /// An invitation link: the account has no password yet.
+    Invitation,
+    /// A notice that an account which already has a password was added to a
+    /// tenant. The link is to the login page and carries no token.
+    AddedToTenant,
+}
+
 /// A reset or invitation token to be stored: selector and verifier hash,
 /// never the verifier -- the same shape, for the same reason, as
 /// [`NewSession`](crate::NewSession). A copy of the tokens table cannot be
@@ -60,7 +72,7 @@ pub struct StoredPasswordToken {
     pub expires_at: OffsetDateTime,
 }
 
-/// A mail the module sends. The link is the whole credential, so it is a
+/// A mail the module sends. The link may be the whole credential, so it is a
 /// secret here and `Debug` does not print it; only a [`Mailer`] ever
 /// exposes it, into the message body.
 ///
@@ -69,8 +81,8 @@ pub struct OutgoingMail {
     /// The recipient.
     pub to: Email,
     /// Which message.
-    pub purpose: TokenPurpose,
-    /// The link carrying the token.
+    pub purpose: MailPurpose,
+    /// The link -- carrying the token, when there is one.
     pub link: SecretString,
     /// The request that caused the mail, so a mail log line joins its audit
     /// rows.
@@ -99,7 +111,7 @@ mod tests {
     fn debug_never_prints_the_link() -> Result<(), crate::EmailError> {
         let mail = OutgoingMail {
             to: Email::parse("alice@example.test")?,
-            purpose: TokenPurpose::PasswordReset,
+            purpose: MailPurpose::PasswordReset,
             link: SecretString::from("http://localhost/reset-password#token=abc.def"),
             correlation_id: CorrelationId::new(Uuid::new_v4()),
         };

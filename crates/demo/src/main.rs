@@ -43,8 +43,8 @@ use identity_pg::{
     PgMembershipRepository, PgPasswordTokenRepository, PgSessionRepository, PgUserRepository,
 };
 use identity_service::{
-    Argon2Hasher, AuthService, InMemoryRateLimiter, PasswordResetService, RESET_QUEUE_CAPACITY,
-    SystemClock, reset_queue, run_reset_worker,
+    Argon2Hasher, AuthService, InMemoryRateLimiter, MembersService, PasswordResetService,
+    RESET_QUEUE_CAPACITY, SystemClock, reset_queue, run_reset_worker,
 };
 use persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgOutboundRequestRepository,
@@ -267,7 +267,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         hasher,
         LogMailer,
         SystemClock,
-        config.identity_public_base_url,
+        config.identity_public_base_url.clone(),
     ));
     let (reset_queue, reset_receiver) = reset_queue(RESET_QUEUE_CAPACITY);
     tokio::spawn(run_reset_worker(reset_receiver, Arc::clone(&resets)));
@@ -275,9 +275,19 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         "password reset and invitation links are written to this log by the demo mailer, not sent"
     );
 
+    // Members: adding an address mails an invitation link (or, for an
+    // account that has a password, a notice) through the same demo mailer.
+    let members = MembersService::new(
+        PgMembershipRepository::new(pool.clone()),
+        LogMailer,
+        SystemClock,
+        config.identity_public_base_url,
+    );
+
     let mut identity = IdentityState::new(
         Arc::new(authentication),
         resets,
+        Arc::new(members),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         reset_queue,
     );

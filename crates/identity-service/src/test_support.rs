@@ -9,11 +9,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use audit::AuditEntry;
 use identity_domain::{
-    AccountEvent, Clock, DisplayName, Email, MailError, Mailer, Membership, MembershipRepository,
-    NewPassword, NewPasswordToken, NewSession, OutgoingMail, Password, PasswordHash,
-    PasswordHashError, PasswordHasher, PasswordTokenRepository, RepositoryError, Selector,
-    SessionId, SessionRepository, StoredPasswordToken, StoredSession, TokenPurpose, User, UserId,
-    UserRepository, Verification, VerifierHash,
+    AccountEvent, Clock, DisplayName, Email, GrantOutcome, MailError, MailPurpose, Mailer,
+    MemberGrant, MemberRepository, Membership, MembershipId, MembershipRepository,
+    MembershipStatus, NewPassword, NewPasswordToken, NewSession, OutgoingMail, Password,
+    PasswordHash, PasswordHashError, PasswordHasher, PasswordTokenRepository, RepositoryError,
+    Selector, SessionId, SessionRepository, StoredPasswordToken, StoredSession, TenantId,
+    TenantMember, TokenPurpose, User, UserId, UserRepository, Verification, VerifierHash,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -369,9 +370,10 @@ impl PasswordTokenRepository for FakeTokens {
         ready(Ok(found))
     }
 
-    fn complete_reset(
+    fn redeem(
         &self,
         selector: Selector,
+        purpose: TokenPurpose,
         expected: &VerifierHash,
         now: OffsetDateTime,
         new_hash: &PasswordHash,
@@ -381,10 +383,7 @@ impl PasswordTokenRepository for FakeTokens {
         let Some(token) = outstanding.iter().find(|t| t.selector == selector).cloned() else {
             return ready(Ok(false));
         };
-        if &token.verifier_hash != expected
-            || token.purpose != TokenPurpose::PasswordReset
-            || token.expires_at <= now
-        {
+        if &token.verifier_hash != expected || token.purpose != purpose || token.expires_at <= now {
             return ready(Ok(false));
         }
         outstanding.retain(|t| t.user_id != token.user_id);
@@ -397,9 +396,68 @@ impl PasswordTokenRepository for FakeTokens {
     }
 }
 
+/// Records every grant, and answers as scripted: a new account (the
+/// default), an existing one with or without a password, or an address
+/// already in the tenant.
+#[derive(Clone, Default)]
+pub struct FakeMembers {
+    grants: Arc<Mutex<Vec<MemberGrant>>>,
+    existing_has_password: Option<bool>,
+    already_member: bool,
+}
+
+impl FakeMembers {
+    pub fn existing_account_has_password(has_password: bool) -> Self {
+        Self {
+            existing_has_password: Some(has_password),
+            ..Self::default()
+        }
+    }
+
+    pub fn already_member() -> Self {
+        Self {
+            already_member: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn grants(&self) -> Vec<MemberGrant> {
+        lock(&self.grants).clone()
+    }
+}
+
+impl MemberRepository for FakeMembers {
+    fn list(
+        &self,
+        _tenant_id: TenantId,
+    ) -> impl Future<Output = Result<Vec<TenantMember>, RepositoryError>> + Send {
+        ready(Ok(Vec::new()))
+    }
+
+    fn grant(
+        &self,
+        grant: &MemberGrant,
+    ) -> impl Future<Output = Result<GrantOutcome, RepositoryError>> + Send {
+        lock(&self.grants).push(grant.clone());
+        if self.already_member {
+            return ready(Ok(GrantOutcome::AlreadyMember));
+        }
+        ready(Ok(GrantOutcome::Granted {
+            member: TenantMember {
+                membership_id: MembershipId::new(Uuid::new_v4()),
+                user_id: UserId::new(Uuid::new_v4()),
+                email: grant.email.clone(),
+                role: grant.role,
+                status: MembershipStatus::Active,
+            },
+            invitation_issued: !self.existing_has_password.unwrap_or(false),
+        }))
+    }
+}
+
 /// A mail as the fake received it: recipient, purpose, the link exposed,
 /// correlation id.
-pub type SentMail = (Email, TokenPurpose, String, audit::CorrelationId);
+pub type SentMail = (Email, MailPurpose, String, audit::CorrelationId);
 
 /// Records every mail; `failing()` refuses to send.
 #[derive(Clone, Default)]

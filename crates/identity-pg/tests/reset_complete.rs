@@ -60,8 +60,9 @@ async fn complete(
     hash: &str,
 ) -> Result<bool, Box<dyn Error>> {
     Ok(tokens
-        .complete_reset(
+        .redeem(
             token.selector(),
+            TokenPurpose::PasswordReset,
             &token.verifier().hash(),
             OffsetDateTime::now_utc(),
             &PasswordHash::new(hash.to_string()),
@@ -161,8 +162,9 @@ async fn completing_a_reset_deletes_sessions_in_every_tenant() -> Result<(), Box
     issue(&tokens, &token, alice, Duration::minutes(15)).await?;
     let correlation = Uuid::new_v4();
     let completed = tokens
-        .complete_reset(
+        .redeem(
             token.selector(),
+            TokenPurpose::PasswordReset,
             &token.verifier().hash(),
             OffsetDateTime::now_utc(),
             &PasswordHash::new("$new".to_string()),
@@ -217,8 +219,9 @@ async fn an_expired_or_mismatched_token_changes_nothing() -> Result<(), Box<dyn 
     issue(&tokens, &token, alice, Duration::minutes(15)).await?;
     let wrong_hash = SplitToken::from_bytes([2; 16], [7; 32]).verifier().hash();
     let completed = tokens
-        .complete_reset(
+        .redeem(
             token.selector(),
+            TokenPurpose::PasswordReset,
             &wrong_hash,
             OffsetDateTime::now_utc(),
             &PasswordHash::new("$new".to_string()),

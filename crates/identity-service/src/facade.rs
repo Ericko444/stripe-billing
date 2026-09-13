@@ -1,14 +1,14 @@
 use async_trait::async_trait;
 use audit::CorrelationId;
 use identity_domain::{
-    Clock, Email, Mailer, MembershipRepository, Password, PasswordHasher, PasswordTokenRepository,
-    SessionRepository, TenantId, UserRepository,
+    Clock, Email, Mailer, MemberRepository, MembershipRepository, Password, PasswordHasher,
+    PasswordTokenRepository, Role, SessionRepository, TenantId, TenantMember, UserRepository,
 };
 
 use crate::{
-    ActiveSession, AuthService, CompleteResetError, LoginError, LoginOutcome, Me,
-    PasswordChangeError, PasswordResetService, ProfileError, SelectTenantError, SessionError,
-    TenantSelection,
+    ActiveSession, AuthService, CompleteResetError, LoginError, LoginOutcome, Me, MembersError,
+    MembersService, PasswordChangeError, PasswordResetService, ProfileError, SelectTenantError,
+    SessionError, TenantSelection,
 };
 
 /// The identity use cases as an object-safe trait, so a router can hold
@@ -147,5 +147,49 @@ where
         correlation_id: CorrelationId,
     ) -> Result<(), CompleteResetError> {
         PasswordResetService::complete(self, presented, new_password, correlation_id).await
+    }
+}
+
+/// Managing a tenant's members, as an object-safe trait for the router.
+#[async_trait]
+pub trait Members: Send + Sync {
+    /// See [`MembersService::list`].
+    async fn list_members(
+        &self,
+        session: &ActiveSession,
+    ) -> Result<Vec<TenantMember>, MembersError>;
+
+    /// See [`MembersService::add`].
+    async fn add_member(
+        &self,
+        session: &ActiveSession,
+        email: &Email,
+        role: Role,
+        correlation_id: CorrelationId,
+    ) -> Result<TenantMember, MembersError>;
+}
+
+#[async_trait]
+impl<R, M, C> Members for MembersService<R, M, C>
+where
+    R: MemberRepository,
+    M: Mailer,
+    C: Clock,
+{
+    async fn list_members(
+        &self,
+        session: &ActiveSession,
+    ) -> Result<Vec<TenantMember>, MembersError> {
+        MembersService::list(self, session).await
+    }
+
+    async fn add_member(
+        &self,
+        session: &ActiveSession,
+        email: &Email,
+        role: Role,
+        correlation_id: CorrelationId,
+    ) -> Result<TenantMember, MembersError> {
+        MembersService::add(self, session, email, role, correlation_id).await
     }
 }

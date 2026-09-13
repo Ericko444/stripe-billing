@@ -9,6 +9,7 @@ mod argon2_hasher;
 mod auth;
 mod clock;
 mod facade;
+mod members;
 mod password_change;
 mod profile;
 mod rate_limit;
@@ -28,12 +29,14 @@ pub use auth::{
     UNSCOPED_SESSION_LIFETIME,
 };
 pub use clock::SystemClock;
-pub use facade::{Authentication, PasswordResets};
+pub use facade::{Authentication, Members, PasswordResets};
+pub use members::{MembersError, MembersService};
 pub use password_change::PasswordChangeError;
 pub use profile::ProfileError;
 pub use rate_limit::InMemoryRateLimiter;
 pub use reset::{
-    CompleteResetError, IssueOutcome, PasswordResetService, RESET_TOKEN_LIFETIME, ResetError,
+    CompleteResetError, INVITATION_TOKEN_LIFETIME, IssueOutcome, PasswordResetService,
+    RESET_TOKEN_LIFETIME, ResetError,
 };
 pub use reset_worker::{
     RESET_QUEUE_CAPACITY, ResetJob, ResetQueue, ResetReceiver, reset_queue, run_reset_worker,
