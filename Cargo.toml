@@ -34,6 +34,10 @@ audit = { path = "crates/audit" }
 # separate from `audit` itself so the identity module can depend on the
 # model without compiling sqlx to do it.
 audit-pg = { path = "crates/audit-pg" }
+# The identity module (Phase 8): what a host plugs in front of billing to
+# produce the `TenantId` billing consumes. Its crates name no billing crate
+# and no billing crate names them -- both directions are checked in CI.
+identity-domain = { path = "crates/identity-domain" }
 
 # Stripe client, modular line. A release candidate over the stale 0.41 stable
 # line, so pinned exactly: a caret range would float across RCs, which may

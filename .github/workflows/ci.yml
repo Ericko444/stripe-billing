@@ -65,6 +65,52 @@ jobs:
             exit 1
           fi
 
+      # The identity module and the billing module never depend on each
+      # other; the host (`demo`) is the only crate that names both. Checked
+      # in both directions, over every `identity-*` crate present.
+      - name: Identity does not depend on billing
+        run: |
+          if grep -E "^(domain|service|persistence|stripe-adapter|api)(\.workspace| *=)" crates/identity-*/Cargo.toml; then
+            echo "::error::an identity crate names a billing crate"
+            exit 1
+          fi
+          for dir in crates/identity-*/; do
+            name="$(basename "$dir")"
+            if cargo tree -p "$name" -e normal,build --prefix none --locked \
+                | grep -E "^(domain|service|persistence|stripe-adapter|api) v"; then
+              echo "::error::$name pulls in a billing crate transitively"
+              exit 1
+            fi
+          done
+
+      - name: Billing does not depend on identity
+        run: |
+          if grep -E "^identity-" crates/domain/Cargo.toml crates/service/Cargo.toml \
+              crates/persistence/Cargo.toml crates/stripe-adapter/Cargo.toml crates/api/Cargo.toml; then
+            echo "::error::a billing crate names an identity crate"
+            exit 1
+          fi
+          for name in domain service persistence stripe-adapter api; do
+            if cargo tree -p "$name" -e normal,build --prefix none --locked | grep -E "^identity-"; then
+              echo "::error::$name pulls in an identity crate transitively"
+              exit 1
+            fi
+          done
+
+      # `identity-domain` stays declarative, like `domain`: no database, no
+      # HTTP, and no hashing implementation -- Argon2 lives behind a port.
+      - name: Identity domain boundary
+        run: |
+          if grep -E "sqlx|axum|argon2" crates/identity-domain/Cargo.toml; then
+            echo "::error file=crates/identity-domain/Cargo.toml::identity-domain must not depend on sqlx, axum or argon2"
+            exit 1
+          fi
+          if cargo tree -p identity-domain -e normal,build --prefix none --locked \
+              | grep -E "^(sqlx|axum|argon2) v"; then
+            echo "::error::identity-domain pulls in sqlx, axum or argon2 transitively"
+            exit 1
+          fi
+
       - name: Format
         run: cargo fmt --all --check
 

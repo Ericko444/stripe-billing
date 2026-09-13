@@ -1,0 +1,21 @@
+[package]
+name = "identity-domain"
+description = "Identity module: models, value objects, ports and errors. No I/O, and no dependency on the billing module."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+secrecy.workspace = true
+thiserror.workspace = true
+
+# `serde` only so the `compile_fail` doctest on `Password` can name the
+# `Serialize` bound it proves is missing. It never enters the real
+# dependency graph.
+[dev-dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true
