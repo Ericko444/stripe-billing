@@ -38,6 +38,9 @@ pub enum Target {
     Plan(TargetId),
     /// An invoice.
     Invoice(TargetId),
+    /// A user of the identity module -- the person an account-level action
+    /// happened to.
+    User(TargetId),
 }
 
 #[cfg(test)]

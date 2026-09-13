@@ -16,18 +16,27 @@
 //! password that was never checked cannot be stored.
 
 mod email;
+mod ids;
 mod password;
 mod ports;
 mod role;
+mod session;
 mod token;
+mod user;
 
 pub use email::{Email, EmailError};
+pub use ids::{MembershipId, SessionId, TenantId, UserId};
 pub use password::{
     MAX_PASSWORD_CHARS, MIN_PASSWORD_CHARS, NewPassword, Password, PasswordHash,
     PasswordPolicyError,
 };
-pub use ports::{PasswordHashError, PasswordHasher, Verification};
+pub use ports::{
+    Clock, MembershipRepository, PasswordHashError, PasswordHasher, RepositoryError,
+    SessionRepository, UserRepository, Verification,
+};
 pub use role::{Role, RoleParseError};
+pub use session::NewSession;
 pub use token::{
     SELECTOR_BYTES, Selector, SplitToken, TokenParseError, VERIFIER_BYTES, Verifier, VerifierHash,
 };
+pub use user::{Membership, User};

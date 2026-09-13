@@ -63,6 +63,7 @@ fn action_kind(action: &Action) -> &'static str {
         Action::PaymentMethodAttached => "payment_method.attached",
         Action::PaymentSucceeded => "payment.succeeded",
         Action::PaymentFailed => "payment.failed",
+        Action::SessionStarted => "session.started",
     }
 }
 
@@ -74,5 +75,6 @@ fn target_columns(target: &Target) -> (&'static str, Option<Uuid>) {
         Target::Customer(id) => ("customer", Some(id.as_uuid())),
         Target::Plan(id) => ("plan", Some(id.as_uuid())),
         Target::Invoice(id) => ("invoice", Some(id.as_uuid())),
+        Target::User(id) => ("user", Some(id.as_uuid())),
     }
 }

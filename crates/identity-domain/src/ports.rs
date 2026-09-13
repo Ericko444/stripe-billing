@@ -8,9 +8,72 @@
 
 use std::future::Future;
 
+use audit::AuditEntry;
 use thiserror::Error;
+use time::OffsetDateTime;
 
-use crate::{NewPassword, Password, PasswordHash};
+use crate::{
+    Email, Membership, NewPassword, NewSession, Password, PasswordHash, SessionId, User, UserId,
+};
+
+/// Finds and updates users.
+pub trait UserRepository: Send + Sync {
+    /// The user with this normalised address, active or not. Deactivation
+    /// is the caller's decision to act on, so that it can be handled on the
+    /// same code path -- and at the same cost -- as an unknown address.
+    fn find_by_email(
+        &self,
+        email: &Email,
+    ) -> impl Future<Output = Result<Option<User>, RepositoryError>> + Send;
+
+    /// Replaces a user's password hash with one made under newer
+    /// parameters, after a successful login. Not audited: the password did
+    /// not change, only how it is stored.
+    fn rehash_password(
+        &self,
+        user_id: UserId,
+        hash: &PasswordHash,
+    ) -> impl Future<Output = Result<(), RepositoryError>> + Send;
+}
+
+/// Reads memberships.
+pub trait MembershipRepository: Send + Sync {
+    /// Every **active** membership of `user_id`, in tenants that exist,
+    /// ordered by tenant name.
+    fn active_for_user(
+        &self,
+        user_id: UserId,
+    ) -> impl Future<Output = Result<Vec<Membership>, RepositoryError>> + Send;
+}
+
+/// Stores sessions.
+pub trait SessionRepository: Send + Sync {
+    /// Stores `session`. When `audit` is given, it is written in the same
+    /// transaction, so a session and the record of it starting commit or
+    /// fail together -- the pattern the billing module's repositories use.
+    fn create(
+        &self,
+        session: &NewSession,
+        audit: Option<&AuditEntry>,
+    ) -> impl Future<Output = Result<SessionId, RepositoryError>> + Send;
+}
+
+/// The one clock the module reads.
+///
+/// Every issuance and every expiry check goes through this, so the two can
+/// never disagree about what time it is -- and tests can say what time it
+/// is. The database's `now()` is deliberately not used for either.
+pub trait Clock: Send + Sync {
+    /// The current instant, in UTC.
+    fn now(&self) -> OffsetDateTime;
+}
+
+/// A persistence operation failed. Opaque for the reason
+/// `domain::DomainError::Repository` is: this crate must not know `sqlx`'s
+/// error type, so the adapter renders its own into the message.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("repository error: {0}")]
+pub struct RepositoryError(pub String);
 
 /// Hashes and verifies passwords. Implemented with Argon2id in
 /// `identity-service`; use-case tests use a fast fake.

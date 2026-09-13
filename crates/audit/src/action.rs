@@ -58,4 +58,11 @@ pub enum Action {
     PaymentSucceeded,
     /// An invoice payment attempt failed (`invoice.payment_failed`).
     PaymentFailed,
+    /// A tenant-scoped session was issued to a user -- at login with a
+    /// single membership, or when a user with several picks one. The
+    /// identity module's first action. A tenant-less session (the one that
+    /// exists only to pick a tenant) is not audited: it has no tenant to
+    /// record it under, and the selection that follows is the auditable
+    /// fact.
+    SessionStarted,
 }
