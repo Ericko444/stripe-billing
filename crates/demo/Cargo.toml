@@ -14,8 +14,11 @@ api.workspace = true
 audit-pg.workspace = true
 domain.workspace = true
 # The identity module: `identity_tenant.rs` wraps its session extractor for
-# billing. `main` does not mount it yet (Phase 8, Task 14).
+# billing, and `main` mounts its router and wires its adapters.
 identity-api.workspace = true
+identity-domain.workspace = true
+identity-pg.workspace = true
+identity-service.workspace = true
 persistence.workspace = true
 service.workspace = true
 stripe-adapter.workspace = true
@@ -34,12 +37,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-# Until `main` mounts the identity module (Phase 8, Task 14), these identity
-# crates are needed only by tests: the three-migrators test and the boundary
-# proof. `testcontainers` brings up the database both run on.
-identity-domain.workspace = true
-identity-pg.workspace = true
-identity-service.workspace = true
+# Brings up the database the three-migrators test and the boundary proof run on.
 serde_json.workspace = true
 testcontainers.workspace = true
 tower = { workspace = true, features = ["util"] }

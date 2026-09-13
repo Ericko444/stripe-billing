@@ -2,15 +2,21 @@
 //! implementations and owns a `main`.
 //!
 //! Reads and validates its configuration once at startup, builds the
-//! Postgres pool, runs migrations, wires the Postgres repositories, the
-//! Stripe webhook verifier and a logging [`BillingEventSink`] into a
-//! [`WebhookProcessor`], builds the read and write services `api`'s
-//! tenant-scoped router needs, and serves `billing_router::<DemoTenant>`
-//! merged with `webhook_router` and [`token::demo_token_router`] --
-//! thirteen routes in one process, guarded by `demo`'s own
-//! [`JwtDecoder`](jwt::JwtDecoder) except for the webhook route (verified by
-//! signature instead) and `/demo/token` itself, which has no auth of its
-//! own and exists only to mint tokens the others accept.
+//! Postgres pool, runs all three migrators (billing, audit, identity), wires
+//! the billing module's repositories, Stripe adapter and services, wires the
+//! identity module's repositories, Argon2id hasher and rate limiter, and
+//! serves one router under `/api/v1`:
+//!
+//! - `billing_router::<IdentityTenant>` -- billing's tenant-scoped routes,
+//!   behind a session from the identity module
+//!   ([`IdentityTenant`](demo::identity_tenant::IdentityTenant));
+//! - `webhook_router` -- Stripe's webhook, authenticated by its signature;
+//! - `identity_router` -- login, the session, tenant selection, password
+//!   change.
+//!
+//! Over all of it, the identity state (so billing's routes can resolve a
+//! session) and the CSRF origin check (so the session cookie cannot be ridden
+//! from another site, whichever module's route it is sent to).
 //!
 //! The workspace denies `unwrap`, `expect` and `panic`; the one documented
 //! exception is startup config parsing, and even here
@@ -20,7 +26,7 @@
 mod seed;
 
 use std::error::Error;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -28,9 +34,12 @@ use api::{AppState, CheckoutUrls, billing_router, webhook_router};
 use async_trait::async_trait;
 use axum::Router;
 use axum::extract::Extension;
-use demo::jwt::{DemoTenant, JwtDecoder};
-use demo::token::demo_token_router;
+use axum::middleware;
+use demo::identity_tenant::IdentityTenant;
 use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
+use identity_api::{AllowedOrigins, IdentityState, identity_router, origin_check};
+use identity_pg::{PgMembershipRepository, PgSessionRepository, PgUserRepository};
+use identity_service::{Argon2Hasher, AuthService, InMemoryRateLimiter, SystemClock};
 use persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgOutboundRequestRepository,
     PgPaymentMethodRepository, PgPlanRepository, PgSubscriptionRepository,
@@ -49,7 +58,7 @@ use tokio::net::TcpListener;
 /// moment they are read, never in a plain `String` that could reach a log.
 #[derive(Debug)]
 struct Config {
-    /// Postgres connection string for the mirror and ledger tables.
+    /// Postgres connection string for every schema: billing, audit, identity.
     database_url: String,
     /// The Stripe webhook endpoint's signing secret (`whsec_...`).
     signing_secret: SecretString,
@@ -61,11 +70,15 @@ struct Config {
     checkout_success_url: String,
     /// Where a Checkout Session returns the customer if they abandon it.
     checkout_cancel_url: String,
-    /// TCP port the webhook listener binds.
+    /// TCP port the listener binds.
     port: u16,
-    /// The HS256 secret `demo`'s own `JwtDecoder` signs and verifies
-    /// `/demo/token` tokens with -- `api` has no use for it.
-    billing_jwt_secret: SecretString,
+    /// Origins a cookie-carrying write may come from (comma-separated in the
+    /// environment) -- the frontend's own origin, in the demo the Vite dev
+    /// server.
+    identity_allowed_origins: Vec<String>,
+    /// The one proxy whose `X-Forwarded-For` is believed, if the demo sits
+    /// behind one. Unset: the socket peer is the client.
+    identity_trusted_proxy: Option<IpAddr>,
 }
 
 /// Why startup configuration could not be assembled. Each variant names the
@@ -78,21 +91,21 @@ enum ConfigError {
     /// `PORT` is set but is not a u16.
     #[error("environment variable PORT is not a valid port number: {0:?}")]
     InvalidPort(String),
+    /// `IDENTITY_TRUSTED_PROXY` is set but is not an IP address.
+    #[error("environment variable IDENTITY_TRUSTED_PROXY is not an IP address: {0:?}")]
+    InvalidTrustedProxy(String),
 }
 
 impl Config {
     /// Assembles config from a lookup function (`std::env::var` in `main`, a
-    /// fixture map in tests). All seven values are required: a missing one is
-    /// a hard startup failure, not a defaulted value.
+    /// fixture map in tests). Every value but the trusted proxy is required:
+    /// a missing one is a hard startup failure, not a defaulted value.
     fn from_env<F>(get: F) -> Result<Self, ConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
-        let required = |name: &'static str| {
-            get(name)
-                .filter(|value| !value.is_empty())
-                .ok_or(ConfigError::Missing(name))
-        };
+        let optional = |name: &'static str| get(name).filter(|value| !value.is_empty());
+        let required = |name: &'static str| optional(name).ok_or(ConfigError::Missing(name));
 
         let database_url = required("DATABASE_URL")?;
         let signing_secret = required("STRIPE_WEBHOOK_SIGNING_SECRET")?;
@@ -103,7 +116,21 @@ impl Config {
         let port = port_raw
             .parse::<u16>()
             .map_err(|_| ConfigError::InvalidPort(port_raw))?;
-        let billing_jwt_secret = required("BILLING_JWT_SECRET")?;
+        let identity_allowed_origins: Vec<String> = required("IDENTITY_ALLOWED_ORIGINS")?
+            .split(',')
+            .map(str::trim)
+            .filter(|origin| !origin.is_empty())
+            .map(str::to_string)
+            .collect();
+        if identity_allowed_origins.is_empty() {
+            return Err(ConfigError::Missing("IDENTITY_ALLOWED_ORIGINS"));
+        }
+        let identity_trusted_proxy = optional("IDENTITY_TRUSTED_PROXY")
+            .map(|raw| {
+                raw.parse::<IpAddr>()
+                    .map_err(|_| ConfigError::InvalidTrustedProxy(raw))
+            })
+            .transpose()?;
 
         Ok(Config {
             database_url,
@@ -112,7 +139,8 @@ impl Config {
             checkout_success_url,
             checkout_cancel_url,
             port,
-            billing_jwt_secret: SecretString::from(billing_jwt_secret),
+            identity_allowed_origins,
+            identity_trusted_proxy,
         })
     }
 }
@@ -130,15 +158,16 @@ impl BillingEventSink for LoggingSink {
     }
 }
 
-/// Builds every concrete implementation, wires them together and serves the
-/// billing router until the process is killed.
+/// Builds every concrete implementation, wires them together and serves both
+/// modules until the process is killed.
 async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let pool = PgPoolOptions::new().connect(&config.database_url).await?;
     run_migrations(&pool).await?;
-    // `audit-pg`'s own migrator, against the same database -- safe to run
-    // alongside the one above because it tracks its state in
-    // `audit._sqlx_migrations`, not the default table (see its own docs).
+    // `audit-pg`'s and `identity-pg`'s own migrators, against the same
+    // database -- safe beside the one above because each tracks its state in
+    // its own schema's `_sqlx_migrations`, not the default table.
     audit_pg::run_migrations(&pool).await?;
+    identity_pg::run_migrations(&pool).await?;
 
     // Postgres repositories: customer, subscription and invoice lookups plus
     // the webhook ledger for the processor, and a second ledger handle for
@@ -202,28 +231,39 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         success: config.checkout_success_url,
         cancel: config.checkout_cancel_url,
     };
-
     let state = AppState::new(verifier, handler, reads, writes, checkout_urls);
-    let decoder = JwtDecoder::new(&config.billing_jwt_secret);
-    let token_router = demo_token_router(&config.billing_jwt_secret);
 
-    // Scaffolding, said loudly and every time: `/demo/token` mints a token
-    // for whatever tenant id it is given, no authentication of its own.
-    // Never expose this route, or this binary, outside a local demo.
-    tracing::warn!(
-        "POST /demo/token is unauthenticated scaffolding -- it mints a token for any tenant id given to it"
+    // The identity module. The hasher computes its dummy hash here, at
+    // startup, so the first login does not pay for it.
+    let authentication = AuthService::new(
+        PgUserRepository::new(pool.clone()),
+        PgMembershipRepository::new(pool.clone()),
+        PgSessionRepository::new(pool.clone()),
+        Argon2Hasher::new()?,
+        SystemClock,
     );
+    let mut identity = IdentityState::new(
+        Arc::new(authentication),
+        Arc::new(InMemoryRateLimiter::new(SystemClock)),
+    );
+    if let Some(proxy) = config.identity_trusted_proxy {
+        identity = identity.with_trusted_proxy(proxy);
+    }
+    let allowed_origins = AllowedOrigins::new(&config.identity_allowed_origins);
 
-    // The eleven tenant-scoped routes, guarded by `demo`'s own extractor,
-    // merged with the webhook route (which authenticates by signature and
-    // needs no token) and the token mint (which has no auth of its own).
-    // `Extension(decoder)` is the layer `DemoTenant`'s rejection suite
-    // already proved every path needs -- installed once, here, over
-    // the merged router rather than any one part of it.
-    let router = billing_router::<DemoTenant>(state.clone())
+    // One router for both modules. `Extension(identity)` over the merge is
+    // what lets `IdentityTenant` on billing's routes resolve a session; the
+    // origin check over the merge is what protects billing's writes now that
+    // a cookie authenticates them. The webhook route carries no cookie, so
+    // the origin check passes it by its own rule, with no carve-out.
+    let router = billing_router::<IdentityTenant>(state.clone())
         .merge(webhook_router(state))
-        .merge(token_router)
-        .layer(Extension(decoder));
+        .merge(identity_router(identity.clone()))
+        .layer(Extension(identity))
+        .layer(middleware::from_fn_with_state(
+            allowed_origins,
+            origin_check,
+        ));
 
     // The `/api/v1` base path. Every route moves together -- one rule beats a
     // rule plus a carve-out -- so `/webhooks/stripe` moves too. Its
@@ -234,8 +274,15 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "serving billing_router, webhook_router and /demo/token");
-    axum::serve(listener, router).await?;
+    tracing::info!(%addr, "serving billing_router, webhook_router and identity_router");
+    // With connect info: the identity module rate-limits by client address,
+    // and refuses to serve without one rather than put every caller in one
+    // bucket.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -288,12 +335,14 @@ async fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use secrecy::ExposeSecret;
 
     use super::*;
 
     /// Builds a lookup closure over a fixed set of key/value pairs.
-    fn getter(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+    fn getter(pairs: Vec<(&'static str, &'static str)>) -> impl Fn(&str) -> Option<String> {
         move |key| {
             pairs
                 .iter()
@@ -310,12 +359,28 @@ mod tests {
         ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
         ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
         ("PORT", "8080"),
-        ("BILLING_JWT_SECRET", "test-signing-secret"),
+        (
+            "IDENTITY_ALLOWED_ORIGINS",
+            "https://app.example, http://localhost:5173",
+        ),
     ];
+
+    /// `FULL_ENV` with `name` removed and `extra` added.
+    fn env_without(
+        name: &str,
+        extra: &[(&'static str, &'static str)],
+    ) -> Vec<(&'static str, &'static str)> {
+        FULL_ENV
+            .iter()
+            .copied()
+            .filter(|(key, _)| *key != name)
+            .chain(extra.iter().copied())
+            .collect()
+    }
 
     #[test]
     fn all_present_parses() {
-        let config = Config::from_env(getter(FULL_ENV));
+        let config = Config::from_env(getter(FULL_ENV.to_vec()));
 
         assert!(matches!(
             &config,
@@ -326,127 +391,88 @@ mod tests {
                     && c.stripe_secret_key.expose_secret() == "sk_test_abc123"
                     && c.checkout_success_url == "https://app.example/done"
                     && c.checkout_cancel_url == "https://app.example/billing"
-                    && c.billing_jwt_secret.expose_secret() == "test-signing-secret"
+                    && c.identity_allowed_origins
+                        == vec!["https://app.example".to_string(), "http://localhost:5173".to_string()]
+                    && c.identity_trusted_proxy.is_none()
         ));
     }
 
     #[test]
     fn debug_redacts_every_secret() {
-        let config = Config::from_env(getter(FULL_ENV));
+        let config = Config::from_env(getter(FULL_ENV.to_vec()));
         let rendered = format!("{config:?}");
 
         assert!(!rendered.contains("whsec_abc123"));
         assert!(!rendered.contains("sk_test_abc123"));
-        assert!(!rendered.contains("test-signing-secret"));
     }
 
     #[test]
-    fn missing_database_url_is_named() {
-        let result = Config::from_env(getter(&[
-            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
-            ("PORT", "8080"),
-        ]));
-
-        assert!(matches!(result, Err(ConfigError::Missing("DATABASE_URL"))));
-    }
-
-    #[test]
-    fn missing_signing_secret_is_named() {
-        let result = Config::from_env(getter(&[
-            ("DATABASE_URL", "postgres://localhost/billing"),
-            ("PORT", "8080"),
-        ]));
-
-        assert!(matches!(
-            result,
-            Err(ConfigError::Missing("STRIPE_WEBHOOK_SIGNING_SECRET"))
-        ));
-    }
-
-    #[test]
-    fn missing_stripe_secret_key_is_named() {
-        let result = Config::from_env(getter(&[
-            ("DATABASE_URL", "postgres://localhost/billing"),
-            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
-            ("PORT", "8080"),
-        ]));
-
-        assert!(matches!(
-            result,
-            Err(ConfigError::Missing("STRIPE_SECRET_KEY"))
-        ));
-    }
-
-    #[test]
-    fn missing_checkout_success_url_is_named() {
-        let result = Config::from_env(getter(&[
-            ("DATABASE_URL", "postgres://localhost/billing"),
-            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
-            ("STRIPE_SECRET_KEY", "sk_test_abc123"),
-            ("PORT", "8080"),
-        ]));
-
-        assert!(matches!(
-            result,
-            Err(ConfigError::Missing("CHECKOUT_SUCCESS_URL"))
-        ));
-    }
-
-    #[test]
-    fn missing_port_is_named() {
-        let result = Config::from_env(getter(&[
-            ("DATABASE_URL", "postgres://localhost/billing"),
-            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
-            ("STRIPE_SECRET_KEY", "sk_test_abc123"),
-            ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
-            ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
-        ]));
-
-        assert!(matches!(result, Err(ConfigError::Missing("PORT"))));
-    }
-
-    #[test]
-    fn missing_billing_jwt_secret_is_named() {
-        let result = Config::from_env(getter(&[
-            ("DATABASE_URL", "postgres://localhost/billing"),
-            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
-            ("STRIPE_SECRET_KEY", "sk_test_abc123"),
-            ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
-            ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
-            ("PORT", "8080"),
-        ]));
-
-        assert!(matches!(
-            result,
-            Err(ConfigError::Missing("BILLING_JWT_SECRET"))
-        ));
+    fn each_required_variable_is_named_when_missing() {
+        for name in [
+            "DATABASE_URL",
+            "STRIPE_WEBHOOK_SIGNING_SECRET",
+            "STRIPE_SECRET_KEY",
+            "CHECKOUT_SUCCESS_URL",
+            "CHECKOUT_CANCEL_URL",
+            "PORT",
+            "IDENTITY_ALLOWED_ORIGINS",
+        ] {
+            let result = Config::from_env(getter(env_without(name, &[])));
+            assert!(
+                matches!(&result, Err(ConfigError::Missing(missing)) if *missing == name),
+                "{name}: {result:?}"
+            );
+        }
     }
 
     #[test]
     fn empty_value_counts_as_missing() {
-        let result = Config::from_env(getter(&[
-            ("DATABASE_URL", ""),
-            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
-            ("PORT", "8080"),
-        ]));
+        let result = Config::from_env(getter(env_without("DATABASE_URL", &[("DATABASE_URL", "")])));
 
         assert!(matches!(result, Err(ConfigError::Missing("DATABASE_URL"))));
     }
 
     #[test]
+    fn an_origin_list_of_only_separators_counts_as_missing() {
+        let result = Config::from_env(getter(env_without(
+            "IDENTITY_ALLOWED_ORIGINS",
+            &[("IDENTITY_ALLOWED_ORIGINS", " , ,")],
+        )));
+
+        assert!(matches!(
+            result,
+            Err(ConfigError::Missing("IDENTITY_ALLOWED_ORIGINS"))
+        ));
+    }
+
+    #[test]
     fn non_numeric_port_is_rejected() {
-        let result = Config::from_env(getter(&[
-            ("DATABASE_URL", "postgres://localhost/billing"),
-            ("STRIPE_WEBHOOK_SIGNING_SECRET", "whsec_abc123"),
-            ("STRIPE_SECRET_KEY", "sk_test_abc123"),
-            ("CHECKOUT_SUCCESS_URL", "https://app.example/done"),
-            ("CHECKOUT_CANCEL_URL", "https://app.example/billing"),
-            ("PORT", "not-a-number"),
-        ]));
+        let result = Config::from_env(getter(env_without("PORT", &[("PORT", "not-a-number")])));
 
         assert!(matches!(
             result,
             Err(ConfigError::InvalidPort(raw)) if raw == "not-a-number"
+        ));
+    }
+
+    #[test]
+    fn a_trusted_proxy_is_optional_but_must_be_an_ip_when_set() {
+        let valid = Config::from_env(getter(env_without(
+            "",
+            &[("IDENTITY_TRUSTED_PROXY", "10.0.0.1")],
+        )));
+        assert!(matches!(
+            valid,
+            Ok(c) if c.identity_trusted_proxy == Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)))
+        ));
+
+        let invalid = Config::from_env(getter(env_without(
+            "",
+            &[("IDENTITY_TRUSTED_PROXY", "proxy.internal")],
+        )));
+        assert!(matches!(
+            invalid,
+            Err(ConfigError::InvalidTrustedProxy(raw)) if raw == "proxy.internal"
         ));
     }
 }
