@@ -11,6 +11,7 @@
 //! or fail together.
 
 mod error;
+mod fan_out;
 mod membership_repository;
 mod session_repository;
 mod user_repository;

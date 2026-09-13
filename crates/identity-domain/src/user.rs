@@ -41,3 +41,54 @@ pub struct Membership {
     /// The member's role in this tenant.
     pub role: Role,
 }
+
+/// Longest display name accepted, in Unicode scalar values.
+pub const MAX_DISPLAY_NAME_CHARS: usize = 100;
+
+/// A display name as a user set it: trimmed, at most
+/// [`MAX_DISPLAY_NAME_CHARS`], no control characters. May be empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayName(String);
+
+impl DisplayName {
+    /// Validates and trims `raw`.
+    pub fn parse(raw: &str) -> Result<Self, DisplayNameError> {
+        let trimmed = raw.trim();
+        if trimmed.chars().count() > MAX_DISPLAY_NAME_CHARS || trimmed.chars().any(char::is_control)
+        {
+            return Err(DisplayNameError);
+        }
+        Ok(Self(trimmed.to_string()))
+    }
+
+    /// The name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A display name was too long or contained control characters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("invalid display name")]
+pub struct DisplayNameError;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_names_are_trimmed_bounded_and_printable() {
+        assert_eq!(
+            DisplayName::parse("  Alice  ").map(|n| n.as_str().to_string()),
+            Ok("Alice".to_string())
+        );
+        assert!(DisplayName::parse("").is_ok());
+        assert!(DisplayName::parse(&"é".repeat(MAX_DISPLAY_NAME_CHARS)).is_ok());
+        assert_eq!(
+            DisplayName::parse(&"é".repeat(MAX_DISPLAY_NAME_CHARS + 1)),
+            Err(DisplayNameError)
+        );
+        assert_eq!(DisplayName::parse("Ali\u{0}ce"), Err(DisplayNameError));
+        assert_eq!(DisplayName::parse("Ali\nce"), Err(DisplayNameError));
+    }
+}

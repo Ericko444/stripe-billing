@@ -128,3 +128,10 @@ pub fn rfc3339_utc(datetime: OffsetDateTime) -> String {
         datetime.second(),
     )
 }
+
+/// `PATCH /auth/me` body.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMeRequest {
+    /// The new display name. Trimmed; at most 100 characters.
+    pub display_name: String,
+}

@@ -15,6 +15,7 @@
 //! accepts, and the only way to get one is through the policy check -- a
 //! password that was never checked cannot be stored.
 
+mod account_event;
 mod email;
 mod ids;
 mod password;
@@ -24,6 +25,7 @@ mod session;
 mod token;
 mod user;
 
+pub use account_event::AccountEvent;
 pub use email::{Email, EmailError};
 pub use ids::{MembershipId, SessionId, TenantId, UserId};
 pub use password::{
@@ -39,4 +41,4 @@ pub use session::{NewSession, SessionTenant, StoredSession};
 pub use token::{
     SELECTOR_BYTES, Selector, SplitToken, TokenParseError, VERIFIER_BYTES, Verifier, VerifierHash,
 };
-pub use user::{Membership, User};
+pub use user::{DisplayName, DisplayNameError, MAX_DISPLAY_NAME_CHARS, Membership, User};

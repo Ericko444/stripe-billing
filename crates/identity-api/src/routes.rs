@@ -7,14 +7,14 @@ use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use identity_domain::{Email, Password, TenantId};
 use identity_service::{
-    LoginError, SelectTenantError, SessionError, SessionScope, TENANT_SESSION_LIFETIME,
-    UNSCOPED_SESSION_LIFETIME,
+    LoginError, Me, ProfileError, SelectTenantError, SessionError, SessionScope,
+    TENANT_SESSION_LIFETIME, UNSCOPED_SESSION_LIFETIME,
 };
 
 use crate::cookie::{clearing_cookie, session_cookie};
 use crate::dto::{
     CurrentTenantDto, LoginRequest, MeDto, MembershipDto, SelectTenantRequest, SessionDto,
-    rfc3339_utc,
+    UpdateMeRequest, rfc3339_utc,
 };
 use crate::error::{ErrorKind, IdentityError};
 use crate::session_extract::AuthenticatedSession;
@@ -99,6 +99,36 @@ pub async fn me(
             }
         })?;
 
+    Ok(me_response(me))
+}
+
+/// `PATCH /auth/me`: change the caller's display name.
+pub async fn update_me(
+    Extension(state): Extension<IdentityState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    session: AuthenticatedSession,
+    body: Result<Json<UpdateMeRequest>, JsonRejection>,
+) -> Result<Response, IdentityError> {
+    let error = |kind| IdentityError::new(kind, correlation_id);
+    let Json(request) =
+        body.map_err(|rejection| error(ErrorKind::MalformedRequest(rejection.body_text())))?;
+
+    let me = state
+        .authentication()
+        .update_display_name(session.session(), &request.display_name, correlation_id)
+        .await
+        .map_err(|err| match err {
+            ProfileError::InvalidDisplayName => {
+                error(ErrorKind::MalformedRequest("invalid display name".into()))
+            }
+            ProfileError::Unauthenticated => error(ErrorKind::Unauthorized),
+            ProfileError::Unavailable(reason) => error(ErrorKind::Internal(reason)),
+        })?;
+
+    Ok(me_response(me))
+}
+
+fn me_response(me: Me) -> Response {
     let mut response = Json(MeDto {
         user_id: me.user_id.as_uuid(),
         email: me.email.as_str().to_string(),
@@ -109,7 +139,7 @@ pub async fn me(
     })
     .into_response();
     no_store(&mut response);
-    Ok(response)
+    response
 }
 
 /// `POST /auth/tenant`: scope the session to one of the caller's tenants.

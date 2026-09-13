@@ -1,4 +1,6 @@
-use identity_domain::{Email, PasswordHash, RepositoryError, User, UserId, UserRepository};
+use identity_domain::{
+    AccountEvent, DisplayName, Email, PasswordHash, RepositoryError, User, UserId, UserRepository,
+};
 use sqlx::PgPool;
 use sqlx::Row;
 use sqlx::postgres::PgRow;
@@ -6,6 +8,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::error::repository_error;
+use crate::fan_out::record_for_each_tenant;
 
 /// `UserRepository` over `identity.users`.
 #[derive(Clone)]
@@ -62,6 +65,28 @@ impl UserRepository for PgUserRepository {
         .execute(&self.pool)
         .await
         .map_err(repository_error)?;
+        Ok(())
+    }
+
+    async fn update_display_name(
+        &self,
+        user_id: UserId,
+        display_name: &DisplayName,
+        event: &AccountEvent,
+    ) -> Result<(), RepositoryError> {
+        let mut tx = self.pool.begin().await.map_err(repository_error)?;
+
+        sqlx::query(
+            "UPDATE identity.users SET display_name = $2, updated_at = now() WHERE id = $1",
+        )
+        .bind(user_id.as_uuid())
+        .bind(display_name.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(repository_error)?;
+        record_for_each_tenant(&mut tx, user_id, event).await?;
+
+        tx.commit().await.map_err(repository_error)?;
         Ok(())
     }
 }

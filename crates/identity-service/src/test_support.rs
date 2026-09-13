@@ -9,9 +9,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use audit::AuditEntry;
 use identity_domain::{
-    Clock, Email, Membership, MembershipRepository, NewPassword, NewSession, Password,
-    PasswordHash, PasswordHashError, PasswordHasher, RepositoryError, Selector, SessionId,
-    SessionRepository, StoredSession, User, UserId, UserRepository, Verification,
+    AccountEvent, Clock, DisplayName, Email, Membership, MembershipRepository, NewPassword,
+    NewSession, Password, PasswordHash, PasswordHashError, PasswordHasher, RepositoryError,
+    Selector, SessionId, SessionRepository, StoredSession, User, UserId, UserRepository,
+    Verification,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -29,14 +30,20 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub struct FakeUsers {
     users: Arc<Mutex<Vec<User>>>,
     rehashed: Arc<Mutex<Vec<(UserId, String)>>>,
+    account_events: Arc<Mutex<Vec<(UserId, AccountEvent)>>>,
 }
 
 impl FakeUsers {
     pub fn with(users: Vec<User>) -> Self {
         Self {
             users: Arc::new(Mutex::new(users)),
-            rehashed: Arc::default(),
+            ..Self::default()
         }
+    }
+
+    /// Every account event handed to a user write, with its user.
+    pub fn account_events(&self) -> Vec<(UserId, AccountEvent)> {
+        lock(&self.account_events).clone()
     }
 
     pub fn rehashed(&self) -> Vec<(UserId, String)> {
@@ -73,6 +80,21 @@ impl UserRepository for FakeUsers {
         hash: &PasswordHash,
     ) -> impl Future<Output = Result<(), RepositoryError>> + Send {
         lock(&self.rehashed).push((user_id, hash.as_str().to_string()));
+        ready(Ok(()))
+    }
+
+    fn update_display_name(
+        &self,
+        user_id: UserId,
+        display_name: &DisplayName,
+        event: &AccountEvent,
+    ) -> impl Future<Output = Result<(), RepositoryError>> + Send {
+        for user in lock(&self.users).iter_mut() {
+            if user.id == user_id {
+                user.display_name = display_name.as_str().to_string();
+            }
+        }
+        lock(&self.account_events).push((user_id, *event));
         ready(Ok(()))
     }
 }

@@ -65,4 +65,8 @@ pub enum Action {
     /// record it under, and the selection that follows is the auditable
     /// fact.
     SessionStarted,
+    /// A user changed their own profile (today: the display name). An
+    /// account-level action, recorded once per tenant the user is an active
+    /// member of.
+    UserUpdated,
 }

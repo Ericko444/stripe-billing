@@ -64,6 +64,7 @@ fn action_kind(action: &Action) -> &'static str {
         Action::PaymentSucceeded => "payment.succeeded",
         Action::PaymentFailed => "payment.failed",
         Action::SessionStarted => "session.started",
+        Action::UserUpdated => "user.updated",
     }
 }
 

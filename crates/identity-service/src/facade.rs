@@ -6,8 +6,8 @@ use identity_domain::{
 };
 
 use crate::{
-    ActiveSession, AuthService, LoginError, LoginOutcome, Me, SelectTenantError, SessionError,
-    TenantSelection,
+    ActiveSession, AuthService, LoginError, LoginOutcome, Me, ProfileError, SelectTenantError,
+    SessionError, TenantSelection,
 };
 
 /// The identity use cases as an object-safe trait, so a router can hold
@@ -39,6 +39,14 @@ pub trait Authentication: Send + Sync {
 
     /// See [`AuthService::logout`].
     async fn logout(&self, session: &ActiveSession) -> Result<(), SessionError>;
+
+    /// See [`AuthService::update_display_name`].
+    async fn update_display_name(
+        &self,
+        session: &ActiveSession,
+        display_name: &str,
+        correlation_id: CorrelationId,
+    ) -> Result<Me, ProfileError>;
 }
 
 #[async_trait]
@@ -78,5 +86,14 @@ where
 
     async fn logout(&self, session: &ActiveSession) -> Result<(), SessionError> {
         AuthService::logout(self, session).await
+    }
+
+    async fn update_display_name(
+        &self,
+        session: &ActiveSession,
+        display_name: &str,
+        correlation_id: CorrelationId,
+    ) -> Result<Me, ProfileError> {
+        AuthService::update_display_name(self, session, display_name, correlation_id).await
     }
 }

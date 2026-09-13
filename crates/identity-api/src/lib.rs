@@ -33,7 +33,7 @@ pub use state::IdentityState;
 /// can make the server buffer and parse.
 const BODY_LIMIT_BYTES: usize = 16 * 1024;
 
-/// Builds the identity routes: `POST /auth/login`, `GET /auth/me`,
+/// Builds the identity routes: `POST /auth/login`, `GET` and `PATCH /auth/me`,
 /// `POST /auth/tenant`, `POST /auth/logout`.
 ///
 /// Installs its own correlation layer and its own [`IdentityState`]
@@ -42,7 +42,7 @@ const BODY_LIMIT_BYTES: usize = 16 * 1024;
 pub fn identity_router(state: IdentityState) -> Router {
     Router::new()
         .route("/auth/login", post(routes::login))
-        .route("/auth/me", get(routes::me))
+        .route("/auth/me", get(routes::me).patch(routes::update_me))
         .route("/auth/tenant", post(routes::select_tenant))
         .route("/auth/logout", post(routes::logout))
         .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))

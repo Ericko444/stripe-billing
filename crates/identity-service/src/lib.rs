@@ -9,6 +9,7 @@ mod argon2_hasher;
 mod auth;
 mod clock;
 mod facade;
+mod profile;
 mod session;
 #[cfg(test)]
 mod test_support;
@@ -24,5 +25,6 @@ pub use auth::{
 };
 pub use clock::SystemClock;
 pub use facade::Authentication;
+pub use profile::ProfileError;
 pub use session::{ActiveSession, Me, SelectTenantError, SessionError, TenantSelection};
 pub use token::{TokenGenerationError, generate_token};

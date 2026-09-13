@@ -16,8 +16,8 @@ use identity_domain::{
     TenantId, UserId,
 };
 use identity_service::{
-    ActiveSession, Authentication, LoginError, LoginOutcome, Me, SelectTenantError, SessionError,
-    SessionScope, TenantSelection,
+    ActiveSession, Authentication, LoginError, LoginOutcome, Me, ProfileError, SelectTenantError,
+    SessionError, SessionScope, TenantSelection,
 };
 use secrecy::ExposeSecret;
 use serde_json::Value;
@@ -134,6 +134,22 @@ impl Authentication for ScriptedAuth {
 
     async fn logout(&self, _session: &ActiveSession) -> Result<(), SessionError> {
         Ok(())
+    }
+
+    async fn update_display_name(
+        &self,
+        session: &ActiveSession,
+        display_name: &str,
+        _correlation_id: CorrelationId,
+    ) -> Result<Me, ProfileError> {
+        let name = identity_domain::DisplayName::parse(display_name)
+            .map_err(|_| ProfileError::InvalidDisplayName)?;
+        let mut me = self
+            .me(session)
+            .await
+            .map_err(|_| ProfileError::Unauthenticated)?;
+        me.display_name = name.as_str().to_string();
+        Ok(me)
     }
 }
 
@@ -441,5 +457,47 @@ async fn logout_clears_the_cookie_with_or_without_a_live_session() -> Result<(),
             Some("__Host-session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0")
         );
     }
+    Ok(())
+}
+
+fn patch_me(cookie: Option<&str>, body: &str) -> Result<Request<Body>, Box<dyn Error>> {
+    let mut builder = Request::builder()
+        .method("PATCH")
+        .uri("/auth/me")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(cookie) = cookie {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    Ok(builder.body(Body::from(body.to_string()))?)
+}
+
+#[tokio::test]
+async fn patching_me_returns_the_updated_account() -> Result<(), Box<dyn Error>> {
+    let cookie = format!("__Host-session={}", valid_wire());
+    let response = router()
+        .oneshot(patch_me(
+            Some(&cookie),
+            r#"{"display_name":"  Alice L. "}"#,
+        )?)
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json(response).await?["display_name"], "Alice L.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn patching_me_with_an_invalid_name_is_400_and_without_a_session_401()
+-> Result<(), Box<dyn Error>> {
+    let cookie = format!("__Host-session={}", valid_wire());
+    let invalid = router()
+        .oneshot(patch_me(Some(&cookie), r#"{"display_name":"a\nb"}"#)?)
+        .await?;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+    let anonymous = router()
+        .oneshot(patch_me(None, r#"{"display_name":"Alice"}"#)?)
+        .await?;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
     Ok(())
 }

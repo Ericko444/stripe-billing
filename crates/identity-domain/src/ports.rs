@@ -13,8 +13,8 @@ use thiserror::Error;
 use time::OffsetDateTime;
 
 use crate::{
-    Email, Membership, NewPassword, NewSession, Password, PasswordHash, Selector, SessionId,
-    StoredSession, User, UserId,
+    AccountEvent, DisplayName, Email, Membership, NewPassword, NewSession, Password, PasswordHash,
+    Selector, SessionId, StoredSession, User, UserId,
 };
 
 /// Finds and updates users.
@@ -40,6 +40,15 @@ pub trait UserRepository: Send + Sync {
         &self,
         user_id: UserId,
         hash: &PasswordHash,
+    ) -> impl Future<Output = Result<(), RepositoryError>> + Send;
+
+    /// Sets a user's display name, and records `event` once per active
+    /// membership, in one transaction.
+    fn update_display_name(
+        &self,
+        user_id: UserId,
+        display_name: &DisplayName,
+        event: &AccountEvent,
     ) -> impl Future<Output = Result<(), RepositoryError>> + Send;
 }
 
