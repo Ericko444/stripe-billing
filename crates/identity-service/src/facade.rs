@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use audit::CorrelationId;
 use identity_domain::{
-    Clock, Email, Mailer, MemberRepository, MembershipRepository, Password, PasswordHasher,
-    PasswordTokenRepository, Role, SessionRepository, TenantId, TenantMember, UserRepository,
+    Clock, Email, Mailer, MemberRepository, MembershipId, MembershipRepository, Password,
+    PasswordHasher, PasswordTokenRepository, Role, SessionRepository, TenantId, TenantMember,
+    UserRepository,
 };
 
 use crate::{
@@ -167,6 +168,14 @@ pub trait Members: Send + Sync {
         role: Role,
         correlation_id: CorrelationId,
     ) -> Result<TenantMember, MembersError>;
+
+    /// See [`MembersService::suspend`].
+    async fn suspend_member(
+        &self,
+        session: &ActiveSession,
+        membership_id: MembershipId,
+        correlation_id: CorrelationId,
+    ) -> Result<(), MembersError>;
 }
 
 #[async_trait]
@@ -191,5 +200,14 @@ where
         correlation_id: CorrelationId,
     ) -> Result<TenantMember, MembersError> {
         MembersService::add(self, session, email, role, correlation_id).await
+    }
+
+    async fn suspend_member(
+        &self,
+        session: &ActiveSession,
+        membership_id: MembershipId,
+        correlation_id: CorrelationId,
+    ) -> Result<(), MembersError> {
+        MembersService::suspend(self, session, membership_id, correlation_id).await
     }
 }

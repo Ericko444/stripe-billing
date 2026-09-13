@@ -10,11 +10,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use audit::AuditEntry;
 use identity_domain::{
     AccountEvent, Clock, DisplayName, Email, GrantOutcome, MailError, MailPurpose, Mailer,
-    MemberGrant, MemberRepository, Membership, MembershipId, MembershipRepository,
-    MembershipStatus, NewPassword, NewPasswordToken, NewSession, OutgoingMail, Password,
-    PasswordHash, PasswordHashError, PasswordHasher, PasswordTokenRepository, RepositoryError,
-    Selector, SessionId, SessionRepository, StoredPasswordToken, StoredSession, TenantId,
-    TenantMember, TokenPurpose, User, UserId, UserRepository, Verification, VerifierHash,
+    MemberGrant, MemberRepository, MemberSuspension, Membership, MembershipId,
+    MembershipRepository, MembershipStatus, NewPassword, NewPasswordToken, NewSession,
+    OutgoingMail, Password, PasswordHash, PasswordHashError, PasswordHasher,
+    PasswordTokenRepository, RepositoryError, Selector, SessionId, SessionRepository,
+    StoredPasswordToken, StoredSession, TenantId, TenantMember, TokenPurpose, User, UserId,
+    UserRepository, Verification, VerifierHash,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -404,6 +405,9 @@ pub struct FakeMembers {
     grants: Arc<Mutex<Vec<MemberGrant>>>,
     existing_has_password: Option<bool>,
     already_member: bool,
+    member: Option<TenantMember>,
+    lookups: Arc<Mutex<Vec<TenantId>>>,
+    suspensions: Arc<Mutex<Vec<MemberSuspension>>>,
 }
 
 impl FakeMembers {
@@ -423,6 +427,23 @@ impl FakeMembers {
 
     pub fn grants(&self) -> Vec<MemberGrant> {
         lock(&self.grants).clone()
+    }
+
+    /// `find` answers with `member` for its id, in any tenant asked.
+    pub fn with_member(member: TenantMember) -> Self {
+        Self {
+            member: Some(member),
+            ..Self::default()
+        }
+    }
+
+    /// The tenants `find` was asked to look in.
+    pub fn looked_up_in(&self) -> Vec<TenantId> {
+        lock(&self.lookups).clone()
+    }
+
+    pub fn suspensions(&self) -> Vec<MemberSuspension> {
+        lock(&self.suspensions).clone()
     }
 }
 
@@ -452,6 +473,27 @@ impl MemberRepository for FakeMembers {
             },
             invitation_issued: !self.existing_has_password.unwrap_or(false),
         }))
+    }
+
+    fn find(
+        &self,
+        tenant_id: TenantId,
+        membership_id: MembershipId,
+    ) -> impl Future<Output = Result<Option<TenantMember>, RepositoryError>> + Send {
+        lock(&self.lookups).push(tenant_id);
+        let found = self
+            .member
+            .clone()
+            .filter(|member| member.membership_id == membership_id);
+        ready(Ok(found))
+    }
+
+    fn suspend(
+        &self,
+        suspension: &MemberSuspension,
+    ) -> impl Future<Output = Result<bool, RepositoryError>> + Send {
+        lock(&self.suspensions).push(suspension.clone());
+        ready(Ok(true))
     }
 }
 

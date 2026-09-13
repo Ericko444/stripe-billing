@@ -120,6 +120,16 @@ impl identity_service::Members for CountingAuth {
         self.called();
         Err(identity_service::MembersError::Forbidden)
     }
+
+    async fn suspend_member(
+        &self,
+        _: &ActiveSession,
+        _: identity_domain::MembershipId,
+        _: CorrelationId,
+    ) -> Result<(), identity_service::MembersError> {
+        self.called();
+        Err(identity_service::MembersError::Forbidden)
+    }
 }
 
 struct World {

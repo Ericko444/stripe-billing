@@ -98,4 +98,8 @@ pub enum Action {
     /// A first password was set through an invitation link. Account-level,
     /// `Actor::Anonymous`, for the reason `PasswordResetCompleted` is.
     InvitationAccepted,
+    /// A membership was suspended by one of the tenant's Owners or Admins.
+    /// Recorded in that tenant; the target is the membership. The member's
+    /// sessions in that tenant end in the same transaction.
+    MembershipSuspended,
 }

@@ -42,7 +42,8 @@ const BODY_LIMIT_BYTES: usize = 16 * 1024;
 
 /// Builds the identity routes: `POST /auth/login`, `GET` and `PATCH /auth/me`,
 /// `POST /auth/tenant`, `POST /auth/logout`, `POST /auth/password/change`,
-/// the two password reset routes, and `GET` and `POST /tenant/members`.
+/// the two password reset routes, `GET` and `POST /tenant/members`, and
+/// `POST /tenant/members/{id}/suspend`.
 ///
 /// Installs its own correlation layer and its own [`IdentityState`]
 /// extension. A host that also wants [`AuthenticatedSession`] on *other*
@@ -65,6 +66,10 @@ pub fn identity_router(state: IdentityState) -> Router {
         .route(
             "/tenant/members",
             get(members_routes::list_members).post(members_routes::add_member),
+        )
+        .route(
+            "/tenant/members/{id}/suspend",
+            post(members_routes::suspend_member),
         )
         .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))
         .layer(Extension(state))

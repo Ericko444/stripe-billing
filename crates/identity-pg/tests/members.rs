@@ -6,12 +6,13 @@ mod common;
 use std::error::Error;
 
 use audit::CorrelationId;
-use common::{membership, tenant, user};
+use common::{membership, session_for, tenant, user};
 use identity_domain::{
-    Email, GrantOutcome, MemberGrant, MemberRepository, MembershipStatus, PasswordHash,
-    PasswordTokenRepository, PendingInvitation, Role, SplitToken, TenantId, TokenPurpose, UserId,
+    Email, GrantOutcome, MemberGrant, MemberRepository, MemberSuspension, MembershipId,
+    MembershipStatus, PasswordHash, PasswordTokenRepository, PendingInvitation, Role,
+    SessionRepository, SplitToken, TenantId, TokenPurpose, UserId,
 };
-use identity_pg::{PgMembershipRepository, PgPasswordTokenRepository};
+use identity_pg::{PgMembershipRepository, PgPasswordTokenRepository, PgSessionRepository};
 use sqlx::PgPool;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -338,5 +339,125 @@ async fn an_invitation_sets_a_first_password_and_never_replaces_one() -> Result<
         Some("$carol")
     );
     assert!(tokens.find(invitation.selector()).await?.is_none());
+    Ok(())
+}
+
+fn suspension_of(
+    tenant_id: TenantId,
+    membership_id: MembershipId,
+    suspended_by: UserId,
+) -> MemberSuspension {
+    MemberSuspension {
+        tenant_id,
+        membership_id,
+        suspended_by,
+        occurred_at: common::now_micros(),
+        correlation_id: CorrelationId::new(Uuid::new_v4()),
+    }
+}
+
+async fn membership_id_of(
+    members: &PgMembershipRepository,
+    tenant_id: TenantId,
+    email: &str,
+) -> Result<MembershipId, Box<dyn Error>> {
+    members
+        .list(tenant_id)
+        .await?
+        .into_iter()
+        .find(|m| m.email.as_str() == email)
+        .map(|m| m.membership_id)
+        .ok_or_else(|| format!("{email} is not a member").into())
+}
+
+#[tokio::test]
+async fn suspending_ends_the_members_sessions_in_that_tenant_only_and_is_audited()
+-> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let members = PgMembershipRepository::new(db.pool.clone());
+    let sessions = PgSessionRepository::new(db.pool.clone());
+    let tenant_a = tenant(&db.pool, "Tenant A").await?;
+    let tenant_b = tenant(&db.pool, "Tenant B").await?;
+    let owner = user(&db.pool, "owner@example.test", Some("$owner")).await?;
+    let bob = user(&db.pool, "bob@example.test", Some("$bob")).await?;
+    membership(&db.pool, owner, tenant_a, "owner", "active").await?;
+    membership(&db.pool, bob, tenant_a, "member", "active").await?;
+    membership(&db.pool, bob, tenant_b, "member", "active").await?;
+    let in_a = SplitToken::from_bytes([1; 16], [1; 32]);
+    let in_b = SplitToken::from_bytes([2; 16], [2; 32]);
+    let owners = SplitToken::from_bytes([3; 16], [3; 32]);
+    sessions
+        .create(&session_for(&in_a, bob, Some(tenant_a)), None)
+        .await?;
+    sessions
+        .create(&session_for(&in_b, bob, Some(tenant_b)), None)
+        .await?;
+    sessions
+        .create(&session_for(&owners, owner, Some(tenant_a)), None)
+        .await?;
+    let bob_in_a = membership_id_of(&members, tenant_a, "bob@example.test").await?;
+    let suspension = suspension_of(tenant_a, bob_in_a, owner);
+
+    assert!(members.suspend(&suspension).await?);
+
+    let status = members.find(tenant_a, bob_in_a).await?.map(|m| m.status);
+    assert_eq!(status, Some(MembershipStatus::Suspended));
+    assert!(sessions.resolve(in_a.selector()).await?.is_none());
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM identity.sessions WHERE user_id = $1")
+            .bind(bob.as_uuid())
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(remaining, 1, "the session in Tenant B survives");
+    assert!(sessions.resolve(in_b.selector()).await?.is_some());
+    assert!(sessions.resolve(owners.selector()).await?.is_some());
+
+    assert_eq!(
+        audit_rows(&db.pool, suspension.correlation_id).await?,
+        vec![(
+            "membership.suspended".to_string(),
+            tenant_a.as_uuid(),
+            Some(owner.as_uuid()),
+            "membership".to_string(),
+            Some(bob_in_a.as_uuid()),
+        )]
+    );
+
+    // A second suspension changes nothing and records nothing.
+    let again = suspension_of(tenant_a, bob_in_a, owner);
+    assert!(!members.suspend(&again).await?);
+    assert!(audit_rows(&db.pool, again.correlation_id).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn another_tenants_membership_is_neither_found_nor_suspended() -> Result<(), Box<dyn Error>> {
+    let db = common::setup().await?;
+    let members = PgMembershipRepository::new(db.pool.clone());
+    let tenant_a = tenant(&db.pool, "Tenant A").await?;
+    let tenant_b = tenant(&db.pool, "Tenant B").await?;
+    let owner = user(&db.pool, "owner@example.test", Some("$owner")).await?;
+    let bob = user(&db.pool, "bob@example.test", Some("$bob")).await?;
+    membership(&db.pool, owner, tenant_a, "owner", "active").await?;
+    membership(&db.pool, bob, tenant_b, "member", "active").await?;
+    let bob_in_b = membership_id_of(&members, tenant_b, "bob@example.test").await?;
+
+    assert_eq!(members.find(tenant_a, bob_in_b).await?, None);
+    assert_eq!(
+        members
+            .find(tenant_a, MembershipId::new(Uuid::new_v4()))
+            .await?,
+        None
+    );
+    let suspension = suspension_of(tenant_a, bob_in_b, owner);
+    assert!(!members.suspend(&suspension).await?);
+
+    let status = members.find(tenant_b, bob_in_b).await?.map(|m| m.status);
+    assert_eq!(status, Some(MembershipStatus::Active));
+    assert!(
+        audit_rows(&db.pool, suspension.correlation_id)
+            .await?
+            .is_empty()
+    );
     Ok(())
 }

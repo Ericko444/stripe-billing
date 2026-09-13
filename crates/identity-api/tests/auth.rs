@@ -685,4 +685,15 @@ impl identity_service::Members for NoMembers {
             "not used by these tests".into(),
         ))
     }
+
+    async fn suspend_member(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: identity_domain::MembershipId,
+        _: CorrelationId,
+    ) -> Result<(), identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
 }

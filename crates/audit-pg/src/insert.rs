@@ -73,6 +73,7 @@ fn action_kind(action: &Action) -> &'static str {
         Action::UserCreated => "user.created",
         Action::MembershipGranted => "membership.granted",
         Action::InvitationAccepted => "invitation.accepted",
+        Action::MembershipSuspended => "membership.suspended",
     }
 }
 

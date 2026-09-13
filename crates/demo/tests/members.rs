@@ -1,6 +1,11 @@
-//! Inviting a member, end to end: the identity router the demo serves, the
-//! real services, Argon2id, and Postgres. An Owner adds an address; the
-//! invitee cannot log in until the mailed link sets a password, then can.
+//! Members, end to end: the identity router the demo serves, the real
+//! services, Argon2id, and Postgres, beside a billing-side route behind
+//! `IdentityTenant`. An Owner adds an address, and the invitee cannot log in
+//! until the mailed link sets a password; an Owner suspends a member, and
+//! the member's next billing request in that tenant is refused while their
+//! session in another tenant goes on working.
+
+mod common;
 
 use std::error::Error;
 use std::future::{Future, ready};
@@ -9,8 +14,12 @@ use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::extract::ConnectInfo;
-use axum::http::{Request, StatusCode, header};
+use axum::extract::{ConnectInfo, Extension};
+use axum::http::{Request, Response, StatusCode, header};
+use axum::response::IntoResponse;
+use axum::routing::get;
+use common::unused_state;
+use demo::identity_tenant::IdentityTenant;
 use identity_api::{IdentityState, identity_router};
 use identity_domain::{
     MailError, MailPurpose, Mailer, NewPassword, OutgoingMail, Password, PasswordHasher,
@@ -112,13 +121,20 @@ async fn world() -> Result<World, Box<dyn Error>> {
         SystemClock,
         "http://localhost:5173",
     );
-    let app = identity_router(IdentityState::new(
+    let identity = IdentityState::new(
         Arc::new(authentication),
         Arc::new(resets),
         Arc::new(members),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         reset_queue(1).0,
-    ));
+    );
+    // A route in billing's state, behind billing's extractor, merged with
+    // the identity routes under one `Extension` -- the shape `main` serves.
+    let app = Router::new()
+        .route("/whoami", get(whoami))
+        .with_state(unused_state())
+        .merge(identity_router(identity.clone()))
+        .layer(Extension(identity));
 
     Ok(World {
         pool,
@@ -126,6 +142,11 @@ async fn world() -> Result<World, Box<dyn Error>> {
         outbox,
         _container: container,
     })
+}
+
+async fn whoami(tenant: IdentityTenant) -> impl IntoResponse {
+    let tenant_id: domain::TenantId = tenant.into();
+    tenant_id.as_uuid().to_string()
 }
 
 /// A tenant, and a user with a real Argon2id password as its only member.
@@ -203,13 +224,52 @@ async fn login(
             None,
         )?)
         .await?;
-    let cookie = response
+    Ok((response.status(), session_cookie_of(&response)))
+}
+
+/// The `name=value` part of a response's `Set-Cookie`, as a browser would
+/// send it back.
+fn session_cookie_of(response: &Response<Body>) -> Option<String> {
+    response
         .headers()
         .get(header::SET_COOKIE)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(';').next())
-        .map(str::to_string);
-    Ok((response.status(), cookie))
+        .map(str::to_string)
+}
+
+/// A session of `email` scoped to `tenant`: log in (several memberships, so
+/// no tenant yet), then pick it.
+async fn session_in(app: &Router, email: &str, tenant: Uuid) -> Result<String, Box<dyn Error>> {
+    let unscoped = login(app, email, OWNER_PASSWORD)
+        .await?
+        .1
+        .ok_or("no session cookie")?;
+    let response = app
+        .clone()
+        .oneshot(post(
+            "/auth/tenant",
+            &json!({ "tenant_id": tenant }),
+            Some(&unscoped),
+        )?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    session_cookie_of(&response).ok_or_else(|| "no rotated cookie".into())
+}
+
+async fn whoami_as(app: &Router, cookie: &str) -> Result<(StatusCode, String), Box<dyn Error>> {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/whoami")
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await?;
+    Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
 }
 
 #[tokio::test]
@@ -333,6 +393,114 @@ async fn adding_a_new_or_an_existing_address_answers_the_same_apart_from_ids()
             .last_to("bob@example.test")
             .map(|(purpose, _)| purpose),
         Some(MailPurpose::AddedToTenant)
+    );
+    Ok(())
+}
+
+async fn membership_of(pool: &PgPool, email: &str, tenant: Uuid) -> Result<Uuid, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT m.id FROM identity.memberships m \
+           JOIN identity.users u ON u.id = m.user_id \
+          WHERE u.email_normalized = $1 AND m.tenant_id = $2",
+    )
+    .bind(email)
+    .bind(tenant)
+    .fetch_one(pool)
+    .await
+}
+
+#[tokio::test]
+async fn a_suspended_member_loses_that_tenant_and_keeps_the_other() -> Result<(), Box<dyn Error>> {
+    let w = world().await?;
+    let tenant_a = seed_owner(&w.pool, "Tenant A", "owner@example.test").await?;
+    let tenant_b = seed_owner(&w.pool, "Tenant B", "bob@example.test").await?;
+    let owner = login(&w.app, "owner@example.test", OWNER_PASSWORD)
+        .await?
+        .1
+        .ok_or("no session cookie")?;
+    let (status, added) = send(
+        &w.app,
+        post(
+            "/tenant/members",
+            &json!({ "email": "bob@example.test", "role": "member" }),
+            Some(&owner),
+        )?,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CREATED);
+    let bob_in_a = added["membership_id"]
+        .as_str()
+        .ok_or("no membership id")?
+        .to_string();
+
+    let bob_a = session_in(&w.app, "bob@example.test", tenant_a).await?;
+    let bob_b = session_in(&w.app, "bob@example.test", tenant_b).await?;
+    assert_eq!(
+        whoami_as(&w.app, &bob_a).await?,
+        (StatusCode::OK, tenant_a.to_string())
+    );
+
+    let suspend = |membership: &str| {
+        post(
+            &format!("/tenant/members/{membership}/suspend"),
+            &Value::Null,
+            Some(&owner),
+        )
+    };
+    let (status, _) = send(&w.app, suspend(&bob_in_a)?).await?;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Refused in Tenant A on the very next request; untouched in Tenant B.
+    assert_eq!(whoami_as(&w.app, &bob_a).await?.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        whoami_as(&w.app, &bob_b).await?,
+        (StatusCode::OK, tenant_b.to_string())
+    );
+    let sessions_left_in_a: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM identity.sessions s \
+           JOIN identity.users u ON u.id = s.user_id \
+          WHERE u.email_normalized = 'bob@example.test' AND s.tenant_id = $1",
+    )
+    .bind(tenant_a)
+    .fetch_one(&w.pool)
+    .await?;
+    assert_eq!(sessions_left_in_a, 0);
+
+    // Bob's membership of Tenant B, named from Tenant A, is the same 404 as
+    // an id that does not exist.
+    let bob_in_b = membership_of(&w.pool, "bob@example.test", tenant_b).await?;
+    let mut bodies = Vec::new();
+    for membership in [bob_in_b, Uuid::new_v4()] {
+        let (status, mut body) = send(&w.app, suspend(&membership.to_string())?).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{membership}");
+        if let Some(object) = body.as_object_mut() {
+            object.remove("correlation_id");
+        }
+        bodies.push(body);
+    }
+    assert_eq!(bodies[0], bodies[1]);
+    assert_eq!(
+        whoami_as(&w.app, &bob_b).await?.0,
+        StatusCode::OK,
+        "a 404 changed nothing"
+    );
+
+    // And nobody suspends themselves.
+    let own = membership_of(&w.pool, "owner@example.test", tenant_a).await?;
+    assert_eq!(
+        send(&w.app, suspend(&own.to_string())?).await?.0,
+        StatusCode::FORBIDDEN
+    );
+
+    let suspended: Vec<(String, Option<Uuid>)> = sqlx::query_as(
+        "SELECT tenant_id::text, target_id FROM audit.audit_log \
+          WHERE action = 'membership.suspended'",
+    )
+    .fetch_all(&w.pool)
+    .await?;
+    assert_eq!(
+        suspended,
+        vec![(tenant_a.to_string(), Some(Uuid::parse_str(&bob_in_a)?))]
     );
     Ok(())
 }

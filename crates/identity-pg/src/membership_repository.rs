@@ -1,11 +1,11 @@
 use audit::{Action, Actor, AuditEntry, SubjectId, Target, TargetId};
 use identity_domain::{
-    Email, GrantOutcome, MemberGrant, MemberRepository, Membership, MembershipId,
+    Email, GrantOutcome, MemberGrant, MemberRepository, MemberSuspension, Membership, MembershipId,
     MembershipRepository, MembershipStatus, RepositoryError, Role, TenantId, TenantMember,
     TokenPurpose, UserId,
 };
-use sqlx::PgPool;
-use sqlx::Row;
+use sqlx::postgres::PgRow;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::error::repository_error;
@@ -73,27 +73,73 @@ impl MemberRepository for PgMembershipRepository {
         .await
         .map_err(repository_error)?;
 
-        rows.iter()
-            .map(|row| {
-                let email: String = row.try_get("email_normalized").map_err(repository_error)?;
-                let role: String = row.try_get("role").map_err(repository_error)?;
-                let status: String = row.try_get("status").map_err(repository_error)?;
-                Ok(TenantMember {
-                    membership_id: MembershipId::new(
-                        row.try_get::<Uuid, _>("id").map_err(repository_error)?,
-                    ),
-                    user_id: UserId::new(
-                        row.try_get::<Uuid, _>("user_id")
-                            .map_err(repository_error)?,
-                    ),
-                    email: Email::parse(&email).map_err(repository_error)?,
-                    role: role.parse::<Role>().map_err(repository_error)?,
-                    status: status
-                        .parse::<MembershipStatus>()
-                        .map_err(repository_error)?,
-                })
-            })
-            .collect()
+        rows.iter().map(member_from_row).collect()
+    }
+
+    async fn find(
+        &self,
+        tenant_id: TenantId,
+        membership_id: MembershipId,
+    ) -> Result<Option<TenantMember>, RepositoryError> {
+        // The tenant is part of the lookup, not checked afterwards: another
+        // tenant's membership is not found, by the same query that misses an
+        // unknown id.
+        let row = sqlx::query(
+            "SELECT m.id, m.user_id, u.email_normalized, m.role, m.status \
+               FROM identity.memberships m \
+               JOIN identity.users u ON u.id = m.user_id \
+              WHERE m.id = $1 AND m.tenant_id = $2",
+        )
+        .bind(membership_id.as_uuid())
+        .bind(tenant_id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(repository_error)?;
+        row.as_ref().map(member_from_row).transpose()
+    }
+
+    async fn suspend(&self, suspension: &MemberSuspension) -> Result<bool, RepositoryError> {
+        let mut tx = self.pool.begin().await.map_err(repository_error)?;
+
+        let suspended: Option<Uuid> = sqlx::query_scalar(
+            "UPDATE identity.memberships SET status = 'suspended', updated_at = now() \
+              WHERE id = $1 AND tenant_id = $2 AND status = 'active' \
+              RETURNING user_id",
+        )
+        .bind(suspension.membership_id.as_uuid())
+        .bind(suspension.tenant_id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(repository_error)?;
+        let Some(user_id) = suspended else {
+            return Ok(false);
+        };
+
+        // The session lookup already refuses a suspended membership; deleting
+        // the sessions as well means none survives to be honoured by a lookup
+        // that forgot to check. Only this tenant's: the person keeps every
+        // other tenant they belong to.
+        sqlx::query("DELETE FROM identity.sessions WHERE user_id = $1 AND tenant_id = $2")
+            .bind(user_id)
+            .bind(suspension.tenant_id.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(repository_error)?;
+
+        let entry = AuditEntry::new(
+            audit::TenantId::new(suspension.tenant_id.as_uuid()),
+            Actor::User(SubjectId::new(suspension.suspended_by.as_uuid())),
+            Action::MembershipSuspended,
+            Target::Membership(TargetId::new(suspension.membership_id.as_uuid())),
+            suspension.occurred_at,
+            suspension.correlation_id,
+        );
+        audit_pg::insert(&mut tx, &entry)
+            .await
+            .map_err(repository_error)?;
+
+        tx.commit().await.map_err(repository_error)?;
+        Ok(true)
     }
 
     async fn grant(&self, grant: &MemberGrant) -> Result<GrantOutcome, RepositoryError> {
@@ -213,4 +259,22 @@ impl MemberRepository for PgMembershipRepository {
             invitation_issued: no_password,
         })
     }
+}
+
+fn member_from_row(row: &PgRow) -> Result<TenantMember, RepositoryError> {
+    let email: String = row.try_get("email_normalized").map_err(repository_error)?;
+    let role: String = row.try_get("role").map_err(repository_error)?;
+    let status: String = row.try_get("status").map_err(repository_error)?;
+    Ok(TenantMember {
+        membership_id: MembershipId::new(row.try_get::<Uuid, _>("id").map_err(repository_error)?),
+        user_id: UserId::new(
+            row.try_get::<Uuid, _>("user_id")
+                .map_err(repository_error)?,
+        ),
+        email: Email::parse(&email).map_err(repository_error)?,
+        role: role.parse::<Role>().map_err(repository_error)?,
+        status: status
+            .parse::<MembershipStatus>()
+            .map_err(repository_error)?,
+    })
 }

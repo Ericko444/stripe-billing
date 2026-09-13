@@ -1,7 +1,8 @@
 use audit::CorrelationId;
 use identity_domain::{
-    Clock, Email, GrantOutcome, MailPurpose, Mailer, MemberGrant, MemberRepository, OutgoingMail,
-    PendingInvitation, Role, SessionTenant, TenantMember,
+    Clock, Email, GrantOutcome, MailPurpose, Mailer, MemberGrant, MemberRepository,
+    MemberSuspension, MembershipId, OutgoingMail, PendingInvitation, Role, SessionTenant,
+    TenantMember, UserId,
 };
 use secrecy::SecretString;
 use thiserror::Error;
@@ -10,7 +11,7 @@ use crate::token::{generate_token, password_link};
 use crate::{ActiveSession, INVITATION_TOKEN_LIFETIME};
 
 /// A tenant's Owners and Admins managing its members: the minimal slice --
-/// list, add, and (next) suspend.
+/// list, add, suspend.
 ///
 /// Every operation acts on **the session's tenant** and no other: there is
 /// no tenant id in any argument, so a request cannot name a tenant it is not
@@ -26,10 +27,15 @@ pub struct MembersService<R, M, C> {
 /// Why a members operation was refused.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MembersError {
-    /// The session has no tenant, or the caller's role there may not do this
-    /// -- a Member managing anyone, or an Admin granting `owner`.
+    /// The session has no tenant, or the caller may not do this there -- a
+    /// Member managing anyone, an Admin granting `owner` or suspending an
+    /// Owner, anyone suspending themselves.
     #[error("not allowed")]
     Forbidden,
+    /// No such membership **in the session's tenant** -- unknown, or
+    /// another tenant's. One variant for both.
+    #[error("no such member")]
+    NotFound,
     /// The address already has a membership in this tenant.
     #[error("already a member")]
     AlreadyMember,
@@ -42,6 +48,23 @@ pub enum MembersError {
 /// new role has to be decided here before anything compiles.
 fn may_grant(granter: Role, granted: Role) -> bool {
     match (granter, granted) {
+        (Role::Owner, _) => true,
+        (Role::Admin, Role::Admin | Role::Member) => true,
+        (Role::Admin, Role::Owner) => false,
+        (Role::Member, _) => false,
+    }
+}
+
+/// Whether `caller`, with `caller_role`, may suspend `target`. Nobody
+/// suspends themselves -- an Owner locking themselves out is never what was
+/// meant -- and an Admin cannot suspend an Owner, for the reason an Admin
+/// cannot grant `owner`. Two Owners suspending each other at once is the
+/// deferred last-Owner guard's problem, named rather than handled.
+fn may_suspend(caller: UserId, caller_role: Role, target: &TenantMember) -> bool {
+    if target.user_id == caller {
+        return false;
+    }
+    match (caller_role, target.role) {
         (Role::Owner, _) => true,
         (Role::Admin, Role::Admin | Role::Member) => true,
         (Role::Admin, Role::Owner) => false,
@@ -164,13 +187,56 @@ where
         }
         Ok(member)
     }
+
+    /// Suspends membership `membership_id` of the session's tenant.
+    ///
+    /// The membership is looked up **within the session's tenant**, so
+    /// another tenant's id is `NotFound` exactly like an unknown one. The
+    /// suspension, the deletion of the member's sessions in this tenant and
+    /// the `MembershipSuspended` audit row are one transaction. The member's
+    /// next request in this tenant is refused; their sessions in other
+    /// tenants go on working.
+    ///
+    /// Suspending a membership that is already suspended succeeds and
+    /// records nothing: the state asked for is the state it is in.
+    pub async fn suspend(
+        &self,
+        session: &ActiveSession,
+        membership_id: MembershipId,
+        correlation_id: CorrelationId,
+    ) -> Result<(), MembersError> {
+        let tenant = managed_tenant(session)?;
+        let unavailable =
+            |err: identity_domain::RepositoryError| MembersError::Unavailable(err.to_string());
+        let target = self
+            .members
+            .find(tenant.tenant_id, membership_id)
+            .await
+            .map_err(unavailable)?
+            .ok_or(MembersError::NotFound)?;
+        if !may_suspend(session.user_id, tenant.role, &target) {
+            return Err(MembersError::Forbidden);
+        }
+
+        self.members
+            .suspend(&MemberSuspension {
+                tenant_id: tenant.tenant_id,
+                membership_id,
+                suspended_by: session.user_id,
+                occurred_at: self.clock.now(),
+                correlation_id,
+            })
+            .await
+            .map_err(unavailable)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::error::Error;
 
-    use identity_domain::{MembershipStatus, SessionId, SplitToken, TenantId, UserId};
+    use identity_domain::{MembershipStatus, SessionId, SplitToken, TenantId};
     use time::Duration;
     use uuid::Uuid;
 
@@ -390,6 +456,93 @@ mod tests {
             .await?;
 
         assert_eq!(member.email, carol()?);
+        Ok(())
+    }
+
+    fn member(user_id: UserId, role: Role) -> Result<TenantMember, Box<dyn Error>> {
+        Ok(TenantMember {
+            membership_id: MembershipId::new(Uuid::new_v4()),
+            user_id,
+            email: Email::parse("target@example.test")?,
+            role,
+            status: MembershipStatus::Active,
+        })
+    }
+
+    #[tokio::test]
+    async fn suspension_rules_nobody_suspends_themselves_and_admins_cannot_suspend_owners()
+    -> Result<(), Box<dyn Error>> {
+        let cases = [
+            (Role::Owner, Role::Owner, true),
+            (Role::Owner, Role::Admin, true),
+            (Role::Owner, Role::Member, true),
+            (Role::Admin, Role::Owner, false),
+            (Role::Admin, Role::Admin, true),
+            (Role::Admin, Role::Member, true),
+            (Role::Member, Role::Member, false),
+        ];
+        for (caller_role, target_role, allowed) in cases {
+            let caller = session(Some((tenant_a(), caller_role)));
+            let target = member(UserId::new(Uuid::new_v4()), target_role)?;
+            let members = FakeMembers::with_member(target.clone());
+
+            let result = service_for(&members)
+                .suspend(
+                    &caller,
+                    target.membership_id,
+                    CorrelationId::new(Uuid::new_v4()),
+                )
+                .await;
+
+            let case = format!("{caller_role:?} suspending {target_role:?}");
+            if allowed {
+                assert_eq!(result, Ok(()), "{case}");
+                let suspensions = members.suspensions();
+                let [suspension] = suspensions.as_slice() else {
+                    return Err(format!("{case}: expected one suspension").into());
+                };
+                assert_eq!(suspension.tenant_id, tenant_a(), "{case}");
+                assert_eq!(suspension.suspended_by, caller.user_id, "{case}");
+            } else {
+                assert_eq!(result, Err(MembersError::Forbidden), "{case}");
+                assert!(members.suspensions().is_empty(), "{case}");
+            }
+        }
+
+        // Not even an Owner suspends themselves.
+        let owner = session(Some((tenant_a(), Role::Owner)));
+        let own = member(owner.user_id, Role::Owner)?;
+        let members = FakeMembers::with_member(own.clone());
+        assert_eq!(
+            service_for(&members)
+                .suspend(
+                    &owner,
+                    own.membership_id,
+                    CorrelationId::new(Uuid::new_v4())
+                )
+                .await,
+            Err(MembersError::Forbidden)
+        );
+        assert!(members.suspensions().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_membership_not_found_in_the_sessions_tenant_is_not_found()
+    -> Result<(), Box<dyn Error>> {
+        let members = FakeMembers::default();
+
+        let result = service_for(&members)
+            .suspend(
+                &session(Some((tenant_a(), Role::Owner))),
+                MembershipId::new(Uuid::new_v4()),
+                CorrelationId::new(Uuid::new_v4()),
+            )
+            .await;
+
+        assert_eq!(result, Err(MembersError::NotFound));
+        assert!(members.suspensions().is_empty());
+        assert_eq!(members.looked_up_in(), vec![tenant_a()]);
         Ok(())
     }
 }

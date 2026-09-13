@@ -1,11 +1,12 @@
 use audit::CorrelationId;
 use axum::Json;
-use axum::extract::Extension;
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, PathRejection};
+use axum::extract::{Extension, Path};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use identity_domain::{Email, Role};
+use identity_domain::{Email, MembershipId, Role};
 use identity_service::MembersError;
+use uuid::Uuid;
 
 use crate::dto::{AddMemberRequest, MemberDto, MembersDto};
 use crate::error::{ErrorKind, IdentityError};
@@ -15,6 +16,7 @@ use crate::state::IdentityState;
 fn members_error(err: MembersError, correlation_id: CorrelationId) -> IdentityError {
     let kind = match err {
         MembersError::Forbidden => ErrorKind::Forbidden,
+        MembersError::NotFound => ErrorKind::NotFound,
         MembersError::AlreadyMember => ErrorKind::AlreadyMember,
         MembersError::Unavailable(reason) => ErrorKind::Internal(reason),
     };
@@ -71,4 +73,33 @@ pub async fn add_member(
         .map_err(|err| members_error(err, correlation_id))?;
 
     Ok((StatusCode::CREATED, Json(MemberDto::from(&member))).into_response())
+}
+
+/// `POST /tenant/members/{id}/suspend`: suspend a membership of the session's
+/// tenant.
+///
+/// `204` on success -- also for a membership already suspended. `404` for an
+/// id that is not a membership **of this tenant**, with the same body whether
+/// it is unknown or another tenant's; `403` for suspending oneself, an Admin
+/// suspending an Owner, or a caller who manages no members here.
+pub async fn suspend_member(
+    Extension(state): Extension<IdentityState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    session: AuthenticatedSession,
+    id: Result<Path<Uuid>, PathRejection>,
+) -> Result<Response, IdentityError> {
+    let Path(id) = id.map_err(|rejection| {
+        IdentityError::new(
+            ErrorKind::MalformedRequest(rejection.body_text()),
+            correlation_id,
+        )
+    })?;
+
+    state
+        .members()
+        .suspend_member(session.session(), MembershipId::new(id), correlation_id)
+        .await
+        .map_err(|err| members_error(err, correlation_id))?;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
 }

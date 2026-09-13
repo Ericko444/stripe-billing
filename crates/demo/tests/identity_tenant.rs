@@ -270,4 +270,15 @@ impl identity_service::Members for NoMembers {
             "not used by the boundary proof".into(),
         ))
     }
+
+    async fn suspend_member(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: identity_domain::MembershipId,
+        _: audit::CorrelationId,
+    ) -> Result<(), identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by the boundary proof".into(),
+        ))
+    }
 }

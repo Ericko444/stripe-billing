@@ -1,6 +1,7 @@
-//! `GET` and `POST /tenant/members` through the real router and the real
-//! `MembersService`, over a scripted repository: who may do what, and the
-//! one body for a new and an existing address.
+//! `GET` and `POST /tenant/members` and `POST /tenant/members/{id}/suspend`
+//! through the real router and the real `MembersService`, over a scripted
+//! repository: who may do what, the one body for a new and an existing
+//! address, and the one 404 for a membership that is not this tenant's.
 
 use std::error::Error;
 use std::future::{Future, ready};
@@ -14,8 +15,8 @@ use axum::http::{Request, StatusCode, header};
 use identity_api::{IdentityState, identity_router};
 use identity_domain::{
     Email, GrantOutcome, MailError, MailPurpose, Mailer, MemberGrant, MemberRepository,
-    MembershipId, MembershipStatus, OutgoingMail, Password, RepositoryError, Role, SessionId,
-    SessionTenant, TenantId, TenantMember, UserId,
+    MemberSuspension, MembershipId, MembershipStatus, OutgoingMail, Password, RepositoryError,
+    Role, SessionId, SessionTenant, TenantId, TenantMember, UserId,
 };
 use identity_service::{
     ActiveSession, Authentication, CompleteResetError, InMemoryRateLimiter, LoginError,
@@ -53,7 +54,7 @@ impl Authentication for RoleAuth {
         let now = OffsetDateTime::now_utc();
         Ok(ActiveSession {
             id: SessionId::new(Uuid::new_v4()),
-            user_id: UserId::new(Uuid::from_u128(1)),
+            user_id: caller(),
             tenant,
             authenticated_at: now,
             expires_at: now + Duration::hours(8),
@@ -121,15 +122,34 @@ impl PasswordResets for NoResets {
 }
 
 /// `bob@example.test` has an account with a password; `taken@example.test`
-/// is already in the tenant; any other address is new.
+/// is already in the tenant; any other address is new. For suspension, Tenant
+/// A holds `OWNER_MEMBERSHIP` (an Owner), `MEMBER_MEMBERSHIP` (a Member) and
+/// `CALLER_MEMBERSHIP` (the caller's own); every other id is not found.
 #[derive(Clone, Default)]
 struct ScriptedMembers {
     grants: Arc<Mutex<Vec<MemberGrant>>>,
+    suspensions: Arc<Mutex<Vec<MemberSuspension>>>,
+}
+
+const OWNER_MEMBERSHIP: u128 = 0x0e;
+const MEMBER_MEMBERSHIP: u128 = 0x0f;
+const CALLER_MEMBERSHIP: u128 = 0x10;
+
+/// The caller every `RoleAuth` session belongs to.
+fn caller() -> UserId {
+    UserId::new(Uuid::from_u128(1))
 }
 
 impl ScriptedMembers {
     fn grant_count(&self) -> usize {
         self.grants.lock().map(|g| g.len()).unwrap_or_default()
+    }
+
+    fn suspended(&self) -> Vec<MembershipId> {
+        self.suspensions
+            .lock()
+            .map(|s| s.iter().map(|s| s.membership_id).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -175,6 +195,44 @@ impl MemberRepository for ScriptedMembers {
             },
         };
         ready(Ok(outcome))
+    }
+
+    fn find(
+        &self,
+        tenant_id: TenantId,
+        membership_id: MembershipId,
+    ) -> impl Future<Output = Result<Option<TenantMember>, RepositoryError>> + Send {
+        let (user_id, role) = match membership_id.as_uuid().as_u128() {
+            OWNER_MEMBERSHIP => (UserId::new(Uuid::from_u128(2)), Role::Owner),
+            MEMBER_MEMBERSHIP => (UserId::new(Uuid::from_u128(3)), Role::Member),
+            CALLER_MEMBERSHIP => (caller(), Role::Admin),
+            _ => return ready(Ok(None)),
+        };
+        if tenant_id != tenant_a() {
+            return ready(Ok(None));
+        }
+        let found = Email::parse("someone@example.test")
+            .map(|email| {
+                Some(TenantMember {
+                    membership_id,
+                    user_id,
+                    email,
+                    role,
+                    status: MembershipStatus::Active,
+                })
+            })
+            .map_err(|err| RepositoryError(err.to_string()));
+        ready(found)
+    }
+
+    fn suspend(
+        &self,
+        suspension: &MemberSuspension,
+    ) -> impl Future<Output = Result<bool, RepositoryError>> + Send {
+        if let Ok(mut suspensions) = self.suspensions.lock() {
+            suspensions.push(suspension.clone());
+        }
+        ready(Ok(true))
     }
 }
 
@@ -371,5 +429,71 @@ async fn listing_members_returns_items_and_needs_a_session() -> Result<(), Box<d
         send(&w.app, list(Some("forged"))?).await?.0,
         StatusCode::UNAUTHORIZED
     );
+    Ok(())
+}
+
+fn suspend(caller: &str, membership: &str) -> Result<Request<Body>, Box<dyn Error>> {
+    Ok(Request::builder()
+        .method("POST")
+        .uri(format!("/tenant/members/{membership}/suspend"))
+        .header(header::COOKIE, format!("__Host-session={caller}"))
+        .body(Body::empty())?)
+}
+
+fn id(raw: u128) -> String {
+    Uuid::from_u128(raw).to_string()
+}
+
+#[tokio::test]
+async fn suspending_is_204_and_refuses_self_admins_on_owners_and_members()
+-> Result<(), Box<dyn Error>> {
+    let w = world();
+
+    for (caller, membership, expected) in [
+        ("admin", id(CALLER_MEMBERSHIP), StatusCode::FORBIDDEN),
+        ("admin", id(OWNER_MEMBERSHIP), StatusCode::FORBIDDEN),
+        ("member", id(MEMBER_MEMBERSHIP), StatusCode::FORBIDDEN),
+        ("unscoped", id(MEMBER_MEMBERSHIP), StatusCode::FORBIDDEN),
+    ] {
+        let (status, _) = send(&w.app, suspend(caller, &membership)?).await?;
+        assert_eq!(status, expected, "{caller} suspending {membership}");
+    }
+    assert!(w.members.suspended().is_empty());
+
+    let (status, body) = send(&w.app, suspend("admin", &id(MEMBER_MEMBERSHIP))?).await?;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, Value::Null);
+    let (status, _) = send(&w.app, suspend("owner", &id(OWNER_MEMBERSHIP))?).await?;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        w.members.suspended(),
+        vec![
+            MembershipId::new(Uuid::from_u128(MEMBER_MEMBERSHIP)),
+            MembershipId::new(Uuid::from_u128(OWNER_MEMBERSHIP)),
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_membership_that_is_not_this_tenants_is_one_404_and_a_bad_id_is_400()
+-> Result<(), Box<dyn Error>> {
+    let w = world();
+
+    let mut bodies = Vec::new();
+    for unknown in [id(0x999), id(0x998)] {
+        let (status, mut body) = send(&w.app, suspend("owner", &unknown)?).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        if let Some(object) = body.as_object_mut() {
+            object.remove("correlation_id");
+        }
+        bodies.push(body);
+    }
+    assert_eq!(bodies[0], bodies[1]);
+
+    let (status, body) = send(&w.app, suspend("owner", "not-a-uuid")?).await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["status"], 400);
+    assert!(w.members.suspended().is_empty());
     Ok(())
 }

@@ -13,10 +13,10 @@ use thiserror::Error;
 use time::OffsetDateTime;
 
 use crate::{
-    AccountEvent, DisplayName, Email, GrantOutcome, MemberGrant, Membership, NewPassword,
-    NewPasswordToken, NewSession, OutgoingMail, Password, PasswordHash, Selector, SessionId,
-    StoredPasswordToken, StoredSession, TenantId, TenantMember, TokenPurpose, User, UserId,
-    VerifierHash,
+    AccountEvent, DisplayName, Email, GrantOutcome, MemberGrant, MemberSuspension, Membership,
+    MembershipId, NewPassword, NewPasswordToken, NewSession, OutgoingMail, Password, PasswordHash,
+    Selector, SessionId, StoredPasswordToken, StoredSession, TenantId, TenantMember, TokenPurpose,
+    User, UserId, VerifierHash,
 };
 
 /// Finds and updates users.
@@ -103,6 +103,27 @@ pub trait MemberRepository: Send + Sync {
         &self,
         grant: &MemberGrant,
     ) -> impl Future<Output = Result<GrantOutcome, RepositoryError>> + Send;
+
+    /// The membership `membership_id`, **if it belongs to `tenant_id`** --
+    /// another tenant's membership is `None`, exactly like an unknown id.
+    fn find(
+        &self,
+        tenant_id: TenantId,
+        membership_id: MembershipId,
+    ) -> impl Future<Output = Result<Option<TenantMember>, RepositoryError>> + Send;
+
+    /// Suspends the membership, in one transaction: marks it suspended,
+    /// deletes its user's sessions **in that tenant** (their sessions in
+    /// other tenants are untouched), and records `MembershipSuspended`
+    /// (target: the membership, actor: `suspended_by`) in the tenant.
+    ///
+    /// Returns `false`, changing nothing, if the membership is not an
+    /// active membership of `suspension.tenant_id` -- already suspended, or
+    /// not this tenant's.
+    fn suspend(
+        &self,
+        suspension: &MemberSuspension,
+    ) -> impl Future<Output = Result<bool, RepositoryError>> + Send;
 }
 
 /// Stores sessions.

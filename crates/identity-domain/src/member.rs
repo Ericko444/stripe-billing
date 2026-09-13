@@ -117,3 +117,18 @@ pub enum GrantOutcome {
     /// own members.
     AlreadyMember,
 }
+
+/// Suspending one membership of a tenant, as the use case decided it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberSuspension {
+    /// The tenant the membership must belong to.
+    pub tenant_id: TenantId,
+    /// The membership.
+    pub membership_id: MembershipId,
+    /// The Owner or Admin suspending it -- the audit actor.
+    pub suspended_by: UserId,
+    /// When, by the module's clock.
+    pub occurred_at: OffsetDateTime,
+    /// The request doing it.
+    pub correlation_id: CorrelationId,
+}

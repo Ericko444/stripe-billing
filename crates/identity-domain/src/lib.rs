@@ -32,8 +32,8 @@ pub use account_event::AccountEvent;
 pub use email::{Email, EmailError};
 pub use ids::{MembershipId, SessionId, TenantId, UserId};
 pub use member::{
-    GrantOutcome, MemberGrant, MembershipStatus, MembershipStatusParseError, PendingInvitation,
-    TenantMember,
+    GrantOutcome, MemberGrant, MemberSuspension, MembershipStatus, MembershipStatusParseError,
+    PendingInvitation, TenantMember,
 };
 pub use password::{
     MAX_PASSWORD_CHARS, MIN_PASSWORD_CHARS, NewPassword, Password, PasswordHash,
