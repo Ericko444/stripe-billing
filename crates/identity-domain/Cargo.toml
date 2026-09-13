@@ -8,7 +8,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+hex.workspace = true
 secrecy.workspace = true
+sha2.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 
 # `serde` only so the `compile_fail` doctest on `Password` can name the

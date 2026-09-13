@@ -18,9 +18,13 @@
 mod email;
 mod password;
 mod role;
+mod token;
 
 pub use email::{Email, EmailError};
 pub use password::{
     MAX_PASSWORD_CHARS, MIN_PASSWORD_CHARS, NewPassword, Password, PasswordPolicyError,
 };
 pub use role::{Role, RoleParseError};
+pub use token::{
+    SELECTOR_BYTES, Selector, SplitToken, TokenParseError, VERIFIER_BYTES, Verifier, VerifierHash,
+};

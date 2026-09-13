@@ -88,6 +88,10 @@ secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
+# Constant-time byte comparison for the identity module's token verifiers.
+# Already in the lock file through rustls; named directly so the one
+# comparison that must not short-circuit depends on it on purpose.
+subtle = "2.6.1"
 sqlx = { version = "0.9.0", default-features = false, features = [
     "postgres",
     "runtime-tokio",
