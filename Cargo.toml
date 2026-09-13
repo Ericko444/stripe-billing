@@ -51,6 +51,7 @@ audit-pg = { path = "crates/audit-pg" }
 identity-domain = { path = "crates/identity-domain" }
 identity-pg = { path = "crates/identity-pg" }
 identity-service = { path = "crates/identity-service" }
+identity-api = { path = "crates/identity-api" }
 
 # Stripe client, modular line. A release candidate over the stale 0.41 stable
 # line, so pinned exactly: a caret range would float across RCs, which may

@@ -1556,6 +1556,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
+name = "identity-api"
+version = "0.1.0"
+dependencies = [
+ "audit",
+ "axum",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "identity-domain"
 version = "0.1.0"
 dependencies = [
