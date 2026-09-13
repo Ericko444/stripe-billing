@@ -16,6 +16,7 @@ use axum::routing::{get, post};
 
 mod cookie;
 mod correlation;
+mod csrf;
 mod dto;
 mod error;
 mod routes;
@@ -24,6 +25,7 @@ mod state;
 
 pub use cookie::{SESSION_COOKIE, clearing_cookie, session_cookie, session_token};
 pub use correlation::{correlation_id, layer as correlation_layer};
+pub use csrf::{AllowedOrigins, origin_check};
 pub use error::{ErrorKind, IdentityError};
 pub use session_extract::AuthenticatedSession;
 pub use state::IdentityState;

@@ -29,6 +29,9 @@ pub enum ErrorKind {
     /// The named resource does not exist **or is not the caller's** -- one
     /// kind for both, so the status does not confirm that an id is real.
     NotFound,
+    /// The caller is identified but may not do this -- a role that cannot, or
+    /// a cookie-carrying write from an origin this application did not serve.
+    Forbidden,
     /// A request body or parameter did not parse. The reason is logged.
     MalformedRequest(String),
     /// Something this module depends on failed. The reason is logged.
@@ -73,6 +76,11 @@ impl IntoResponse for IdentityError {
                 "Not authenticated",
                 "The request could not be authenticated.",
             ),
+            ErrorKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "Forbidden",
+                "The request is not allowed.",
+            ),
             ErrorKind::NotFound => (
                 StatusCode::NOT_FOUND,
                 "Not found",
@@ -94,6 +102,7 @@ impl IntoResponse for IdentityError {
             ErrorKind::MalformedRequest(reason) | ErrorKind::Internal(reason) => reason.as_str(),
             ErrorKind::Unauthorized => "not authenticated",
             ErrorKind::NotFound => "not found",
+            ErrorKind::Forbidden => "forbidden",
         };
         let correlation_id = self.correlation_id.as_uuid();
         if status.is_server_error() {
@@ -171,6 +180,7 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(render(ErrorKind::NotFound).await?.0, StatusCode::NOT_FOUND);
+        assert_eq!(render(ErrorKind::Forbidden).await?.0, StatusCode::FORBIDDEN);
         assert_eq!(
             render(ErrorKind::MalformedRequest("x".into())).await?.0,
             StatusCode::BAD_REQUEST
