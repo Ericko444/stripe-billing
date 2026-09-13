@@ -50,6 +50,19 @@ pub trait UserRepository: Send + Sync {
         display_name: &DisplayName,
         event: &AccountEvent,
     ) -> impl Future<Output = Result<(), RepositoryError>> + Send;
+
+    /// Replaces a user's password after they proved the current one, in one
+    /// transaction: stores `hash`, deletes **every other** session of the
+    /// user in every tenant (keeping `keep`, the one that made the change),
+    /// deletes any outstanding reset or invitation token, and records each of
+    /// `events` once per active membership.
+    fn change_password(
+        &self,
+        user_id: UserId,
+        hash: &PasswordHash,
+        keep: SessionId,
+        events: &[AccountEvent],
+    ) -> impl Future<Output = Result<(), RepositoryError>> + Send;
 }
 
 /// Reads memberships.

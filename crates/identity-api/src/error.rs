@@ -38,6 +38,9 @@ pub enum ErrorKind {
         /// Seconds until the current window ends, for `Retry-After`.
         retry_after_secs: u64,
     },
+    /// A new password breaks the policy. Safe to say so: it describes the
+    /// rule, not the password, and only a caller setting a password sees it.
+    PasswordPolicy,
     /// A request body or parameter did not parse. The reason is logged.
     MalformedRequest(String),
     /// Something this module depends on failed. The reason is logged.
@@ -97,6 +100,11 @@ impl IntoResponse for IdentityError {
                 "Not found",
                 "The requested resource was not found.",
             ),
+            ErrorKind::PasswordPolicy => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Password rejected",
+                "The new password must be between 15 and 128 characters.",
+            ),
             ErrorKind::MalformedRequest(_) => (
                 StatusCode::BAD_REQUEST,
                 "Malformed request",
@@ -114,6 +122,7 @@ impl IntoResponse for IdentityError {
             ErrorKind::Unauthorized => "not authenticated",
             ErrorKind::NotFound => "not found",
             ErrorKind::Forbidden => "forbidden",
+            ErrorKind::PasswordPolicy => "password policy",
             ErrorKind::RateLimited { .. } => "rate limited",
         };
         let correlation_id = self.correlation_id.as_uuid();

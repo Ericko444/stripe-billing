@@ -1,5 +1,6 @@
 use identity_domain::{
-    AccountEvent, DisplayName, Email, PasswordHash, RepositoryError, User, UserId, UserRepository,
+    AccountEvent, DisplayName, Email, PasswordHash, RepositoryError, SessionId, User, UserId,
+    UserRepository,
 };
 use sqlx::PgPool;
 use sqlx::Row;
@@ -85,6 +86,45 @@ impl UserRepository for PgUserRepository {
         .await
         .map_err(repository_error)?;
         record_for_each_tenant(&mut tx, user_id, event).await?;
+
+        tx.commit().await.map_err(repository_error)?;
+        Ok(())
+    }
+
+    async fn change_password(
+        &self,
+        user_id: UserId,
+        hash: &PasswordHash,
+        keep: SessionId,
+        events: &[AccountEvent],
+    ) -> Result<(), RepositoryError> {
+        // One transaction: if revoking the other sessions failed after the
+        // hash changed, an attacker's session would survive a change made
+        // precisely to end it -- while the audit log said it had ended.
+        let mut tx = self.pool.begin().await.map_err(repository_error)?;
+
+        sqlx::query(
+            "UPDATE identity.users SET password_hash = $2, updated_at = now() WHERE id = $1",
+        )
+        .bind(user_id.as_uuid())
+        .bind(hash.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(repository_error)?;
+        sqlx::query("DELETE FROM identity.sessions WHERE user_id = $1 AND id <> $2")
+            .bind(user_id.as_uuid())
+            .bind(keep.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(repository_error)?;
+        sqlx::query("DELETE FROM identity.password_tokens WHERE user_id = $1")
+            .bind(user_id.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(repository_error)?;
+        for event in events {
+            record_for_each_tenant(&mut tx, user_id, event).await?;
+        }
 
         tx.commit().await.map_err(repository_error)?;
         Ok(())

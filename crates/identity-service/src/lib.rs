@@ -9,6 +9,7 @@ mod argon2_hasher;
 mod auth;
 mod clock;
 mod facade;
+mod password_change;
 mod profile;
 mod rate_limit;
 mod session;
@@ -26,6 +27,7 @@ pub use auth::{
 };
 pub use clock::SystemClock;
 pub use facade::Authentication;
+pub use password_change::PasswordChangeError;
 pub use profile::ProfileError;
 pub use rate_limit::InMemoryRateLimiter;
 pub use session::{ActiveSession, Me, SelectTenantError, SessionError, TenantSelection};

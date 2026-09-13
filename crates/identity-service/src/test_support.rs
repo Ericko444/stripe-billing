@@ -31,9 +31,15 @@ pub struct FakeUsers {
     users: Arc<Mutex<Vec<User>>>,
     rehashed: Arc<Mutex<Vec<(UserId, String)>>>,
     account_events: Arc<Mutex<Vec<(UserId, AccountEvent)>>>,
+    password_changes: Arc<Mutex<Vec<(UserId, String, SessionId)>>>,
 }
 
 impl FakeUsers {
+    /// Every password change: the user, the stored hash, the kept session.
+    pub fn password_changes(&self) -> Vec<(UserId, String, SessionId)> {
+        lock(&self.password_changes).clone()
+    }
+
     pub fn with(users: Vec<User>) -> Self {
         Self {
             users: Arc::new(Mutex::new(users)),
@@ -95,6 +101,23 @@ impl UserRepository for FakeUsers {
             }
         }
         lock(&self.account_events).push((user_id, *event));
+        ready(Ok(()))
+    }
+
+    fn change_password(
+        &self,
+        user_id: UserId,
+        hash: &PasswordHash,
+        keep: SessionId,
+        events: &[AccountEvent],
+    ) -> impl Future<Output = Result<(), RepositoryError>> + Send {
+        for user in lock(&self.users).iter_mut() {
+            if user.id == user_id {
+                user.password_hash = Some(hash.clone());
+            }
+        }
+        lock(&self.password_changes).push((user_id, hash.as_str().to_string(), keep));
+        lock(&self.account_events).extend(events.iter().map(|event| (user_id, *event)));
         ready(Ok(()))
     }
 }

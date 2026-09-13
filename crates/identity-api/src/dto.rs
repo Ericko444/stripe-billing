@@ -135,3 +135,13 @@ pub struct UpdateMeRequest {
     /// The new display name. Trimmed; at most 100 characters.
     pub display_name: String,
 }
+
+/// `POST /auth/password/change` body. No `Debug`, for the reason
+/// [`LoginRequest`] has none.
+#[derive(Deserialize)]
+pub struct ChangePasswordRequest {
+    /// The password the caller has now.
+    pub current_password: String,
+    /// The password to replace it with.
+    pub new_password: String,
+}

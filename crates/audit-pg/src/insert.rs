@@ -65,6 +65,8 @@ fn action_kind(action: &Action) -> &'static str {
         Action::PaymentFailed => "payment.failed",
         Action::SessionStarted => "session.started",
         Action::UserUpdated => "user.updated",
+        Action::PasswordChanged => "password.changed",
+        Action::SessionsRevoked => "sessions.revoked",
     }
 }
 

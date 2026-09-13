@@ -18,8 +18,9 @@ use identity_domain::{
     TenantId, UserId,
 };
 use identity_service::{
-    ActiveSession, Authentication, InMemoryRateLimiter, LoginError, LoginOutcome, Me, ProfileError,
-    SelectTenantError, SessionError, SessionScope, SystemClock, TenantSelection,
+    ActiveSession, Authentication, InMemoryRateLimiter, LoginError, LoginOutcome, Me,
+    PasswordChangeError, ProfileError, SelectTenantError, SessionError, SessionScope, SystemClock,
+    TenantSelection,
 };
 use secrecy::ExposeSecret;
 use serde_json::Value;
@@ -135,6 +136,20 @@ impl Authentication for ScriptedAuth {
     }
 
     async fn logout(&self, _session: &ActiveSession) -> Result<(), SessionError> {
+        Ok(())
+    }
+
+    async fn change_password(
+        &self,
+        _session: &ActiveSession,
+        current: &Password,
+        new: Password,
+        _correlation_id: CorrelationId,
+    ) -> Result<(), PasswordChangeError> {
+        identity_domain::NewPassword::check(new).map_err(PasswordChangeError::Policy)?;
+        if current.expose_secret() != PASSWORD {
+            return Err(PasswordChangeError::WrongCurrentPassword);
+        }
         Ok(())
     }
 
@@ -580,5 +595,47 @@ async fn a_login_served_without_connect_info_fails_loudly() -> Result<(), Box<dy
 
     let response = router().oneshot(request).await?;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    Ok(())
+}
+
+#[tokio::test]
+async fn changing_the_password_answers_by_cause() -> Result<(), Box<dyn Error>> {
+    let cookie = format!("__Host-session={}", valid_wire());
+    let body = |current: &str, new: &str| {
+        serde_json::json!({ "current_password": current, "new_password": new }).to_string()
+    };
+    let new = "a much longer and newer passphrase";
+
+    for (case, session, request, expected) in [
+        (
+            "changed",
+            Some(cookie.as_str()),
+            body(PASSWORD, new),
+            StatusCode::NO_CONTENT,
+        ),
+        (
+            "wrong current password",
+            Some(cookie.as_str()),
+            body("wrong horse battery staple", new),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "new password too short",
+            Some(cookie.as_str()),
+            body(PASSWORD, "short"),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            "no session",
+            None,
+            body(PASSWORD, new),
+            StatusCode::UNAUTHORIZED,
+        ),
+    ] {
+        let response = router()
+            .oneshot(post_json("/auth/password/change", session, &request)?)
+            .await?;
+        assert_eq!(response.status(), expected, "{case}");
+    }
     Ok(())
 }

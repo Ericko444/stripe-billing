@@ -7,15 +7,15 @@ use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use identity_domain::{Email, Password, TenantId};
 use identity_service::{
-    LoginError, Me, ProfileError, SelectTenantError, SessionError, SessionScope,
-    TENANT_SESSION_LIFETIME, UNSCOPED_SESSION_LIFETIME,
+    LoginError, Me, PasswordChangeError, ProfileError, SelectTenantError, SessionError,
+    SessionScope, TENANT_SESSION_LIFETIME, UNSCOPED_SESSION_LIFETIME,
 };
 
 use crate::client_ip::ClientAddress;
 use crate::cookie::{clearing_cookie, session_cookie};
 use crate::dto::{
-    CurrentTenantDto, LoginRequest, MeDto, MembershipDto, SelectTenantRequest, SessionDto,
-    UpdateMeRequest, rfc3339_utc,
+    ChangePasswordRequest, CurrentTenantDto, LoginRequest, MeDto, MembershipDto,
+    SelectTenantRequest, SessionDto, UpdateMeRequest, rfc3339_utc,
 };
 use crate::error::{ErrorKind, IdentityError};
 use crate::limits;
@@ -202,6 +202,37 @@ pub async fn select_tenant(
 
     let mut response = Json(body).into_response();
     response.headers_mut().insert(header::SET_COOKIE, cookie);
+    no_store(&mut response);
+    Ok(response)
+}
+
+/// `POST /auth/password/change`.
+///
+/// A wrong current password is `403`, not `401`: the session is valid, and
+/// a `401` would tell the frontend to log the user out.
+pub async fn change_password(
+    Extension(state): Extension<IdentityState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    session: AuthenticatedSession,
+    body: Result<Json<ChangePasswordRequest>, JsonRejection>,
+) -> Result<Response, IdentityError> {
+    let error = |kind| IdentityError::new(kind, correlation_id);
+    let Json(request) =
+        body.map_err(|rejection| error(ErrorKind::MalformedRequest(rejection.body_text())))?;
+    let current = Password::new(request.current_password);
+    let new = Password::new(request.new_password);
+
+    state
+        .authentication()
+        .change_password(session.session(), &current, new, correlation_id)
+        .await
+        .map_err(|err| match err {
+            PasswordChangeError::Policy(_) => error(ErrorKind::PasswordPolicy),
+            PasswordChangeError::WrongCurrentPassword => error(ErrorKind::Forbidden),
+            PasswordChangeError::Unavailable(reason) => error(ErrorKind::Internal(reason)),
+        })?;
+
+    let mut response = StatusCode::NO_CONTENT.into_response();
     no_store(&mut response);
     Ok(response)
 }

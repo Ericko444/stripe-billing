@@ -65,6 +65,15 @@ pub enum Action {
     /// record it under, and the selection that follows is the auditable
     /// fact.
     SessionStarted,
+    /// A user's password was changed by the user, after proving the current
+    /// one. Account-level: recorded once per active membership.
+    PasswordChanged,
+    /// Sessions of a user were ended by something other than logout -- a
+    /// password change (every session but the caller's) or a password reset
+    /// (every session). Account-level. Written beside the action that caused
+    /// it, with the same correlation id, so an audit reader sees that the
+    /// revocation happened rather than having to infer it.
+    SessionsRevoked,
     /// A user changed their own profile (today: the display name). An
     /// account-level action, recorded once per tenant the user is an active
     /// member of.

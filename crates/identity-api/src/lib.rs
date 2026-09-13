@@ -50,6 +50,7 @@ pub fn identity_router(state: IdentityState) -> Router {
         .route("/auth/me", get(routes::me).patch(routes::update_me))
         .route("/auth/tenant", post(routes::select_tenant))
         .route("/auth/logout", post(routes::logout))
+        .route("/auth/password/change", post(routes::change_password))
         .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))
         .layer(Extension(state))
         .layer(middleware::from_fn(correlation::layer))
