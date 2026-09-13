@@ -32,6 +32,12 @@ pub enum ErrorKind {
     /// The caller is identified but may not do this -- a role that cannot, or
     /// a cookie-carrying write from an origin this application did not serve.
     Forbidden,
+    /// Too many attempts; try again after `retry_after_secs`. Keyed on the
+    /// address or IP, never on whether an account exists.
+    RateLimited {
+        /// Seconds until the current window ends, for `Retry-After`.
+        retry_after_secs: u64,
+    },
     /// A request body or parameter did not parse. The reason is logged.
     MalformedRequest(String),
     /// Something this module depends on failed. The reason is logged.
@@ -76,6 +82,11 @@ impl IntoResponse for IdentityError {
                 "Not authenticated",
                 "The request could not be authenticated.",
             ),
+            ErrorKind::RateLimited { .. } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many requests",
+                "Too many attempts. Try again later.",
+            ),
             ErrorKind::Forbidden => (
                 StatusCode::FORBIDDEN,
                 "Forbidden",
@@ -103,6 +114,7 @@ impl IntoResponse for IdentityError {
             ErrorKind::Unauthorized => "not authenticated",
             ErrorKind::NotFound => "not found",
             ErrorKind::Forbidden => "forbidden",
+            ErrorKind::RateLimited { .. } => "rate limited",
         };
         let correlation_id = self.correlation_id.as_uuid();
         if status.is_server_error() {
@@ -123,6 +135,11 @@ impl IntoResponse for IdentityError {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/problem+json"),
         );
+        if let ErrorKind::RateLimited { retry_after_secs } = self.kind {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(retry_after_secs));
+        }
         response
     }
 }

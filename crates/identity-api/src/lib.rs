@@ -14,15 +14,18 @@ use axum::extract::{DefaultBodyLimit, Extension};
 use axum::middleware;
 use axum::routing::{get, post};
 
+mod client_ip;
 mod cookie;
 mod correlation;
 mod csrf;
 mod dto;
 mod error;
+pub mod limits;
 mod routes;
 mod session_extract;
 mod state;
 
+pub use client_ip::ClientAddress;
 pub use cookie::{SESSION_COOKIE, clearing_cookie, session_cookie, session_token};
 pub use correlation::{correlation_id, layer as correlation_layer};
 pub use csrf::{AllowedOrigins, origin_check};

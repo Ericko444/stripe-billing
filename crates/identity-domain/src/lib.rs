@@ -20,6 +20,7 @@ mod email;
 mod ids;
 mod password;
 mod ports;
+mod rate_limit;
 mod role;
 mod session;
 mod token;
@@ -36,6 +37,7 @@ pub use ports::{
     Clock, MembershipRepository, PasswordHashError, PasswordHasher, RepositoryError,
     SessionRepository, UserRepository, Verification,
 };
+pub use rate_limit::{ClientIp, RateDecision, RateKey, RateLimit, RateLimiter};
 pub use role::{Role, RoleParseError};
 pub use session::{NewSession, SessionTenant, StoredSession};
 pub use token::{

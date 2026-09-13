@@ -11,12 +11,14 @@ use identity_service::{
     TENANT_SESSION_LIFETIME, UNSCOPED_SESSION_LIFETIME,
 };
 
+use crate::client_ip::ClientAddress;
 use crate::cookie::{clearing_cookie, session_cookie};
 use crate::dto::{
     CurrentTenantDto, LoginRequest, MeDto, MembershipDto, SelectTenantRequest, SessionDto,
     UpdateMeRequest, rfc3339_utc,
 };
 use crate::error::{ErrorKind, IdentityError};
+use crate::limits;
 use crate::session_extract::AuthenticatedSession;
 use crate::state::IdentityState;
 
@@ -27,13 +29,19 @@ use crate::state::IdentityState;
 pub async fn login(
     Extension(state): Extension<IdentityState>,
     Extension(correlation_id): Extension<CorrelationId>,
+    ClientAddress(ip): ClientAddress,
     body: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Response, IdentityError> {
     let error = |kind| IdentityError::new(kind, correlation_id);
+    // Both limits are checked before the service runs, so a refused attempt
+    // costs no Argon2 verification -- the limiter protects the hashing budget
+    // as well as the accounts.
+    limits::login_by_ip(&state, ip, correlation_id)?;
     let Json(request) =
         body.map_err(|rejection| error(ErrorKind::MalformedRequest(rejection.body_text())))?;
     let password = Password::new(request.password);
     let email = Email::parse(&request.email).map_err(|_| error(ErrorKind::Unauthorized))?;
+    limits::login_by_address_and_ip(&state, &email, ip, correlation_id)?;
 
     let outcome = state
         .authentication()

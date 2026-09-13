@@ -2,12 +2,14 @@
 //! real router against a scripted `Authentication`.
 
 use std::error::Error;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use audit::CorrelationId;
 use axum::Router;
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Request, Response, StatusCode, header};
 use axum::routing::get;
 use identity_api::{AuthenticatedSession, IdentityState, identity_router};
@@ -16,8 +18,8 @@ use identity_domain::{
     TenantId, UserId,
 };
 use identity_service::{
-    ActiveSession, Authentication, LoginError, LoginOutcome, Me, ProfileError, SelectTenantError,
-    SessionError, SessionScope, TenantSelection,
+    ActiveSession, Authentication, InMemoryRateLimiter, LoginError, LoginOutcome, Me, ProfileError,
+    SelectTenantError, SessionError, SessionScope, SystemClock, TenantSelection,
 };
 use secrecy::ExposeSecret;
 use serde_json::Value;
@@ -157,7 +159,10 @@ const ROTATED_SELECTOR: [u8; 16] = [0x11; 16];
 const ROTATED_VERIFIER: [u8; 32] = [0x22; 32];
 
 fn state(outage: bool) -> IdentityState {
-    IdentityState::new(Arc::new(ScriptedAuth { outage }))
+    IdentityState::new(
+        Arc::new(ScriptedAuth { outage }),
+        Arc::new(InMemoryRateLimiter::new(SystemClock)),
+    )
 }
 
 fn router() -> Router {
@@ -165,11 +170,23 @@ fn router() -> Router {
 }
 
 fn login_request(body: &str) -> Result<Request<Body>, Box<dyn Error>> {
-    Ok(Request::builder()
+    login_request_from(body, CLIENT)
+}
+
+const CLIENT: [u8; 4] = [203, 0, 113, 7];
+
+/// A login request as `axum::serve` with connect info would hand it over:
+/// with the socket peer in the extensions.
+fn login_request_from(body: &str, peer: [u8; 4]) -> Result<Request<Body>, Box<dyn Error>> {
+    let mut request = Request::builder()
         .method("POST")
         .uri("/auth/login")
         .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(body.to_string()))?)
+        .body(Body::from(body.to_string()))?;
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from((peer, 50_000))));
+    Ok(request)
 }
 
 fn me_request(cookie: Option<&str>) -> Result<Request<Body>, Box<dyn Error>> {
@@ -499,5 +516,69 @@ async fn patching_me_with_an_invalid_name_is_400_and_without_a_session_401()
         .oneshot(patch_me(None, r#"{"display_name":"Alice"}"#)?)
         .await?;
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    Ok(())
+}
+
+/// The eleventh attempt for one address from one IP inside the window is
+/// refused before the service runs; the same IP trying another address is
+/// not.
+#[tokio::test]
+async fn the_eleventh_login_for_one_address_from_one_ip_is_429() -> Result<(), Box<dyn Error>> {
+    let app = router();
+    let wrong = login_body("alice@example.test", "wrong horse battery staple");
+
+    for attempt in 1..=10 {
+        let response = app.clone().oneshot(login_request(&wrong)?).await?;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "attempt {attempt}"
+        );
+    }
+
+    let limited = app.clone().oneshot(login_request(&wrong)?).await?;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    let retry_after = limited
+        .headers()
+        .get(header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or_default();
+    assert!((1..=900).contains(&retry_after), "{retry_after}");
+
+    // Even the right password is refused while the window lasts...
+    let right = app
+        .clone()
+        .oneshot(login_request(&login_body("alice@example.test", PASSWORD))?)
+        .await?;
+    assert_eq!(right.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // ...but another address from the same IP, and the same address from
+    // another IP, are counted separately.
+    let other_address = app
+        .clone()
+        .oneshot(login_request(&login_body("bob@example.test", PASSWORD))?)
+        .await?;
+    assert_eq!(other_address.status(), StatusCode::UNAUTHORIZED);
+    let other_ip = app
+        .oneshot(login_request_from(
+            &login_body("alice@example.test", PASSWORD),
+            [198, 51, 100, 1],
+        )?)
+        .await?;
+    assert_eq!(other_ip.status(), StatusCode::OK);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_login_served_without_connect_info_fails_loudly() -> Result<(), Box<dyn Error>> {
+    let request = Request::builder()
+        .method("POST")
+        .uri("/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(login_body("alice@example.test", PASSWORD)))?;
+
+    let response = router().oneshot(request).await?;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     Ok(())
 }

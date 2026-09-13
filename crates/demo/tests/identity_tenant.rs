@@ -23,7 +23,7 @@ use demo::identity_tenant::IdentityTenant;
 use identity_api::IdentityState;
 use identity_domain::{NewSession, SessionRepository, SplitToken, TenantId, UserId};
 use identity_pg::{PgMembershipRepository, PgSessionRepository, PgUserRepository};
-use identity_service::{Argon2Hasher, AuthService, SystemClock};
+use identity_service::{Argon2Hasher, AuthService, InMemoryRateLimiter, SystemClock};
 use secrecy::ExposeSecret;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -85,7 +85,10 @@ async fn world() -> Result<World, Box<dyn Error>> {
     let app = Router::new()
         .route("/whoami", get(whoami))
         .with_state(unused_state())
-        .layer(Extension(IdentityState::new(Arc::new(authentication))));
+        .layer(Extension(IdentityState::new(
+            Arc::new(authentication),
+            Arc::new(InMemoryRateLimiter::new(SystemClock)),
+        )));
 
     Ok(World {
         pool,
