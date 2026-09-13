@@ -9,11 +9,10 @@ import {
 import { billingKeys } from "../api/keys";
 
 export function usePaymentMethods() {
-  const { tenantId, token } = useAuth();
+  const { tenantId } = useAuth();
   return useQuery({
     queryKey: billingKeys.paymentMethods(tenantId),
     queryFn: getPaymentMethods,
-    enabled: token !== null,
   });
 }
 

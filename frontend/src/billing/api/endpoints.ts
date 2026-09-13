@@ -13,11 +13,10 @@ import type {
 } from "./types";
 
 /**
- * One function per billing route -- eleven of the API's thirteen.
- * `POST /webhooks/stripe` has no frontend caller by design; `POST
- * /demo/token` is a host, not a billing, concern and stays in
- * `host/auth/AuthContext.tsx`, which already calls it directly for the
- * reason given there.
+ * One function per billing route -- all eleven tenant-scoped ones.
+ * `POST /webhooks/stripe` has no frontend caller by design. Logging in and
+ * picking a tenant are the identity feature's routes, never billing's: this
+ * feature consumes a session, it does not produce one.
  */
 
 export function getPlans(): Promise<PlanDto[]> {

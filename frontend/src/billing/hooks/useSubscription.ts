@@ -4,11 +4,10 @@ import { cancelSubscription, getSubscription, startCheckoutSession } from "../ap
 import { billingKeys } from "../api/keys";
 
 export function useSubscription() {
-  const { tenantId, token } = useAuth();
+  const { tenantId } = useAuth();
   return useQuery({
     queryKey: billingKeys.subscription(tenantId),
     queryFn: getSubscription,
-    enabled: token !== null,
   });
 }
 

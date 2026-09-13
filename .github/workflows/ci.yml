@@ -181,6 +181,20 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # The frontend half of "neither module knows the other": `identity/` and
+      # `billing/` never import each other; `host/` is the one place that
+      # composes both. Any relative specifier reaching into the other feature
+      # counts -- an `import`, a `vi.mock`, a dynamic `import()`.
+      - name: Identity and billing features do not import each other
+        run: |
+          if grep -rEn "[\"'](\.\./)+billing/" src/identity; then
+            echo "::error::frontend/src/identity imports from billing/"
+            exit 1
+          fi
+          if grep -rEn "[\"'](\.\./)+identity/" src/billing; then
+            echo "::error::frontend/src/billing imports from identity/"
+            exit 1
+          fi
       - run: npm ci
       # `build` runs `tsc --noEmit` before `vite build`, so it is the typecheck.
       - name: Build

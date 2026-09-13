@@ -4,40 +4,47 @@ import { ApiProblem, toApiProblem } from "./problem";
  * The only `fetch` in the app. Every other module goes through
  * `apiRequest`.
  *
- * The token is read via a getter, not a value captured at import time --
- * `AuthContext` calls `setTokenGetter` whenever the tenant switches, and
- * every subsequent request picks up the new token without this module
- * needing to know that switching happened.
+ * There is no token here any more. The session is an `HttpOnly` cookie set
+ * by the identity module; the browser attaches it to these same-origin
+ * requests itself, and script can neither read it nor leak it.
  */
-let getToken: () => string | null = () => null;
 let onUnauthorized: () => void = () => {};
 
-export function setTokenGetter(getter: () => string | null): void {
-  getToken = getter;
-}
-
+/** Called on a 401 from any request that reports one -- the host uses it to
+ * re-check the session, which turns an expired session into the login
+ * screen wherever it was noticed. */
 export function setUnauthorizedHandler(handler: () => void): void {
   onUnauthorized = handler;
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
+export interface RequestOptions {
+  /** Whether a 401 means "the session ended" and should reach the handler.
+   * Off for the calls where a 401 is an expected answer: the session probe
+   * itself, login, logout. Default on. */
+  reportUnauthorized?: boolean;
+}
+
+export async function apiRequest<T>(
+  path: string,
+  init?: RequestInit,
+  options?: RequestOptions,
+): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
   if (init?.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
-  if (token !== null) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
 
-  const response = await fetch(`/api/v1${path}`, { ...init, headers });
+  const response = await fetch(`/api/v1${path}`, {
+    ...init,
+    headers,
+    credentials: "same-origin",
+  });
 
-  if (response.status === 401) {
-    onUnauthorized();
-    throw await toApiProblem(response);
-  }
   if (!response.ok) {
+    if (response.status === 401 && (options?.reportUnauthorized ?? true)) {
+      onUnauthorized();
+    }
     throw await toApiProblem(response);
   }
   if (response.status === 204) {
