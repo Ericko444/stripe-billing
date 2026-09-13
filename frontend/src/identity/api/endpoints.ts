@@ -40,3 +40,21 @@ export function selectTenant(tenantId: string): Promise<SessionDto> {
 export function logout(): Promise<void> {
   return apiRequest("/auth/logout", { method: "POST" }, { reportUnauthorized: false });
 }
+
+/** Always the same fixed answer, whether or not the address has an account. */
+export function requestPasswordReset(email: string): Promise<{ message: string }> {
+  return apiRequest(
+    "/auth/password-reset/request",
+    { method: "POST", body: JSON.stringify({ email }) },
+    { reportUnauthorized: false },
+  );
+}
+
+/** `204` on success -- and no session: the user logs in afterwards. */
+export function completePasswordReset(token: string, newPassword: string): Promise<void> {
+  return apiRequest(
+    "/auth/password-reset/complete",
+    { method: "POST", body: JSON.stringify({ token, new_password: newPassword }) },
+    { reportUnauthorized: false },
+  );
+}

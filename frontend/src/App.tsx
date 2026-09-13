@@ -1,7 +1,9 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useSessionState } from "./host/auth/AuthContext";
 import { TenantSwitcher } from "./host/auth/TenantSwitcher";
+import { ForgotPasswordForm } from "./identity/components/ForgotPasswordForm";
 import { LoginForm } from "./identity/components/LoginForm";
+import { ResetPasswordForm } from "./identity/components/ResetPasswordForm";
 import { TenantPicker } from "./identity/components/TenantPicker";
 import { SubscriptionPanel } from "./billing/components/SubscriptionPanel";
 import { InvoiceList } from "./billing/components/InvoiceList";
@@ -61,6 +63,22 @@ function SignedInNav() {
  */
 export default function App() {
   const session = useSessionState();
+  const [anonymousView, setAnonymousView] = useState<"login" | "forgot">(() =>
+    window.location.hash === "#forgot" ? "forgot" : "login",
+  );
+
+  // The mailed reset link lands here whatever the session's state: a reset
+  // is done by someone who cannot log in, and the page needs no session.
+  if (window.location.pathname === "/reset-password") {
+    return (
+      <Centred>
+        <ResetPasswordForm
+          onRequestNewLink={() => window.location.assign("/#forgot")}
+          onDone={() => window.location.assign("/")}
+        />
+      </Centred>
+    );
+  }
 
   switch (session.status) {
     case "loading":
@@ -85,13 +103,18 @@ export default function App() {
     case "anonymous":
       return (
         <Centred>
-          <LoginForm
-            notice={
-              session.sessionEnded ? (
-                <Notice>Your session ended. Log in again to continue.</Notice>
-              ) : undefined
-            }
-          />
+          {anonymousView === "forgot" ? (
+            <ForgotPasswordForm onBack={() => setAnonymousView("login")} />
+          ) : (
+            <LoginForm
+              notice={
+                session.sessionEnded ? (
+                  <Notice>Your session ended. Log in again to continue.</Notice>
+                ) : undefined
+              }
+              onForgotPassword={() => setAnonymousView("forgot")}
+            />
+          )}
         </Centred>
       );
 

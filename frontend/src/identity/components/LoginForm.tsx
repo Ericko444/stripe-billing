@@ -13,7 +13,13 @@ import { Alert, Button } from "../../ui/primitives";
  * Success needs no state of its own: the session query is invalidated and
  * the shell moves on.
  */
-export function LoginForm({ notice }: { notice?: ReactNode }) {
+export function LoginForm({
+  notice,
+  onForgotPassword,
+}: {
+  notice?: ReactNode;
+  onForgotPassword?: () => void;
+}) {
   const login = useLogin();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -75,6 +81,11 @@ export function LoginForm({ notice }: { notice?: ReactNode }) {
       <Button type="submit" variant="primary" block disabled={login.isPending} aria-busy={login.isPending}>
         {login.isPending ? "Logging in…" : "Log in"}
       </Button>
+      {onForgotPassword && (
+        <Button type="button" variant="ghost" size="sm" onClick={onForgotPassword} disabled={login.isPending}>
+          Forgot your password?
+        </Button>
+      )}
     </form>
   );
 }
