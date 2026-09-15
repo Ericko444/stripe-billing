@@ -110,6 +110,12 @@ async fn a_deactivated_user_resolves_no_session_at_all() -> Result<(), Box<dyn E
         .create(&session_for(&unscoped, alice, None), None)
         .await?;
 
+    // Deliberately raw SQL, not `UserRepository::deactivate`: that method
+    // deletes the user's sessions, and this test exists to prove the *join*
+    // refuses them while the rows are still there. Deactivating properly
+    // here would leave nothing to resolve and the assertions below would
+    // pass for the wrong reason. The two defences are independent on
+    // purpose -- session deletion is the first, this filter the second.
     sqlx::query("UPDATE identity.users SET deactivated_at = now() WHERE id = $1")
         .bind(alice.as_uuid())
         .execute(&db.pool)

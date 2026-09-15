@@ -26,6 +26,34 @@ impl User {
     }
 }
 
+/// What deactivating an account did.
+///
+/// `BelongsToOtherTenants` exists so the repository can refuse a request it
+/// alone can adjudicate -- whether the caller's tenant is the account's only
+/// one is a fact about rows, decided under the same lock as the write, not
+/// something a use case can check first without racing an invitation to a
+/// second tenant.
+///
+/// **The API must not distinguish it from an ordinary refusal.** Telling an
+/// Admin of one tenant that the target also belongs to another discloses a
+/// membership of a tenant they have no part in -- the one thing the module's
+/// isolation exists to prevent. This variant is for the use case's decision
+/// and for tests; over HTTP it and "you may not" are one `403`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeactivateOutcome {
+    /// The account is deactivated now, and was not before. Its sessions and
+    /// any outstanding reset or invitation link are gone.
+    Deactivated,
+    /// The account was already deactivated. Nothing was written and nothing
+    /// was recorded: the state asked for is the state it is in -- the same
+    /// contract as suspending an already-suspended membership.
+    AlreadyDeactivated,
+    /// The caller's tenant is not the account's only active membership, so
+    /// this caller may not end it everywhere. Nothing was written. The
+    /// tenant-scoped tool for this is suspension.
+    BelongsToOtherTenants,
+}
+
 /// An **active** membership, as login and tenant selection see it.
 /// Suspended memberships are never returned where this type is.
 #[derive(Debug, Clone, PartialEq, Eq)]

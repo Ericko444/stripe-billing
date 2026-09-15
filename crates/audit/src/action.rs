@@ -102,4 +102,20 @@ pub enum Action {
     /// Recorded in that tenant; the target is the membership. The member's
     /// sessions in that tenant end in the same transaction.
     MembershipSuspended,
+    /// An account was deactivated -- by its owner, or by an Owner or Admin
+    /// of the one tenant it belongs to. Account-level: recorded once per
+    /// active membership, which for an admin-initiated deactivation is
+    /// exactly one tenant, since that is the only case where an admin may
+    /// do it. Always written beside a `SessionsRevoked` with the same
+    /// correlation id: deactivating ends every session of the account.
+    ///
+    /// Distinct from `MembershipSuspended`, which removes a person from one
+    /// tenant and leaves the account usable in the others. This one ends the
+    /// account everywhere.
+    UserDeactivated,
+    /// A deactivated account was restored by an Owner or Admin of the one
+    /// tenant it belongs to. Account-level. There is no self-service
+    /// counterpart: a deactivated user cannot log in, so there is no session
+    /// from which to ask.
+    UserReactivated,
 }
