@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use audit::AuditEntry;
 use identity_domain::{
-    AccountEvent, Clock, DisplayName, Email, GrantOutcome, MailError, MailPurpose, Mailer,
-    MemberGrant, MemberRepository, MemberSuspension, Membership, MembershipId,
+    AccountEvent, Clock, DeactivateOutcome, DisplayName, Email, GrantOutcome, MailError,
+    MailPurpose, Mailer, MemberGrant, MemberRepository, MemberSuspension, Membership, MembershipId,
     MembershipRepository, MembershipStatus, NewPassword, NewPasswordToken, NewSession,
     OutgoingMail, Password, PasswordHash, PasswordHashError, PasswordHasher,
     PasswordTokenRepository, RepositoryError, Selector, SessionId, SessionRepository,
@@ -35,6 +35,9 @@ pub struct FakeUsers {
     rehashed: Arc<Mutex<Vec<(UserId, String)>>>,
     account_events: Arc<Mutex<Vec<(UserId, AccountEvent)>>>,
     password_changes: Arc<Mutex<Vec<(UserId, String, SessionId)>>>,
+    /// Which tenants each user is an active member of, for the sole-tenant
+    /// constraint on `deactivate`. Empty unless a test sets it.
+    tenants: Arc<Mutex<Vec<(UserId, TenantId)>>>,
 }
 
 impl FakeUsers {
@@ -48,6 +51,13 @@ impl FakeUsers {
             users: Arc::new(Mutex::new(users)),
             ..Self::default()
         }
+    }
+
+    /// Declares which tenants a user actively belongs to, so `deactivate`
+    /// can answer [`DeactivateOutcome::BelongsToOtherTenants`].
+    pub fn in_tenants(self, user_id: UserId, tenants: &[TenantId]) -> Self {
+        lock(&self.tenants).extend(tenants.iter().map(|tenant| (user_id, *tenant)));
+        self
     }
 
     /// Every account event handed to a user write, with its user.
@@ -122,6 +132,52 @@ impl UserRepository for FakeUsers {
         lock(&self.password_changes).push((user_id, hash.as_str().to_string(), keep));
         lock(&self.account_events).extend(events.iter().map(|event| (user_id, *event)));
         ready(Ok(()))
+    }
+
+    fn deactivate(
+        &self,
+        user_id: UserId,
+        sole_tenant: Option<TenantId>,
+        events: &[AccountEvent],
+    ) -> impl Future<Output = Result<DeactivateOutcome, RepositoryError>> + Send {
+        if let Some(tenant) = sole_tenant
+            && lock(&self.tenants)
+                .iter()
+                .any(|(user, other)| *user == user_id && *other != tenant)
+        {
+            return ready(Ok(DeactivateOutcome::BelongsToOtherTenants));
+        }
+
+        let mut users = lock(&self.users);
+        let Some(user) = users.iter_mut().find(|user| user.id == user_id) else {
+            return ready(Ok(DeactivateOutcome::AlreadyDeactivated));
+        };
+        if user.deactivated_at.is_some() {
+            return ready(Ok(DeactivateOutcome::AlreadyDeactivated));
+        }
+        user.deactivated_at = Some(OffsetDateTime::UNIX_EPOCH);
+        drop(users);
+
+        lock(&self.account_events).extend(events.iter().map(|event| (user_id, *event)));
+        ready(Ok(DeactivateOutcome::Deactivated))
+    }
+
+    fn reactivate(
+        &self,
+        user_id: UserId,
+        event: &AccountEvent,
+    ) -> impl Future<Output = Result<bool, RepositoryError>> + Send {
+        let mut users = lock(&self.users);
+        let Some(user) = users.iter_mut().find(|user| user.id == user_id) else {
+            return ready(Ok(false));
+        };
+        if user.deactivated_at.take().is_none() {
+            return ready(Ok(false));
+        }
+        drop(users);
+
+        lock(&self.account_events).push((user_id, *event));
+        ready(Ok(true))
     }
 }
 

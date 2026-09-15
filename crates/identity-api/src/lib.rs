@@ -71,6 +71,15 @@ pub fn identity_router(state: IdentityState) -> Router {
             "/tenant/members/{id}/suspend",
             post(members_routes::suspend_member),
         )
+        .route(
+            "/tenant/members/{id}/deactivate",
+            post(members_routes::deactivate_member),
+        )
+        .route(
+            "/tenant/members/{id}/reactivate",
+            post(members_routes::reactivate_member),
+        )
+        .route("/auth/deactivate", post(members_routes::deactivate_self))
         .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))
         .layer(Extension(state))
         .layer(middleware::from_fn(correlation::layer))

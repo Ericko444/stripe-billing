@@ -60,7 +60,7 @@ fn may_grant(granter: Role, granted: Role) -> bool {
 /// meant -- and an Admin cannot suspend an Owner, for the reason an Admin
 /// cannot grant `owner`. Two Owners suspending each other at once is the
 /// deferred last-Owner guard's problem, named rather than handled.
-fn may_suspend(caller: UserId, caller_role: Role, target: &TenantMember) -> bool {
+pub(crate) fn may_suspend(caller: UserId, caller_role: Role, target: &TenantMember) -> bool {
     if target.user_id == caller {
         return false;
     }
@@ -73,7 +73,7 @@ fn may_suspend(caller: UserId, caller_role: Role, target: &TenantMember) -> bool
 }
 
 /// The session's tenant, if the caller manages members there.
-fn managed_tenant(session: &ActiveSession) -> Result<SessionTenant, MembersError> {
+pub(crate) fn managed_tenant(session: &ActiveSession) -> Result<SessionTenant, MembersError> {
     match session.tenant {
         Some(tenant) if matches!(tenant.role, Role::Owner | Role::Admin) => Ok(tenant),
         _ => Err(MembersError::Forbidden),

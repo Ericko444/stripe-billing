@@ -14,9 +14,13 @@ Current state:
 - **Identity (Phase 8): complete as planned.** Users in several tenants with
   one role per membership, password login with an `HttpOnly` session cookie,
   tenant selection, password change, password reset, and a minimal members
-  slice (list, invite, suspend) — eleven routes, one migration.
+  slice (list, invite, suspend) — one migration.
+- **Deactivation (Phase 9): complete.** Closing and reopening an account, by
+  its owner or by an admin of the one tenant it belongs to. No migration:
+  `deactivated_at` already existed and was written by nothing. Identity is
+  fourteen routes now.
 
-`demo` serves all twenty-three routes under `/api/v1`. The frontend — React 19
+`demo` serves all twenty-six routes under `/api/v1`. The frontend — React 19
 / TypeScript / Vite, ~2,300 lines under `frontend/src` — drives billing, login,
 tenant selection and password reset; members are API-only.
 
@@ -69,8 +73,9 @@ demo ──> api ──> service ──> domain <── persistence
 - `api` — Axum **router factory**, wire DTOs, error → HTTP mapping.
 - `demo` — the only crate that picks concrete implementations and owns a `main`.
 
-Two are the audit journal (Phase 7, `docs/plan/phase-7-audit-crate.md`),
-free-standing and outside that chain on purpose:
+Two are the audit journal (Phase 7; argued in README §5, "Audit trail —
+append-only, and why soft delete does not apply here"), free-standing and
+outside that chain on purpose:
 
 - `audit` — typed, append-only event model and the `AuditSink` port. No I/O,
   and no dependency on `domain` or any other workspace crate: the identity
@@ -80,8 +85,8 @@ free-standing and outside that chain on purpose:
   `_sqlx_migrations`, so the two migration sets can run against one database
   without colliding), and the append-only grant.
 
-The last four are the identity module (Phase 8,
-`docs/plan/phase-8-identity-module.md`), the same inward shape beside billing:
+The last four are the identity module (Phase 8; argued in README §6, "The
+identity module"), the same inward shape beside billing:
 
 ```
 demo ──> identity-api ──> identity-service ──> identity-domain <── identity-pg

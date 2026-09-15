@@ -53,4 +53,6 @@ pub use session::{NewSession, SessionTenant, StoredSession};
 pub use token::{
     SELECTOR_BYTES, Selector, SplitToken, TokenParseError, VERIFIER_BYTES, Verifier, VerifierHash,
 };
-pub use user::{DisplayName, DisplayNameError, MAX_DISPLAY_NAME_CHARS, Membership, User};
+pub use user::{
+    DeactivateOutcome, DisplayName, DisplayNameError, MAX_DISPLAY_NAME_CHARS, Membership, User,
+};

@@ -13,10 +13,10 @@ use thiserror::Error;
 use time::OffsetDateTime;
 
 use crate::{
-    AccountEvent, DisplayName, Email, GrantOutcome, MemberGrant, MemberSuspension, Membership,
-    MembershipId, NewPassword, NewPasswordToken, NewSession, OutgoingMail, Password, PasswordHash,
-    Selector, SessionId, StoredPasswordToken, StoredSession, TenantId, TenantMember, TokenPurpose,
-    User, UserId, VerifierHash,
+    AccountEvent, DeactivateOutcome, DisplayName, Email, GrantOutcome, MemberGrant,
+    MemberSuspension, Membership, MembershipId, NewPassword, NewPasswordToken, NewSession,
+    OutgoingMail, Password, PasswordHash, Selector, SessionId, StoredPasswordToken, StoredSession,
+    TenantId, TenantMember, TokenPurpose, User, UserId, VerifierHash,
 };
 
 /// Finds and updates users.
@@ -65,6 +65,50 @@ pub trait UserRepository: Send + Sync {
         keep: SessionId,
         events: &[AccountEvent],
     ) -> impl Future<Output = Result<(), RepositoryError>> + Send;
+
+    /// Deactivates an account, in one transaction: sets `deactivated_at`,
+    /// deletes **every** session of the user in every tenant, deletes any
+    /// outstanding reset or invitation token, and records each of `events`
+    /// once per active membership.
+    ///
+    /// `sole_tenant` is the constraint, not a hint. `Some(t)` deactivates
+    /// only if `t` is the account's one active membership, and otherwise
+    /// writes nothing and answers
+    /// [`DeactivateOutcome::BelongsToOtherTenants`] -- an admin may end an
+    /// account that lives entirely inside their tenant, and may not reach one
+    /// that also lives elsewhere. `None` lifts the constraint, for a user
+    /// deactivating their own account, where there is no other tenant's
+    /// interest to protect.
+    ///
+    /// The check belongs here rather than in the use case because only an
+    /// implementation can make it and the write it authorises one atomic
+    /// decision. A use case that read the memberships first and called this
+    /// second would be deciding on a set that may already have changed.
+    ///
+    /// The tokens go for the same reason the sessions do: a link mailed
+    /// before the deactivation would otherwise still set a password on an
+    /// account that is supposed to be closed.
+    fn deactivate(
+        &self,
+        user_id: UserId,
+        sole_tenant: Option<TenantId>,
+        events: &[AccountEvent],
+    ) -> impl Future<Output = Result<DeactivateOutcome, RepositoryError>> + Send;
+
+    /// Clears `deactivated_at` and records `event` once per active
+    /// membership, in one transaction. `false` if the account was not
+    /// deactivated, in which case nothing was written or recorded.
+    ///
+    /// Restores nothing else: sessions and links deleted by
+    /// [`deactivate`](Self::deactivate) stay deleted, and the user logs in
+    /// again. `sole_tenant` has no counterpart here -- reactivating grants
+    /// no access the account did not already have, so it cannot reach into
+    /// another tenant the way deactivating can.
+    fn reactivate(
+        &self,
+        user_id: UserId,
+        event: &AccountEvent,
+    ) -> impl Future<Output = Result<bool, RepositoryError>> + Send;
 }
 
 /// Reads memberships.

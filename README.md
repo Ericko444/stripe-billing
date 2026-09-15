@@ -317,6 +317,9 @@ a path are always *local* uuids, resolved to Stripe ids server-side.
 | GET | `/tenant/members` | Owner/Admin | the session tenant's memberships |
 | POST | `/tenant/members` | Owner/Admin | `201`, the same body whether or not the address had an account |
 | POST | `/tenant/members/{id}/suspend` | Owner/Admin | `204`; another tenant's id is the same `404` as an unknown one |
+| POST | `/tenant/members/{id}/deactivate` | Owner/Admin | `204`; `403` if the account also belongs to another tenant — the same `403` as any refusal |
+| POST | `/tenant/members/{id}/reactivate` | Owner/Admin | `204`; no sole-tenant rule, since it grants nothing new |
+| POST | `/auth/deactivate` | session | `204` + clearing cookie; no tenant need be picked |
 
 The session is a `__Host-session` cookie — `HttpOnly; Secure; SameSite=Strict;
 Path=/` — so no script can read it. Every cookie-carrying `POST`, `PATCH`,
@@ -472,7 +475,7 @@ Users belong to several tenants with one role per membership (`owner`,
 `admin`, `member`), authenticate with a password, and hold a server-side
 session; a password can be reset by mail; an Owner or Admin can invite and
 suspend members. Every account-level change is written to the same audit
-journal billing uses. Six decisions carry it. Each is argued in full in the
+journal billing uses. Seven decisions carry it. Each is argued in full in the
 rustdoc where the code that implements it lives; these are the short forms.
 
 **1. The boundary held — and what that costs.** Billing's `api` defines
@@ -547,9 +550,56 @@ follow current membership rather than membership at the time. Two costs,
 named: one fact is N rows (count distinct correlation ids), and a user with no
 active membership gets no row. → [`fan_out.rs`](crates/identity-pg/src/fan_out.rs)
 
+**7. Deactivation is global, so a tenant may not always do it.** Roles are
+tenant-scoped; closing an account is not. An Owner of one tenant ending an
+account that also belongs to another would reach across the boundary the
+module exists to hold, and could lock a second tenant out of its own Owner.
+So an admin may deactivate **only** an account whose one active membership is
+their tenant; anything else is refused, and the tenant-scoped instrument
+stays suspension. The constraint is decided in the repository, inside the
+write's own transaction, because a use case that read the memberships first
+would be deciding on a set that may already have changed. **Both refusals —
+"you may not" and "they belong to another tenant" — are one `403` with one
+body**, because a distinct answer would disclose a membership of a tenant the
+caller has no part in; tests pin that at the service and at the wire.
+Reactivation is admin-only and carries no such rule: it grants no access the
+account did not already have, and a deactivated user has no session to ask
+from. → [`deactivation.rs`](crates/identity-service/src/deactivation.rs)
+
 **Named limits of this slice.** Members are added active, without the
-invitee's consent; there is no role change, no last-Owner guard (two Owners
-can suspend each other), and no route that deactivates a user, though the
-session lookup honours `deactivated_at`. The reset queue and the rate-limit
+invitee's consent; there is no role change and no last-Owner guard (two
+Owners can suspend each other). A membership inserted in another tenant
+*concurrently* with a deactivation is not prevented — row locks bind existing
+rows, not future ones — so an account can end up deactivated in a tenant that
+had just added it, which that tenant can undo by reactivating. An
+account-level event for a user with **no** active membership is written to no
+journal at all, since `audit_log` requires a tenant. The reset queue and the rate-limit
 counters are in-process: a restart loses queued requests (the user asks
 again), and several instances would need shared counters and an outbox.
+
+### Where each password-reset property is proved
+
+Reset is the part of this module most worth checking line by line, so each
+required property is pinned by a named test rather than left to the prose
+above. The labels `R1`–`R11` appear in those tests' own doc comments.
+
+| Property | Test | Where |
+|---|---|---|
+| R1 — token hashed at rest; a leaked table cannot reset an account | `stored_reset_token_contains_no_verifier_bytes` | [`identity-pg/tests/reset_issue.rs`](crates/identity-pg/tests/reset_issue.rs) |
+| R2 — single use, invalidated on consumption | `a_reset_token_cannot_be_used_twice` | [`identity-pg/tests/reset_complete.rs`](crates/identity-pg/tests/reset_complete.rs) |
+| R3 — invalidated on issuing a new one | `issuing_a_reset_token_invalidates_the_previous_one` | [`identity-pg/tests/reset_issue.rs`](crates/identity-pg/tests/reset_issue.rs) |
+| R4 — two concurrent completions succeed at most once | `two_concurrent_completions_succeed_at_most_once` | [`identity-pg/tests/reset_complete.rs`](crates/identity-pg/tests/reset_complete.rs) |
+| R5 — short, explicit expiry (15 minutes) | `a_reset_token_is_refused_after_fifteen_minutes` | [`identity-service/src/reset.rs`](crates/identity-service/src/reset.rs) |
+| R6 — constant-time comparison | `verification_uses_constant_time_equality` | [`identity-domain/src/token.rs`](crates/identity-domain/src/token.rs) |
+| R7 — no enumeration: the answer is byte-identical | `reset_request_body_is_identical_for_known_and_unknown_addresses` | [`identity-api/tests/reset_request.rs`](crates/identity-api/tests/reset_request.rs) |
+| R8 — no enumeration: response *time* cannot differ either | `reset_request_handler_cannot_reach_the_user_repository` | [`identity-api/tests/reset_request.rs`](crates/identity-api/tests/reset_request.rs) |
+| R9 — existing sessions invalidated, in every tenant | `completing_a_reset_deletes_sessions_in_every_tenant` | [`identity-pg/tests/reset_complete.rs`](crates/identity-pg/tests/reset_complete.rs) |
+| R10 — and no new session is issued | `completing_a_reset_sets_no_cookie` | [`identity-api/tests/reset_complete.rs`](crates/identity-api/tests/reset_complete.rs) |
+| R11 — rate limited per address, silently | `address_limit_is_silent_and_applies_to_unknown_addresses` | [`identity-api/tests/reset_request.rs`](crates/identity-api/tests/reset_request.rs) |
+| R11 — and per IP, with `429` | `ip_limit_returns_429` | [`identity-api/tests/reset_request.rs`](crates/identity-api/tests/reset_request.rs) |
+
+Two of these are worth reading rather than trusting: R1 serialises the whole
+stored row to JSON and asserts the verifier appears in no column in any
+encoding, and R8 asserts the handler made **zero** use-case calls — a
+structural claim, not a timing measurement, which would be flaky or
+meaningless as a unit test.

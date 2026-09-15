@@ -269,6 +269,7 @@ fn world() -> World {
         Arc::new(RoleAuth),
         Arc::new(NoResets),
         Arc::new(service),
+        Arc::new(NoDeactivations),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         reset_queue(1).0,
     ));
@@ -496,4 +497,44 @@ async fn a_membership_that_is_not_this_tenants_is_one_404_and_a_bad_id_is_400()
     assert_eq!(body["status"], 400);
     assert!(w.members.suspended().is_empty());
     Ok(())
+}
+
+/// Deactivation is not exercised by these tests; every call is an error
+/// rather than a silent success, so a route that reached it would fail
+/// loudly.
+struct NoDeactivations;
+
+#[async_trait]
+impl identity_service::Deactivations for NoDeactivations {
+    async fn deactivate_member(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: identity_domain::MembershipId,
+        _: CorrelationId,
+    ) -> Result<(), identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
+
+    async fn reactivate_member(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: identity_domain::MembershipId,
+        _: CorrelationId,
+    ) -> Result<(), identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
+
+    async fn deactivate_self(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: CorrelationId,
+    ) -> Result<(), identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
 }

@@ -7,9 +7,9 @@ use identity_domain::{
 };
 
 use crate::{
-    ActiveSession, AuthService, CompleteResetError, LoginError, LoginOutcome, Me, MembersError,
-    MembersService, PasswordChangeError, PasswordResetService, ProfileError, SelectTenantError,
-    SessionError, TenantSelection,
+    ActiveSession, AuthService, CompleteResetError, DeactivationService, LoginError, LoginOutcome,
+    Me, MembersError, MembersService, PasswordChangeError, PasswordResetService, ProfileError,
+    SelectTenantError, SessionError, TenantSelection,
 };
 
 /// The identity use cases as an object-safe trait, so a router can hold
@@ -209,5 +209,69 @@ where
         correlation_id: CorrelationId,
     ) -> Result<(), MembersError> {
         MembersService::suspend(self, session, membership_id, correlation_id).await
+    }
+}
+
+/// Closing and reopening accounts, object-safe. Separate from [`Members`]
+/// because it is implemented by a different service: deactivation needs a
+/// `UserRepository` as well as a `MemberRepository`, and folding it into
+/// `Members` would make every members host supply one.
+#[async_trait]
+pub trait Deactivations: Send + Sync {
+    /// See [`DeactivationService::deactivate_member`].
+    async fn deactivate_member(
+        &self,
+        session: &ActiveSession,
+        membership_id: MembershipId,
+        correlation_id: CorrelationId,
+    ) -> Result<(), MembersError>;
+
+    /// See [`DeactivationService::reactivate_member`].
+    async fn reactivate_member(
+        &self,
+        session: &ActiveSession,
+        membership_id: MembershipId,
+        correlation_id: CorrelationId,
+    ) -> Result<(), MembersError>;
+
+    /// See [`DeactivationService::deactivate_self`].
+    async fn deactivate_self(
+        &self,
+        session: &ActiveSession,
+        correlation_id: CorrelationId,
+    ) -> Result<(), MembersError>;
+}
+
+#[async_trait]
+impl<R, U, C> Deactivations for DeactivationService<R, U, C>
+where
+    R: MemberRepository,
+    U: UserRepository,
+    C: Clock,
+{
+    async fn deactivate_member(
+        &self,
+        session: &ActiveSession,
+        membership_id: MembershipId,
+        correlation_id: CorrelationId,
+    ) -> Result<(), MembersError> {
+        DeactivationService::deactivate_member(self, session, membership_id, correlation_id).await
+    }
+
+    async fn reactivate_member(
+        &self,
+        session: &ActiveSession,
+        membership_id: MembershipId,
+        correlation_id: CorrelationId,
+    ) -> Result<(), MembersError> {
+        DeactivationService::reactivate_member(self, session, membership_id, correlation_id).await
+    }
+
+    async fn deactivate_self(
+        &self,
+        session: &ActiveSession,
+        correlation_id: CorrelationId,
+    ) -> Result<(), MembersError> {
+        DeactivationService::deactivate_self(self, session, correlation_id).await
     }
 }

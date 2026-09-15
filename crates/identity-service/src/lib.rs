@@ -8,6 +8,7 @@
 mod argon2_hasher;
 mod auth;
 mod clock;
+mod deactivation;
 mod facade;
 mod members;
 mod password_change;
@@ -29,7 +30,8 @@ pub use auth::{
     UNSCOPED_SESSION_LIFETIME,
 };
 pub use clock::SystemClock;
-pub use facade::{Authentication, Members, PasswordResets};
+pub use deactivation::DeactivationService;
+pub use facade::{Authentication, Deactivations, Members, PasswordResets};
 pub use members::{MembersError, MembersService};
 pub use password_change::PasswordChangeError;
 pub use profile::ProfileError;
