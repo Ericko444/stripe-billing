@@ -553,3 +553,30 @@ can suspend each other), and no route that deactivates a user, though the
 session lookup honours `deactivated_at`. The reset queue and the rate-limit
 counters are in-process: a restart loses queued requests (the user asks
 again), and several instances would need shared counters and an outbox.
+
+### Where each password-reset property is proved
+
+Reset is the part of this module most worth checking line by line, so each
+required property is pinned by a named test rather than left to the prose
+above. The labels `R1`–`R11` appear in those tests' own doc comments.
+
+| Property | Test | Where |
+|---|---|---|
+| R1 — token hashed at rest; a leaked table cannot reset an account | `stored_reset_token_contains_no_verifier_bytes` | [`identity-pg/tests/reset_issue.rs`](crates/identity-pg/tests/reset_issue.rs) |
+| R2 — single use, invalidated on consumption | `a_reset_token_cannot_be_used_twice` | [`identity-pg/tests/reset_complete.rs`](crates/identity-pg/tests/reset_complete.rs) |
+| R3 — invalidated on issuing a new one | `issuing_a_reset_token_invalidates_the_previous_one` | [`identity-pg/tests/reset_issue.rs`](crates/identity-pg/tests/reset_issue.rs) |
+| R4 — two concurrent completions succeed at most once | `two_concurrent_completions_succeed_at_most_once` | [`identity-pg/tests/reset_complete.rs`](crates/identity-pg/tests/reset_complete.rs) |
+| R5 — short, explicit expiry (15 minutes) | `a_reset_token_is_refused_after_fifteen_minutes` | [`identity-service/src/reset.rs`](crates/identity-service/src/reset.rs) |
+| R6 — constant-time comparison | `verification_uses_constant_time_equality` | [`identity-domain/src/token.rs`](crates/identity-domain/src/token.rs) |
+| R7 — no enumeration: the answer is byte-identical | `reset_request_body_is_identical_for_known_and_unknown_addresses` | [`identity-api/tests/reset_request.rs`](crates/identity-api/tests/reset_request.rs) |
+| R8 — no enumeration: response *time* cannot differ either | `reset_request_handler_cannot_reach_the_user_repository` | [`identity-api/tests/reset_request.rs`](crates/identity-api/tests/reset_request.rs) |
+| R9 — existing sessions invalidated, in every tenant | `completing_a_reset_deletes_sessions_in_every_tenant` | [`identity-pg/tests/reset_complete.rs`](crates/identity-pg/tests/reset_complete.rs) |
+| R10 — and no new session is issued | `completing_a_reset_sets_no_cookie` | [`identity-api/tests/reset_complete.rs`](crates/identity-api/tests/reset_complete.rs) |
+| R11 — rate limited per address, silently | `address_limit_is_silent_and_applies_to_unknown_addresses` | [`identity-api/tests/reset_request.rs`](crates/identity-api/tests/reset_request.rs) |
+| R11 — and per IP, with `429` | `ip_limit_returns_429` | [`identity-api/tests/reset_request.rs`](crates/identity-api/tests/reset_request.rs) |
+
+Two of these are worth reading rather than trusting: R1 serialises the whole
+stored row to JSON and asserts the verifier appears in no column in any
+encoding, and R8 asserts the handler made **zero** use-case calls — a
+structural claim, not a timing measurement, which would be flaky or
+meaningless as a unit test.

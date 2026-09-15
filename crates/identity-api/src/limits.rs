@@ -1,6 +1,8 @@
 //! Every rate limit the identity routes apply, in one place.
 //!
-//! Starting values, not measurements (spec D8). What each one protects
+//! Starting values chosen by argument, not measured against real traffic --
+//! raising or lowering one is a decision to take after observing a
+//! deployment. What each one protects
 //! against is on the constant; the pairing is the point -- a limit per
 //! address stops a targeted attack from many IPs, a limit per IP stops one
 //! source working through many addresses, and neither does the other's job.
