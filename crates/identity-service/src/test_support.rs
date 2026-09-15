@@ -53,6 +53,13 @@ impl FakeUsers {
         }
     }
 
+    /// Declares which tenants a user actively belongs to, so `deactivate`
+    /// can answer [`DeactivateOutcome::BelongsToOtherTenants`].
+    pub fn in_tenants(self, user_id: UserId, tenants: &[TenantId]) -> Self {
+        lock(&self.tenants).extend(tenants.iter().map(|tenant| (user_id, *tenant)));
+        self
+    }
+
     /// Every account event handed to a user write, with its user.
     pub fn account_events(&self) -> Vec<(UserId, AccountEvent)> {
         lock(&self.account_events).clone()
