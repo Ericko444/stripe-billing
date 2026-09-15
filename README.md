@@ -317,6 +317,9 @@ a path are always *local* uuids, resolved to Stripe ids server-side.
 | GET | `/tenant/members` | Owner/Admin | the session tenant's memberships |
 | POST | `/tenant/members` | Owner/Admin | `201`, the same body whether or not the address had an account |
 | POST | `/tenant/members/{id}/suspend` | Owner/Admin | `204`; another tenant's id is the same `404` as an unknown one |
+| POST | `/tenant/members/{id}/deactivate` | Owner/Admin | `204`; `403` if the account also belongs to another tenant — the same `403` as any refusal |
+| POST | `/tenant/members/{id}/reactivate` | Owner/Admin | `204`; no sole-tenant rule, since it grants nothing new |
+| POST | `/auth/deactivate` | session | `204` + clearing cookie; no tenant need be picked |
 
 The session is a `__Host-session` cookie — `HttpOnly; Secure; SameSite=Strict;
 Path=/` — so no script can read it. Every cookie-carrying `POST`, `PATCH`,
@@ -472,7 +475,7 @@ Users belong to several tenants with one role per membership (`owner`,
 `admin`, `member`), authenticate with a password, and hold a server-side
 session; a password can be reset by mail; an Owner or Admin can invite and
 suspend members. Every account-level change is written to the same audit
-journal billing uses. Six decisions carry it. Each is argued in full in the
+journal billing uses. Seven decisions carry it. Each is argued in full in the
 rustdoc where the code that implements it lives; these are the short forms.
 
 **1. The boundary held — and what that costs.** Billing's `api` defines
@@ -547,10 +550,30 @@ follow current membership rather than membership at the time. Two costs,
 named: one fact is N rows (count distinct correlation ids), and a user with no
 active membership gets no row. → [`fan_out.rs`](crates/identity-pg/src/fan_out.rs)
 
+**7. Deactivation is global, so a tenant may not always do it.** Roles are
+tenant-scoped; closing an account is not. An Owner of one tenant ending an
+account that also belongs to another would reach across the boundary the
+module exists to hold, and could lock a second tenant out of its own Owner.
+So an admin may deactivate **only** an account whose one active membership is
+their tenant; anything else is refused, and the tenant-scoped instrument
+stays suspension. The constraint is decided in the repository, inside the
+write's own transaction, because a use case that read the memberships first
+would be deciding on a set that may already have changed. **Both refusals —
+"you may not" and "they belong to another tenant" — are one `403` with one
+body**, because a distinct answer would disclose a membership of a tenant the
+caller has no part in; tests pin that at the service and at the wire.
+Reactivation is admin-only and carries no such rule: it grants no access the
+account did not already have, and a deactivated user has no session to ask
+from. → [`deactivation.rs`](crates/identity-service/src/deactivation.rs)
+
 **Named limits of this slice.** Members are added active, without the
-invitee's consent; there is no role change, no last-Owner guard (two Owners
-can suspend each other), and no route that deactivates a user, though the
-session lookup honours `deactivated_at`. The reset queue and the rate-limit
+invitee's consent; there is no role change and no last-Owner guard (two
+Owners can suspend each other). A membership inserted in another tenant
+*concurrently* with a deactivation is not prevented — row locks bind existing
+rows, not future ones — so an account can end up deactivated in a tenant that
+had just added it, which that tenant can undo by reactivating. An
+account-level event for a user with **no** active membership is written to no
+journal at all, since `audit_log` requires a tenant. The reset queue and the rate-limit
 counters are in-process: a restart loses queued requests (the user asks
 again), and several instances would need shared counters and an outbox.
 

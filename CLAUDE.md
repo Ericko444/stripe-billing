@@ -14,9 +14,13 @@ Current state:
 - **Identity (Phase 8): complete as planned.** Users in several tenants with
   one role per membership, password login with an `HttpOnly` session cookie,
   tenant selection, password change, password reset, and a minimal members
-  slice (list, invite, suspend) — eleven routes, one migration.
+  slice (list, invite, suspend) — one migration.
+- **Deactivation (Phase 9): complete.** Closing and reopening an account, by
+  its owner or by an admin of the one tenant it belongs to. No migration:
+  `deactivated_at` already existed and was written by nothing. Identity is
+  fourteen routes now.
 
-`demo` serves all twenty-three routes under `/api/v1`. The frontend — React 19
+`demo` serves all twenty-six routes under `/api/v1`. The frontend — React 19
 / TypeScript / Vite, ~2,300 lines under `frontend/src` — drives billing, login,
 tenant selection and password reset; members are API-only.
 
