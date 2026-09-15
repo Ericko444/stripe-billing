@@ -2,7 +2,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use identity_domain::RateLimiter;
-use identity_service::{Authentication, Members, PasswordResets, ResetQueue};
+use identity_service::{Authentication, Deactivations, Members, PasswordResets, ResetQueue};
 
 /// What the identity routes and [`AuthenticatedSession`] need, carried as a
 /// request extension.
@@ -19,6 +19,7 @@ pub struct IdentityState {
     authentication: Arc<dyn Authentication>,
     password_resets: Arc<dyn PasswordResets>,
     members: Arc<dyn Members>,
+    deactivations: Arc<dyn Deactivations>,
     limiter: Arc<dyn RateLimiter>,
     reset_queue: ResetQueue,
     trusted_proxy: Option<IpAddr>,
@@ -32,6 +33,7 @@ impl IdentityState {
         authentication: Arc<dyn Authentication>,
         password_resets: Arc<dyn PasswordResets>,
         members: Arc<dyn Members>,
+        deactivations: Arc<dyn Deactivations>,
         limiter: Arc<dyn RateLimiter>,
         reset_queue: ResetQueue,
     ) -> Self {
@@ -39,6 +41,7 @@ impl IdentityState {
             authentication,
             password_resets,
             members,
+            deactivations,
             limiter,
             reset_queue,
             trusted_proxy: None,
@@ -65,6 +68,11 @@ impl IdentityState {
     /// Managing the session tenant's members.
     pub fn members(&self) -> &dyn Members {
         self.members.as_ref()
+    }
+
+    /// Closing and reopening accounts.
+    pub fn deactivations(&self) -> &dyn Deactivations {
+        self.deactivations.as_ref()
     }
 
     /// The rate limiter.

@@ -43,8 +43,8 @@ use identity_pg::{
     PgMembershipRepository, PgPasswordTokenRepository, PgSessionRepository, PgUserRepository,
 };
 use identity_service::{
-    Argon2Hasher, AuthService, InMemoryRateLimiter, MembersService, PasswordResetService,
-    RESET_QUEUE_CAPACITY, SystemClock, reset_queue, run_reset_worker,
+    Argon2Hasher, AuthService, DeactivationService, InMemoryRateLimiter, MembersService,
+    PasswordResetService, RESET_QUEUE_CAPACITY, SystemClock, reset_queue, run_reset_worker,
 };
 use persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgOutboundRequestRepository,
@@ -284,10 +284,19 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         config.identity_public_base_url,
     );
 
+    // Closing an account: its own service because it needs the users table
+    // as well as the memberships one. `MembersService` deliberately does not.
+    let deactivations = DeactivationService::new(
+        PgMembershipRepository::new(pool.clone()),
+        PgUserRepository::new(pool.clone()),
+        SystemClock,
+    );
+
     let mut identity = IdentityState::new(
         Arc::new(authentication),
         resets,
         Arc::new(members),
+        Arc::new(deactivations),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         reset_queue,
     );

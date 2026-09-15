@@ -105,6 +105,7 @@ fn app() -> Router {
         Arc::new(NoAuth),
         Arc::new(ScriptedResets::default()),
         Arc::new(NoMembers),
+        Arc::new(NoDeactivations),
         Arc::new(InMemoryRateLimiter::new(SystemClock)),
         reset_queue(1).0,
     ))
@@ -258,6 +259,46 @@ impl identity_service::Members for NoMembers {
         &self,
         _: &identity_service::ActiveSession,
         _: identity_domain::MembershipId,
+        _: CorrelationId,
+    ) -> Result<(), identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
+}
+
+/// Deactivation is not exercised by these tests; every call is an error
+/// rather than a silent success, so a route that reached it would fail
+/// loudly.
+struct NoDeactivations;
+
+#[async_trait]
+impl identity_service::Deactivations for NoDeactivations {
+    async fn deactivate_member(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: identity_domain::MembershipId,
+        _: CorrelationId,
+    ) -> Result<(), identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
+
+    async fn reactivate_member(
+        &self,
+        _: &identity_service::ActiveSession,
+        _: identity_domain::MembershipId,
+        _: CorrelationId,
+    ) -> Result<(), identity_service::MembersError> {
+        Err(identity_service::MembersError::Unavailable(
+            "not used by these tests".into(),
+        ))
+    }
+
+    async fn deactivate_self(
+        &self,
+        _: &identity_service::ActiveSession,
         _: CorrelationId,
     ) -> Result<(), identity_service::MembersError> {
         Err(identity_service::MembersError::Unavailable(

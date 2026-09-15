@@ -31,7 +31,7 @@ pub use auth::{
 };
 pub use clock::SystemClock;
 pub use deactivation::DeactivationService;
-pub use facade::{Authentication, Members, PasswordResets};
+pub use facade::{Authentication, Deactivations, Members, PasswordResets};
 pub use members::{MembersError, MembersService};
 pub use password_change::PasswordChangeError;
 pub use profile::ProfileError;
