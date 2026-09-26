@@ -1,13 +1,15 @@
+use audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
 use domain::{
     BillingEvent, CustomerRepository, DomainError, EventApplication, PaymentMethodRepository,
     VerifiedEvent,
 };
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
 
 /// Applies `payment_method.attached`: resolves the tenant from
-/// `data.object.customer` (§10.3), then mirrors the card through
+/// `data.object.customer`, then mirrors the card through
 /// [`PaymentMethodRepository::apply_event`]'s upsert + ordering guard. Like
 /// the invoice handler this may *create* the local row -- `attached` is the
 /// first event the module sees for a card.
@@ -15,6 +17,7 @@ pub async fn apply_attached<C, P>(
     customers: &C,
     payment_methods: &P,
     event: &VerifiedEvent,
+    correlation_id: Uuid,
 ) -> Result<EventOutcome, DomainError>
 where
     C: CustomerRepository,
@@ -34,6 +37,18 @@ where
         return Ok(EventOutcome::NotApplied(NotAppliedReason::UnknownCustomer));
     };
 
+    // `Target::Customer`, not `Target::PaymentMethod`: like the invoice
+    // handler, this is an upsert and the local `PaymentMethodId` does not
+    // exist yet when this call is made -- unlike `apply_detached` below,
+    // which always looks the row up first.
+    let entry = AuditEntry::new(
+        audit::TenantId::new(customer.tenant_id.as_uuid()),
+        Actor::System,
+        Action::PaymentMethodAttached,
+        Target::Customer(TargetId::new(customer.id.as_uuid())),
+        event.created,
+        CorrelationId::new(correlation_id),
+    );
     let application = payment_methods
         .apply_event(
             customer.tenant_id,
@@ -43,6 +58,7 @@ where
             &fields.last4,
             false,
             event.created,
+            entry,
         )
         .await?;
 
@@ -75,6 +91,7 @@ pub async fn apply_detached<C, P>(
     customers: &C,
     payment_methods: &P,
     event: &VerifiedEvent,
+    correlation_id: Uuid,
 ) -> Result<EventOutcome, DomainError>
 where
     C: CustomerRepository,
@@ -105,11 +122,23 @@ where
         ));
     };
 
+    // `mirrored` was already looked up above, so unlike `apply_attached`
+    // the local `PaymentMethodId` is known here -- the target is the
+    // payment method itself, not its customer.
+    let entry = AuditEntry::new(
+        audit::TenantId::new(customer.tenant_id.as_uuid()),
+        Actor::System,
+        Action::PaymentMethodDetached,
+        Target::PaymentMethod(TargetId::new(mirrored.id.as_uuid())),
+        event.created,
+        CorrelationId::new(correlation_id),
+    );
     let application = payment_methods
         .detach_event(
             customer.tenant_id,
             &fields.stripe_payment_method_id,
             event.created,
+            entry,
         )
         .await?;
 
@@ -278,10 +307,16 @@ mod tests {
     #[tokio::test]
     async fn attached_mirrors_the_card_and_emits_attached() -> Result<(), Box<dyn Error>> {
         let ports = Ports::new();
-        let (tenant_id, _) = ports.seed_customer("cus_1");
+        let (tenant_id, customer_id) = ports.seed_customer("cus_1");
         let ev = attached_event("cus_1", "pm_1", OffsetDateTime::now_utc());
 
-        let outcome = apply_attached(&ports.customers, &ports.payment_methods, &ev).await?;
+        let outcome = apply_attached(
+            &ports.customers,
+            &ports.payment_methods,
+            &ev,
+            Uuid::new_v4(),
+        )
+        .await?;
 
         let mirrored = ports
             .payment_methods
@@ -297,6 +332,15 @@ mod tests {
         );
         assert_eq!(mirrored.brand, "visa");
         assert_eq!(mirrored.last4, "4242");
+
+        let entries = ports.payment_methods.apply_event_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].actor(), audit::Actor::System);
+        assert_eq!(entries[0].action(), audit::Action::PaymentMethodAttached);
+        assert_eq!(
+            entries[0].target(),
+            audit::Target::Customer(audit::TargetId::new(customer_id.as_uuid()))
+        );
         Ok(())
     }
 
@@ -305,7 +349,13 @@ mod tests {
         let ports = Ports::new();
         let ev = attached_event("cus_absent", "pm_x", OffsetDateTime::now_utc());
 
-        let outcome = apply_attached(&ports.customers, &ports.payment_methods, &ev).await?;
+        let outcome = apply_attached(
+            &ports.customers,
+            &ports.payment_methods,
+            &ev,
+            Uuid::new_v4(),
+        )
+        .await?;
 
         assert_eq!(
             outcome,
@@ -333,7 +383,13 @@ mod tests {
         });
 
         let ev = detached_event("cus_2", "pm_2", attached_at + Duration::minutes(1));
-        let outcome = apply_detached(&ports.customers, &ports.payment_methods, &ev).await?;
+        let outcome = apply_detached(
+            &ports.customers,
+            &ports.payment_methods,
+            &ev,
+            Uuid::new_v4(),
+        )
+        .await?;
 
         assert!(matches!(
             outcome,
@@ -346,6 +402,11 @@ mod tests {
                 .await?,
             None
         );
+
+        let entries = ports.payment_methods.detach_event_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].actor(), audit::Actor::System);
+        assert_eq!(entries[0].action(), audit::Action::PaymentMethodDetached);
         Ok(())
     }
 
@@ -356,7 +417,13 @@ mod tests {
         ports.seed_customer("cus_3");
         let ev = detached_event("cus_3", "pm_never", OffsetDateTime::now_utc());
 
-        let outcome = apply_detached(&ports.customers, &ports.payment_methods, &ev).await?;
+        let outcome = apply_detached(
+            &ports.customers,
+            &ports.payment_methods,
+            &ev,
+            Uuid::new_v4(),
+        )
+        .await?;
 
         assert_eq!(
             outcome,
@@ -388,7 +455,13 @@ mod tests {
         let mut ev = ev;
         ev.payload["data"]["object"]["card"]["brand"] = json!("amex");
 
-        let outcome = apply_attached(&ports.customers, &ports.payment_methods, &ev).await?;
+        let outcome = apply_attached(
+            &ports.customers,
+            &ports.payment_methods,
+            &ev,
+            Uuid::new_v4(),
+        )
+        .await?;
 
         assert_eq!(outcome, EventOutcome::NotApplied(NotAppliedReason::Stale));
         let found = ports

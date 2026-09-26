@@ -1,10 +1,11 @@
 use core::fmt;
 use std::future::Future;
 
+use audit::AuditEntry;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::{CustomerId, DomainError, PlanId, TenantId};
+use crate::{CustomerId, DomainError, PlanId, SubscriptionSnapshot, TenantId};
 
 /// Identifies a `Subscription`. Distinct from other entities' ids so the
 /// compiler rejects passing the wrong id where a subscription id is expected.
@@ -24,7 +25,7 @@ impl SubscriptionId {
 }
 
 /// The lifecycle state of a `Subscription` — the subset of Stripe
-/// subscription statuses this system acts on (`init-spec.md` §10.4). Stored
+/// subscription statuses this system acts on. Stored
 /// as `TEXT`, mapped here rather than as a Postgres `ENUM` so a new Stripe
 /// status is a match arm, not an `ALTER TYPE` migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +85,7 @@ impl TryFrom<&str> for SubscriptionStatus {
 }
 
 /// Whether [`SubscriptionRepository::apply_event`]'s ordering guard admitted
-/// the write (`init-spec.md` §10.2). A named two-state value rather than a
+/// the write. A named two-state value rather than a
 /// bare `bool`, so a call site cannot silently invert it -- the same
 /// reasoning behind `CancellationTiming`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +122,7 @@ pub struct Subscription {
     /// Whether the subscription is set to end at the period boundary.
     pub cancel_at_period_end: bool,
     /// Stripe's `created` timestamp of the last webhook event applied to this
-    /// row (`init-spec.md` §10.2). `None` means no event has been applied
+    /// row. `None` means no event has been applied
     /// yet -- true of every row created before webhook processing existed.
     /// A later event is applied only when its `created` is `None`-relative
     /// (always applies) or greater than or equal to this value; an older
@@ -139,15 +140,15 @@ pub struct Subscription {
 ///
 /// Written as `fn … -> impl Future<Output = …> + Send` rather than bare
 /// `async fn`, matching `OutboundRequestRepository` and
-/// `WebhookEventRepository`: a later phase's `WebhookProcessor<C, S, W, K>`
-/// goes behind `#[async_trait]` to implement the object-safe
+/// `WebhookEventRepository`: `service`'s generic `WebhookProcessor` goes
+/// behind `#[async_trait]` to implement the object-safe
 /// `WebhookHandler` port, which boxes its futures as `Send`, so every future
 /// it awaits -- including these -- must be `Send` too. A bare `async fn` in a
 /// trait does not promise that for a generic `S`. Implementors may still
 /// write `async fn` in the `impl` block; the bound is checked there.
 pub trait SubscriptionRepository {
     /// Creates a new subscription for the given tenant. `cancel_at_period_end`
-    /// starts `false`; nothing in Phase 1 sets it.
+    /// starts `false`.
     #[allow(clippy::too_many_arguments)]
     fn create(
         &self,
@@ -179,7 +180,7 @@ pub trait SubscriptionRepository {
     /// `None` if it does not exist, has been soft-deleted, or belongs to a
     /// different tenant. Tenant-scoped, unlike
     /// [`CustomerRepository::find_by_stripe_customer_id`](crate::CustomerRepository::find_by_stripe_customer_id):
-    /// a later phase's webhook path always has a `Customer` -- and therefore
+    /// the webhook path always has a `Customer` -- and therefore
     /// a `TenantId` -- in hand by the time it needs this lookup, so this is
     /// not the tenant-establishing exception that one is.
     fn find_by_stripe_subscription_id(
@@ -189,7 +190,7 @@ pub trait SubscriptionRepository {
     ) -> impl Future<Output = Result<Option<Subscription>, DomainError>> + Send;
 
     /// Applies a webhook event's effect to a subscription row, guarded by
-    /// `init-spec.md` §10.2's ordering rule: the write is admitted when
+    /// the ordering rule: the write is admitted when
     /// `event_created_at` is greater than or equal to the row's current
     /// `last_event_created_at` (or that column is `NULL`), and rejected --
     /// recorded as [`EventApplication::Stale`], row unchanged -- otherwise.
@@ -212,6 +213,16 @@ pub trait SubscriptionRepository {
     /// zero-rows result is read as "a newer event already applied" rather
     /// than "no such row" -- this method cannot tell the two apart, and does
     /// not need to for its one caller.
+    ///
+    /// Takes `entry` directly: this method now has exactly one caller (the
+    /// webhook path -- `change_plan` and `cancel` each moved to their own
+    /// method in Tasks 8/9), so there is no second caller an `AuditEntry`
+    /// parameter could starve of one, the same reasoning
+    /// [`PaymentMethodRepository::set_default`](crate::PaymentMethodRepository::set_default)
+    /// gives. Written **regardless of Applied vs. Stale**, matching every
+    /// other audited write in this module: Stripe reported a real event
+    /// either way, and a rejected write is itself evidence worth keeping
+    /// (e.g. for debugging out-of-order delivery).
     #[allow(clippy::too_many_arguments)]
     fn apply_event(
         &self,
@@ -222,12 +233,13 @@ pub trait SubscriptionRepository {
         current_period_end: OffsetDateTime,
         cancel_at_period_end: bool,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> impl Future<Output = Result<EventApplication, DomainError>> + Send;
 
     /// Repoints a subscription at a different local plan.
     ///
     /// **Deliberately separate from [`apply_event`](Self::apply_event), and
-    /// deliberately *not* guarded by §10.2's ordering rule.** The two write
+    /// deliberately *not* guarded by the webhook ordering rule.** The two write
     /// disjoint columns for different reasons:
     ///
     /// - `apply_event` writes what *Stripe* reported (status, period bounds,
@@ -240,8 +252,8 @@ pub trait SubscriptionRepository {
     ///   newer event to lose a race against, and an ordering predicate would
     ///   only be able to reject the write that is by definition authoritative.
     ///
-    /// Call it **after** the corresponding Stripe call has succeeded (§7.4:
-    /// Stripe is authoritative, the local table is a cache). Concurrent plan
+    /// Call it **after** the corresponding Stripe call has succeeded (Stripe
+    /// is authoritative, the local table is a cache). Concurrent plan
     /// changes are last-write-wins, which is what Stripe itself does.
     ///
     /// **Precondition:** the row identified by `(tenant_id, id)` exists and
@@ -254,6 +266,69 @@ pub trait SubscriptionRepository {
         id: SubscriptionId,
         plan_id: PlanId,
     ) -> impl Future<Output = Result<(), DomainError>> + Send;
+
+    /// Repoints the subscription at `plan_id` **and** applies Stripe's
+    /// returned `snapshot`, in one transaction with the audit entry that
+    /// records the change.
+    ///
+    /// This exists because `Writes::change_plan` was, before this method,
+    /// the one place outside the webhook path making **two** separate
+    /// writes to a subscription row -- `set_plan` then `apply_event`, each
+    /// its own statement, each its own connection. A crash between them
+    /// left the mirror pointed at the new plan with the old status, a
+    /// latent gap that predates auditing. There is no honest single write
+    /// for an audit entry to be atomic *with* when the operation itself
+    /// was two writes, so this method fixes the underlying gap first: one
+    /// transaction, both writes, then the entry.
+    ///
+    /// The *authority* split `set_plan` and [`apply_event`](Self::apply_event)
+    /// document is preserved exactly, only the transaction boundary
+    /// changes: the plan repoint is still unguarded (no webhook ever writes
+    /// `plan_id`), and `snapshot` still goes through the same ordering
+    /// predicate `apply_event` uses, so a `customer.subscription.updated`
+    /// webhook racing this call still cannot be regressed by it. Returns
+    /// the row's state **after** both writes, re-read within the same
+    /// transaction -- the same "return whatever is authoritative regardless
+    /// of Applied vs. Stale" contract `service`'s `apply_subscription_snapshot`
+    /// helper already relied on when this was two separate calls.
+    ///
+    /// **Precondition:** the row identified by `(tenant_id, id)` exists and
+    /// is not soft-deleted -- the same precondition `set_plan` and
+    /// `apply_event` each already document; the caller looked the row up
+    /// first (`Writes::change_plan` does, before ever reaching Stripe).
+    #[allow(clippy::too_many_arguments)]
+    fn change_plan(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        plan_id: PlanId,
+        snapshot: SubscriptionSnapshot,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> impl Future<Output = Result<Subscription, DomainError>> + Send;
+
+    /// Applies a cancellation `snapshot` and audits it in one transaction.
+    ///
+    /// A separate method from [`apply_event`](Self::apply_event), the same
+    /// reasoning as [`PaymentMethodRepository::remove`](crate::PaymentMethodRepository::remove):
+    /// `apply_event` is also called from the webhook path, which has no
+    /// correlation id to attach yet. Unlike [`change_plan`](Self::change_plan)
+    /// there is only the one guarded write here -- `Writes::cancel_subscription`
+    /// never touches `plan_id` -- so this method is `apply_event` plus the
+    /// audit insert, not a merge of two writes.
+    ///
+    /// **Precondition:** the row identified by `(tenant_id, id)` exists,
+    /// is not soft-deleted, and is not already `Canceled` -- the caller
+    /// (`Writes::cancel_subscription`) checks all three before ever
+    /// reaching Stripe, so there is always a real cancellation to audit.
+    fn cancel(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        snapshot: SubscriptionSnapshot,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> impl Future<Output = Result<Subscription, DomainError>> + Send;
 }
 
 #[cfg(test)]

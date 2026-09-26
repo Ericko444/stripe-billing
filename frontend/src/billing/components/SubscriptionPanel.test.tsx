@@ -15,9 +15,6 @@ vi.mock("../../host/api/apiClient", async () => {
 vi.mock("../../host/auth/AuthContext", () => ({
   useAuth: () => ({
     tenantId: "00000000-0000-0000-0000-000000000001",
-    token: "test-token",
-    isMinting: false,
-    error: null,
     switchTenant: vi.fn(),
   }),
 }));

@@ -1,5 +1,4 @@
-//! Task 14: `create_checkout_session` against wiremock + a real Postgres
-//! ledger.
+//! `create_checkout_session` against wiremock + a real Postgres ledger.
 //!
 //! The idempotency-ledger state machine is covered generically in
 //! `idempotency.rs`; here we assert the request shape (`mode=subscription`,

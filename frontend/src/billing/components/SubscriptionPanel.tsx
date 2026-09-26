@@ -8,7 +8,6 @@ import { usePlans } from "../hooks/usePlans";
 import { PlanSelector } from "./PlanSelector";
 import { formatMoney } from "../../money";
 import { formatDate } from "../../format";
-import { rememberTenantForReturn, useAuth } from "../../host/auth/AuthContext";
 import { Alert, Badge, Button, Card, Loading } from "../../ui/primitives";
 import type { SubscriptionStatus } from "../api/types";
 
@@ -26,7 +25,6 @@ const SUBTITLE = "Live mirror of this tenant's Stripe subscription";
  * Redirects to Stripe's hosted page on success -- there is nothing to show
  * locally afterward until `CheckoutReturn`'s poll confirms the webhook. */
 function StartSubscription() {
-  const { tenantId } = useAuth();
   const plansQuery = usePlans();
   const startCheckout = useStartCheckoutSession();
 
@@ -55,7 +53,6 @@ function StartSubscription() {
               onClick={() =>
                 startCheckout.mutate(plan.id, {
                   onSuccess: (data) => {
-                    rememberTenantForReturn(tenantId);
                     window.location.href = data.url;
                   },
                 })
@@ -78,9 +75,10 @@ function StartSubscription() {
   );
 }
 
-/** U1, D3's five-way state table. `incomplete` offers cancel directly here
- * (D2's demo path depends on it); `active` renders `PlanSelector` (U2);
- * no-subscription offers a plan choice that starts Checkout. */
+/** One branch per subscription state. `incomplete` offers cancel directly
+ * here (seeded subscriptions start `incomplete`, and the demo needs a way
+ * out); `active` renders `PlanSelector`; no-subscription offers a plan
+ * choice that starts Checkout. */
 export function SubscriptionPanel() {
   const query = useSubscription();
   const cancelSubscription = useCancelSubscription();

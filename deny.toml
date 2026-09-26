@@ -1,0 +1,11 @@
+# cargo-deny configuration. CI runs `cargo deny check advisories` only; the
+# licenses, bans and sources checks are not enabled. Every ignore below
+# carries the reason it is safe, and is revisited when that reason changes.
+#
+# RUSTSEC-2023-0071 (`rsa`, Marvin Attack) was ignored here while `rsa`
+# arrived through `jsonwebtoken` in `demo`, where it was unreachable. The
+# identity module replaced that JWT scaffolding (Phase 8), `jsonwebtoken`
+# left the tree, and the ignore went with it.
+
+[advisories]
+ignore = []

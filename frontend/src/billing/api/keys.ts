@@ -1,5 +1,5 @@
 /**
- * D7 / §11.4: every key carries `tenantId` first, so switching tenants can
+ * Every key carries `tenantId` first, so switching tenants can
  * never serve a stale value from the previous one even before
  * `queryClient.clear()` runs. No hook is allowed to build a key by hand.
  */

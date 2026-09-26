@@ -4,30 +4,29 @@
 //!
 //! - **Exposes a `Router`, never a binary and never a `main`** -- a host
 //!   that already owns `tokio::main` and its own config loading mounts this
-//!   crate's router into its own server (`init-spec.md` §4).
+//!   crate's router into its own server.
 //! - **The webhook body is read as raw `Bytes`, never `Json<T>`** -- the
 //!   Stripe signature is an HMAC over the exact bytes sent, and a `Json<T>`
 //!   extractor consuming and re-encoding the body breaks verification
-//!   irrecoverably (§10.1). `Bytes` is the last extractor so `HeaderMap` is
+//!   irrecoverably. `Bytes` is the last extractor so `HeaderMap` is
 //!   available first.
 //! - **DTOs are `api`-owned; domain types are never `Serialize`.** Every
 //!   response body is a type in `dto.rs` with a hand-written `From` impl. The
 //!   moment a domain struct is serializable, adding a field to it becomes a
-//!   wire-breaking change made by someone not thinking about the wire (§9).
+//!   wire-breaking change made by someone not thinking about the wire.
 //!   Money is `{amount_minor, currency}` -- never a float, never a
-//!   preformatted string (S5); timestamps are RFC 3339 UTC.
+//!   preformatted string; timestamps are RFC 3339 UTC.
 //!
 //! # Two factories, on purpose
 //!
 //! [`webhook_router`] mounts `POST /webhooks/stripe` and nothing else. It is
 //! **not** generic: that route authenticates with the Stripe signature and
-//! has no tenant (`init-spec.md` §10.3). [`billing_router`] mounts every
-//! tenant-scoped route and *is* generic over a host-supplied tenant
-//! extractor `T` (§8.1 Option B). Splitting them keeps a tenant extractor
-//! from ever becoming a precondition of the webhook route. A host serves one,
-//! the other, or both merged.
+//! has no tenant. [`billing_router`] mounts every tenant-scoped route and
+//! *is* generic over a host-supplied tenant extractor `T`. Splitting them
+//! keeps a tenant extractor from ever becoming a precondition of the webhook
+//! route. A host serves one, the other, or both merged.
 //!
-//! # Wiring a host (read this before Phase 4c / a real deployment)
+//! # Wiring a host
 //!
 //! The contract a host implements is [`TenantExtractor`]: an Axum
 //! `FromRequestParts` extractor that **rejects with [`ApiError`]** and
@@ -44,14 +43,17 @@
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::middleware;
 use axum::routing::{delete, get, post};
 
+mod correlation;
 mod dto;
 mod error;
 mod extract;
 mod routes;
 mod state;
 
+pub use correlation::CorrelationId;
 pub use dto::{
     CancelRequest, ChangePlanRequest, CheckoutSessionDto, CheckoutSessionRequest, InvoiceDto,
     InvoicePageDto, MoneyDto, PageParams, PaymentMethodDto, PlanDto, SetupIntentDto,
@@ -62,8 +64,8 @@ pub use extract::TenantExtractor;
 pub use state::{AppState, CheckoutUrls};
 
 /// Bytes limit for the webhook body. Nothing in `WebhookVerifier` bounds the
-/// input it will HMAC -- Phase 3 documented that as a host precondition on
-/// the port's own rustdoc, and this is where the host (this route) enforces
+/// input it will HMAC -- the port's own rustdoc documents that as a host
+/// precondition, and this is where the host (this route) enforces
 /// it. Stripe's own events are small (typically well under 64 KiB); this
 /// leaves generous headroom without leaving the limit effectively unbounded.
 const WEBHOOK_BODY_LIMIT_BYTES: usize = 256 * 1024;
@@ -72,14 +74,14 @@ const WEBHOOK_BODY_LIMIT_BYTES: usize = 256 * 1024;
 ///
 /// Not generic, deliberately. This is the one route in the module with no
 /// tenant: it authenticates with the `Stripe-Signature` header, not with
-/// anything a tenant extractor would produce (`init-spec.md` §10.3). Mounting
+/// anything a tenant extractor would produce. Mounting
 /// it here rather than on [`billing_router`] means making that router generic
 /// can never turn a tenant extractor into a precondition of the webhook
 /// route -- a regression that would surface as Stripe getting 401s on a route
 /// whose auth is its signature.
 ///
-/// A host serves this alone (as `demo` does until the tenant-scoped routes
-/// are wired), or `.merge()`s it into [`billing_router`]'s output.
+/// A host serves this alone, or `.merge()`s it into [`billing_router`]'s
+/// output (as `demo` does).
 pub fn webhook_router(state: AppState) -> Router {
     Router::new()
         .route(
@@ -95,7 +97,7 @@ pub fn webhook_router(state: AppState) -> Router {
 ///
 /// A factory function returning a `Router`, not a binary: this crate never
 /// owns `main`, `tokio::main` or config loading, so a host that already has
-/// them can mount this router into its own server (`init-spec.md` §4).
+/// them can mount this router into its own server.
 ///
 /// `T` is the host's own type. It is bound by [`TenantExtractor`] -- an Axum
 /// [`FromRequestParts`](axum::extract::FromRequestParts) extractor that
@@ -105,10 +107,10 @@ pub fn webhook_router(state: AppState) -> Router {
 /// supply a `T` is a compile error, not a runtime 500.
 ///
 /// This crate never reads a tenant from a path, query, header or body: the
-/// only way a `TenantId` enters a handler is out of `T` (§8.1 -- accepting
+/// only way a `TenantId` enters a handler is out of `T` (accepting
 /// `tenant_id` as a request parameter is textbook IDOR).
 ///
-/// # Adapting a middleware-based host ("Option A")
+/// # Adapting a middleware-based host
 ///
 /// A host whose auth layer already put the tenant in the request extensions
 /// writes a newtype and names it as `T`. This compiles as written:
@@ -192,5 +194,10 @@ where
         )
         .route("/invoices", get(routes::invoices::list_invoices::<T>))
         .route("/invoices/{id}", get(routes::invoices::get_invoice::<T>))
+        // Mints this request's `CorrelationId` before any handler runs. Not
+        // mounted on `webhook_router`: that route has its own actor story
+        // (Task 11 territory) and no write route of its own to match a
+        // correlation id against yet.
+        .layer(middleware::from_fn(correlation::layer))
         .with_state(state)
 }

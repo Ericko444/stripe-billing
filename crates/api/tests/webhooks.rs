@@ -5,7 +5,7 @@
 //! There is no tenant extractor type named anywhere in this file -- that is
 //! the point: the webhook route must keep answering 200/400 with no tenant
 //! context in scope at all, so that making `billing_router` generic can never
-//! have quietly made a tenant a precondition of this route (§10.3).
+//! have quietly made a tenant a precondition of this route.
 
 mod common;
 
@@ -31,10 +31,10 @@ enum VerifierResponse {
     VerificationFailed,
 }
 
-/// Doubles `domain::WebhookVerifier` at the trait, the way the spec's
-/// Testing Strategy calls for at this layer. Records the exact payload
+/// Doubles `domain::WebhookVerifier` at the trait: at the router layer the
+/// signature check itself is not under test. Records the exact payload
 /// bytes it was handed, so a test can assert they reached the verifier
-/// byte-for-byte -- the guard for §10.1's raw-bytes precondition.
+/// byte-for-byte -- the guard for the raw-bytes precondition.
 struct StubVerifier {
     response: VerifierResponse,
     captured_payload: Mutex<Option<Vec<u8>>>,
@@ -253,7 +253,7 @@ async fn not_applied_outcome_still_returns_200() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// The seam's load-bearing assertion (Phase 4b, Task 1): the webhook route
+/// The seam's load-bearing assertion: the webhook route
 /// answers 200 for a good delivery and 400 for a missing signature while
 /// driven through [`webhook_router`], which takes no type parameter -- there
 /// is no tenant extractor to name, in this test or anywhere it can reach.

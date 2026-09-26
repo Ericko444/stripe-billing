@@ -1,6 +1,7 @@
+use audit::AuditEntry;
 use domain::{
     CustomerId, DomainError, EventApplication, PlanId, Subscription, SubscriptionId,
-    SubscriptionRepository, SubscriptionStatus, TenantId,
+    SubscriptionRepository, SubscriptionSnapshot, SubscriptionStatus, TenantId,
 };
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -176,11 +177,20 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         current_period_end: OffsetDateTime,
         cancel_at_period_end: bool,
         event_created_at: OffsetDateTime,
+        entry: AuditEntry,
     ) -> Result<EventApplication, DomainError> {
-        // The ordering predicate is part of the statement, not a read-then-
-        // compare in Rust -- see the port's rustdoc for why. rows_affected()
-        // is the stale signal, reported by Postgres rather than concluded by
-        // us.
+        // One transaction: the ordering predicate is part of the statement,
+        // not a read-then-compare in Rust -- see the port's rustdoc for
+        // why. rows_affected() is the stale signal, reported by Postgres
+        // rather than concluded by us. The audit entry commits with the
+        // write either way (D1(h)).
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
         let result = sqlx::query(
             "UPDATE billing.subscriptions \
                 SET status = $3, current_period_start = $4, current_period_end = $5, \
@@ -195,16 +205,28 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .bind(current_period_end)
         .bind(cancel_at_period_end)
         .bind(event_created_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(RepositoryError::from)
         .map_err(to_domain_error)?;
 
-        if result.rows_affected() == 0 {
-            Ok(EventApplication::Stale)
+        let application = if result.rows_affected() == 0 {
+            EventApplication::Stale
         } else {
-            Ok(EventApplication::Applied)
-        }
+            EventApplication::Applied
+        };
+
+        audit_pg::insert(&mut tx, &entry)
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        tx.commit()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        Ok(application)
     }
 
     async fn set_plan(
@@ -231,5 +253,162 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .map_err(to_domain_error)?;
 
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn change_plan(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        plan_id: PlanId,
+        snapshot: SubscriptionSnapshot,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> Result<Subscription, DomainError> {
+        // One transaction: the plan repoint, the guarded snapshot apply, and
+        // the audit entry commit or fail together (D1(h) via F5's merge --
+        // see the port's rustdoc for why this pair of writes specifically
+        // needed merging rather than an `AuditEntry` parameter each).
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        // Unguarded, exactly like the standalone `set_plan` above: no
+        // webhook ever writes this column.
+        sqlx::query(
+            "UPDATE billing.subscriptions \
+                SET plan_id = $3 \
+              WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(id.as_uuid())
+        .bind(plan_id.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        // Guarded, exactly like the standalone `apply_event` above -- same
+        // ordering predicate, same stale semantics. Not branched on: the
+        // caller re-reads the row's authoritative state below regardless.
+        sqlx::query(
+            "UPDATE billing.subscriptions \
+                SET status = $3, current_period_start = $4, current_period_end = $5, \
+                    cancel_at_period_end = $6, last_event_created_at = $7 \
+              WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL \
+                AND (last_event_created_at IS NULL OR last_event_created_at <= $7)",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(id.as_uuid())
+        .bind(snapshot.status.as_str())
+        .bind(snapshot.current_period_start)
+        .bind(snapshot.current_period_end)
+        .bind(snapshot.cancel_at_period_end)
+        .bind(event_created_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        audit_pg::insert(&mut tx, &entry)
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        // The row's state after both writes -- whatever is authoritative,
+        // regardless of whether the snapshot above was Applied or Stale.
+        let row = sqlx::query_as::<_, SubscriptionRow>(
+            "SELECT id, tenant_id, customer_id, plan_id, stripe_subscription_id, \
+                    stripe_subscription_item_id, status, current_period_start, \
+                    current_period_end, cancel_at_period_end, last_event_created_at, \
+                    created_at, deleted_at \
+             FROM billing.subscriptions \
+             WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?
+        .ok_or(DomainError::NotFound)?;
+
+        tx.commit()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        row.try_into()
+    }
+
+    async fn cancel(
+        &self,
+        tenant_id: TenantId,
+        id: SubscriptionId,
+        snapshot: SubscriptionSnapshot,
+        event_created_at: OffsetDateTime,
+        entry: AuditEntry,
+    ) -> Result<Subscription, DomainError> {
+        // One transaction: the guarded snapshot apply and the audit entry
+        // commit or fail together (D1(h)).
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        // Same statement `apply_event` runs, standalone -- see this method's
+        // rustdoc for why it is a separate method rather than a parameter on
+        // that one.
+        sqlx::query(
+            "UPDATE billing.subscriptions \
+                SET status = $3, current_period_start = $4, current_period_end = $5, \
+                    cancel_at_period_end = $6, last_event_created_at = $7 \
+              WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL \
+                AND (last_event_created_at IS NULL OR last_event_created_at <= $7)",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(id.as_uuid())
+        .bind(snapshot.status.as_str())
+        .bind(snapshot.current_period_start)
+        .bind(snapshot.current_period_end)
+        .bind(snapshot.cancel_at_period_end)
+        .bind(event_created_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?;
+
+        audit_pg::insert(&mut tx, &entry)
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        let row = sqlx::query_as::<_, SubscriptionRow>(
+            "SELECT id, tenant_id, customer_id, plan_id, stripe_subscription_id, \
+                    stripe_subscription_item_id, status, current_period_start, \
+                    current_period_end, cancel_at_period_end, last_event_created_at, \
+                    created_at, deleted_at \
+             FROM billing.subscriptions \
+             WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(RepositoryError::from)
+        .map_err(to_domain_error)?
+        .ok_or(DomainError::NotFound)?;
+
+        tx.commit()
+            .await
+            .map_err(RepositoryError::from)
+            .map_err(to_domain_error)?;
+
+        row.try_into()
     }
 }

@@ -7,8 +7,9 @@ use thiserror::Error;
 /// The four variants exist for the operator reading logs with a correlation
 /// id, not for the caller: [`From<WebhookError> for DomainError`] collapses
 /// **all four** to [`DomainError::WebhookVerification`], which carries no
-/// detail (see that impl). Phase 2's `StripeError` flattened to a `String`
-/// to protect a crate boundary (S1); this flattens to *nothing* to protect
+/// detail (see that impl). `StripeError` flattens to a `String` to protect
+/// a crate boundary (`domain` stays free of adapter types); this flattens
+/// to *nothing* to protect
 /// an untrusted caller. Both are boundary decisions; only this one is a
 /// security control.
 #[derive(Debug, Error)]
@@ -43,8 +44,8 @@ pub enum WebhookError {
 /// timestamp vs. malformed header — is information an attacker probing a
 /// public, unauthenticated endpoint can use. The rich `WebhookError` stays
 /// inside `stripe-adapter` and is logged with a correlation id; `domain`
-/// and everything above it see only "webhook verification failed"
-/// (`init-spec.md` §5.5 — the mapping is where leaks happen).
+/// and everything above it see only "webhook verification failed" -- the
+/// mapping is where leaks happen.
 impl From<WebhookError> for DomainError {
     fn from(_err: WebhookError) -> Self {
         DomainError::WebhookVerification

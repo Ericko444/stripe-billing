@@ -4,10 +4,9 @@ import { getInvoices } from "../api/endpoints";
 import { billingKeys } from "../api/keys";
 
 export function useInvoices(after?: string) {
-  const { tenantId, token } = useAuth();
+  const { tenantId } = useAuth();
   return useQuery({
     queryKey: billingKeys.invoices(tenantId, after),
     queryFn: () => getInvoices(after),
-    enabled: token !== null,
   });
 }

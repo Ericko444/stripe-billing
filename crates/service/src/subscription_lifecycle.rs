@@ -1,9 +1,11 @@
+use audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
 use domain::{
     BillingEvent, CustomerRepository, DomainError, EventApplication, PlanRepository,
     SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId, VerifiedEvent,
 };
 use serde_json::Value;
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
 
@@ -11,7 +13,7 @@ use crate::webhook::{EventOutcome, NotAppliedReason};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnMissing {
     /// Return `NotApplied(UnknownSubscription)` -- the `updated` / `deleted`
-    /// behaviour, and `created`'s too until Task 22.
+    /// behaviour.
     NotApplied,
     /// Create the mirror: resolve `plan_id` from the subscription's Stripe
     /// price (`PlanRepository::find_by_stripe_price_id`), or
@@ -21,9 +23,9 @@ pub enum OnMissing {
 }
 
 /// Applies a `customer.subscription.{created,updated,deleted}` event:
-/// resolves the tenant from the Stripe customer id (§10.3), locates or --
-/// for `created` -- creates the local subscription mirror, and applies the
-/// event through the ordering guard (§10.2).
+/// resolves the tenant from the Stripe customer id, locates or -- for
+/// `created` -- creates the local subscription mirror, and applies the
+/// event through the ordering guard.
 ///
 /// One handler for all three because their `data.object` is the same shape
 /// and the flow is identical. `deleted` arrives as a `canceled` status and
@@ -39,14 +41,16 @@ pub enum OnMissing {
 /// treats it as authority for anything else.
 ///
 /// On the create path `plan_id` comes from the price mapping; on every
-/// other path `plan_id` is never touched (spec Open Question 1) -- only
-/// status, both period bounds and `cancel_at_period_end` are applied.
+/// other path `plan_id` is never touched -- a webhook names a Stripe price,
+/// not a local plan -- only status, both period bounds and
+/// `cancel_at_period_end` are applied.
 pub async fn apply<C, S, L>(
     customers: &C,
     subscriptions: &S,
     plans: &L,
     event: &VerifiedEvent,
     on_missing: OnMissing,
+    correlation_id: Uuid,
 ) -> Result<EventOutcome, DomainError>
 where
     C: CustomerRepository,
@@ -60,7 +64,7 @@ where
         .await?
     else {
         // Not a failure: this event concerns a Stripe customer this module
-        // does not own (§10.3).
+        // does not own.
         return Ok(EventOutcome::NotApplied(NotAppliedReason::UnknownCustomer));
     };
     let tenant_id = customer.tenant_id;
@@ -87,6 +91,14 @@ where
         },
     };
 
+    let entry = AuditEntry::new(
+        audit::TenantId::new(tenant_id.as_uuid()),
+        Actor::System,
+        action_for(fields.status),
+        Target::Subscription(TargetId::new(subscription_id.as_uuid())),
+        event.created,
+        CorrelationId::new(correlation_id),
+    );
     let application = subscriptions
         .apply_event(
             tenant_id,
@@ -96,6 +108,7 @@ where
             fields.current_period_end,
             fields.cancel_at_period_end,
             event.created,
+            entry,
         )
         .await?;
 
@@ -149,11 +162,11 @@ where
 }
 
 /// Maps the subscription's new status to the [`BillingEvent`] this handler
-/// emits (§8.3's translation from a Stripe event into a host-facing typed
-/// notification). Not spec-mandated -- the spec fixes `BillingEvent`'s
-/// shape and the ordering around calling the sink, not which event each
-/// status produces -- so the mapping is deliberately the smallest one that
-/// covers the four variants `service` currently defines: `Active` becomes
+/// emits -- the translation from a Stripe event into a host-facing typed
+/// notification. The port fixes `BillingEvent`'s shape and the ordering
+/// around calling the sink, not which event each status produces, so the
+/// mapping is deliberately the smallest one that covers the three
+/// subscription variants: `Active` becomes
 /// `SubscriptionActivated` (a new subscriber, or a recovery from
 /// `past_due`/`incomplete`); `Canceled` and `IncompleteExpired` both become
 /// `SubscriptionCanceled` -- both are terminal, and the host has no
@@ -183,6 +196,22 @@ fn billing_event_for(
                 subscription_id,
             }
         }
+    }
+}
+
+/// The same status -> outcome mapping [`billing_event_for`] makes, for the
+/// audit `Action` this write's entry carries. Kept as its own function
+/// rather than deriving one from the other: `BillingEvent` is a host-facing
+/// notification with tenant/id fields the audit log does not need, and
+/// tying the two together would make an unrelated change to one type
+/// (adding a field to `BillingEvent`, say) a compile break in `audit`.
+fn action_for(status: SubscriptionStatus) -> Action {
+    match status {
+        SubscriptionStatus::Active => Action::SubscriptionActivated,
+        SubscriptionStatus::Canceled | SubscriptionStatus::IncompleteExpired => {
+            Action::SubscriptionCanceled
+        }
+        SubscriptionStatus::PastDue | SubscriptionStatus::Incomplete => Action::SubscriptionUpdated,
     }
 }
 
@@ -320,6 +349,7 @@ mod tests {
             &InMemoryPlans::default(),
             event,
             OnMissing::NotApplied,
+            Uuid::new_v4(),
         )
         .await
     }
@@ -437,6 +467,17 @@ mod tests {
             found,
             Ok(Some(ref s)) if s.status == SubscriptionStatus::Active && s.cancel_at_period_end
         ));
+
+        let entries = subscriptions.apply_event_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant_id.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::SubscriptionActivated);
+        assert_eq!(
+            entry.target(),
+            audit::Target::Subscription(audit::TargetId::new(subscription_id.as_uuid()))
+        );
     }
 
     #[tokio::test]
@@ -487,6 +528,11 @@ mod tests {
             found,
             Ok(Some(ref s)) if s.status == SubscriptionStatus::Active && !s.cancel_at_period_end
         ));
+        assert_eq!(
+            subscriptions.apply_event_entries().len(),
+            2,
+            "a stale event is still audited -- Stripe reported a real event either way"
+        );
     }
 
     #[tokio::test]

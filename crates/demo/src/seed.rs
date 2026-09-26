@@ -1,17 +1,17 @@
-//! `cargo run -p demo -- seed`: gives the tenant switcher two tenants to
-//! switch between (F1, Task 7/8).
+//! `cargo run -p demo -- seed`: gives the demo two users and two tenants to
+//! switch between.
 //!
 //! Per tenant: a Stripe customer plus its mirror row, two local `plans`
 //! rows against Stripe prices the operator names (`SEED_PLAN_*`, below),
 //! and one subscription. Tenant ids are **fixed**, not random -- a second
 //! run must find the same two tenants rather than minting new ones, which
-//! is what makes re-running idempotent (Task 8).
+//! is what makes re-running idempotent.
 //!
 //! No `billing.payment_methods` row is written. `BillingProvider` has no
 //! `attach_payment_method` -- attaching has only ever happened through
 //! Stripe's hosted UI -- so a subscription created here comes back
 //! `incomplete`, not `active`, until a reviewer runs checkout or a
-//! SetupIntent themselves (Plan 4d, P4/F2). That is the honest starting
+//! SetupIntent themselves. That is the honest starting
 //! state, not a bug.
 
 use std::error::Error;
@@ -20,11 +20,14 @@ use domain::{
     CreateCustomerParams, Currency, CustomerRepository, Money, Plan, PlanRepository,
     SubscriptionRepository, TenantId,
 };
+use identity_domain::{NewPassword, Password, PasswordHasher};
+use identity_service::Argon2Hasher;
 use persistence::{
     PgCustomerRepository, PgOutboundRequestRepository, PgPlanRepository, PgSubscriptionRepository,
     run_migrations,
 };
 use secrecy::SecretString;
+use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use stripe_adapter::{StripeBillingProvider, StripeConfig};
 use uuid::Uuid;
@@ -46,11 +49,77 @@ fn required_env(name: &str) -> Result<String, Box<dyn Error>> {
     }
 }
 
+/// Seeds the identity module: the two tenants (the same ids billing uses),
+/// Alice (Owner of A, Member of B) and Bob (Owner of B), both with the
+/// password in `SEED_USER_PASSWORD`, hashed with the live Argon2id
+/// parameters.
+///
+/// Written with SQL rather than through a use case, deliberately: seeding
+/// is setup, not an action anyone took, so it writes no audit rows. Re-running
+/// leaves tenants and memberships as they are but **resets both users'
+/// passwords** to the current `SEED_USER_PASSWORD` -- convenient in a demo,
+/// and the reason this command must never point at a real database.
+async fn seed_identity(pool: &PgPool, password: Password) -> Result<(), Box<dyn Error>> {
+    let password = NewPassword::check(password)
+        .map_err(|err| format!("SEED_USER_PASSWORD is not an acceptable password: {err}"))?;
+    let hash = Argon2Hasher::new()?.hash(&password).await?;
+
+    let mut tx = pool.begin().await?;
+    for (id, name) in [(SEED_TENANTS[0], "Tenant A"), (SEED_TENANTS[1], "Tenant B")] {
+        sqlx::query(
+            "INSERT INTO identity.tenants (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(name)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for (id, email, name) in [
+        (SEED_ALICE, "alice@example.test", "Alice"),
+        (SEED_BOB, "bob@example.test", "Bob"),
+    ] {
+        sqlx::query(
+            "INSERT INTO identity.users (id, email_normalized, display_name, password_hash) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash",
+        )
+        .bind(id)
+        .bind(email)
+        .bind(name)
+        .bind(hash.as_str())
+        .execute(&mut *tx)
+        .await?;
+    }
+    for (user, tenant, role) in [
+        (SEED_ALICE, SEED_TENANTS[0], "owner"),
+        (SEED_ALICE, SEED_TENANTS[1], "member"),
+        (SEED_BOB, SEED_TENANTS[1], "owner"),
+    ] {
+        sqlx::query(
+            "INSERT INTO identity.memberships (id, user_id, tenant_id, role, status) \
+             VALUES ($1, $2, $3, $4, 'active') \
+             ON CONFLICT (user_id, tenant_id) DO NOTHING",
+        )
+        .bind(Uuid::new_v4())
+        .bind(user)
+        .bind(tenant)
+        .bind(role)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+
+    println!(
+        "seeded users alice@example.test (Tenant A owner, Tenant B member) and bob@example.test (Tenant B owner)"
+    );
+    Ok(())
+}
+
 /// The two shared test-mode Stripe prices the seed's plans point at. Named
 /// by environment variable rather than hardcoded: unlike a Stripe secret
 /// key, a price/product id is not something this crate can verify, and a
-/// wrong hardcoded id would be exactly the mirror-row-pointing-at-nothing
-/// failure Plan 4d's F2 exists to avoid. Point these at any two prices in
+/// wrong hardcoded id would leave a mirror row pointing at nothing. Point
+/// these at any two prices in
 /// your own Stripe test-mode account.
 struct SeedPricing {
     plan_a_price_id: String,
@@ -70,15 +139,27 @@ impl SeedPricing {
     }
 }
 
-/// Runs the seed: connects to Postgres and Stripe, then seeds each of
-/// [`SEED_TENANTS`] in turn, printing each tenant's uuid as it completes.
+/// The two demo users. Fixed ids, for the same idempotency reason as the
+/// tenants. Alice belongs to both tenants -- she exercises the tenant picker
+/// -- and Bob to one, so he lands straight in it.
+const SEED_ALICE: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_000a_11ce);
+const SEED_BOB: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0b0b);
+
+/// Runs the seed: the identity module's tenants, users and memberships
+/// first (Postgres only), then each of [`SEED_TENANTS`]'s billing state
+/// (Postgres and Stripe), printing each tenant's uuid as it completes.
 pub async fn run_seed() -> Result<(), Box<dyn Error>> {
     let database_url = required_env("DATABASE_URL")?;
-    let stripe_secret_key = required_env("STRIPE_SECRET_KEY")?;
-    let pricing = SeedPricing::from_env()?;
+    let seed_password = Password::new(required_env("SEED_USER_PASSWORD")?);
 
     let pool = PgPoolOptions::new().connect(&database_url).await?;
     run_migrations(&pool).await?;
+    audit_pg::run_migrations(&pool).await?;
+    identity_pg::run_migrations(&pool).await?;
+    seed_identity(&pool, seed_password).await?;
+
+    let stripe_secret_key = required_env("STRIPE_SECRET_KEY")?;
+    let pricing = SeedPricing::from_env()?;
 
     let customers = PgCustomerRepository::new(pool.clone());
     let plans = PgPlanRepository::new(pool.clone());
@@ -171,7 +252,7 @@ async fn seed_tenant(
             .await?;
         // Stored as Stripe returned it, never coerced to `Active` -- a
         // subscription with no attached payment method comes back
-        // `incomplete`, and that is the honest state to mirror (P4).
+        // `incomplete`, and that is the honest state to mirror.
         subscriptions
             .create(
                 tenant,

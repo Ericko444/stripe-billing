@@ -9,14 +9,22 @@ publish.workspace = true
 
 [dependencies]
 api.workspace = true
+# Both audit-side crates: audit-pg to run its migrator and to construct the
+# PgAuditSink the two standalone-audit write routes use.
+audit-pg.workspace = true
 domain.workspace = true
+# The identity module: `identity_tenant.rs` wraps its session extractor for
+# billing, and `main` mounts its router and wires its adapters.
+identity-api.workspace = true
+identity-domain.workspace = true
+identity-pg.workspace = true
+identity-service.workspace = true
 persistence.workspace = true
 service.workspace = true
 stripe-adapter.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 dotenvy.workspace = true
-jsonwebtoken.workspace = true
 secrecy.workspace = true
 serde.workspace = true
 sqlx.workspace = true
@@ -28,7 +36,10 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+audit.workspace = true
+# Brings up the database the three-migrators test and the boundary proof run on.
 serde_json.workspace = true
+testcontainers.workspace = true
 tower = { workspace = true, features = ["util"] }
 
 [lints]

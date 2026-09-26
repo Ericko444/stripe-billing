@@ -3,9 +3,6 @@
 // setup for the extractor-level tests.
 #![allow(dead_code)]
 
-use std::io;
-use std::sync::{Arc, Mutex};
-
 use api::{AppState, CheckoutUrls};
 use async_trait::async_trait;
 use domain::{
@@ -13,13 +10,12 @@ use domain::{
     PaymentMethod, PaymentMethodId, Plan, PlanId, SetupIntentSnapshot, Subscription,
     SubscriptionId, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
-use service::{EventOutcome, Reads, WebhookHandler, Writes};
-use tracing_subscriber::fmt::MakeWriter;
+use service::{EventOutcome, Reads, RequestContext, WebhookHandler, Writes};
 
 /// The one message every `Unused*` double's error carries -- these fakes
 /// exist only so [`unused_state`] can build a complete `AppState`; nothing
-/// in the JWT extractor test suite ever reaches them.
-const UNUSED: &str = "unused double: the JWT extractor test suite never calls this";
+/// in the extractor test suite ever reaches them.
+const UNUSED: &str = "unused double: the extractor test suite never calls this";
 
 struct UnusedVerifier;
 
@@ -89,14 +85,14 @@ impl Writes for UnusedWrites {
 
     async fn create_setup_intent(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
     ) -> Result<SetupIntentSnapshot, DomainError> {
         Err(DomainError::Provider(UNUSED.to_string()))
     }
 
     async fn change_plan(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _subscription_id: SubscriptionId,
         _plan_id: PlanId,
     ) -> Result<Subscription, DomainError> {
@@ -105,7 +101,7 @@ impl Writes for UnusedWrites {
 
     async fn cancel_subscription(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _subscription_id: SubscriptionId,
         _at_period_end: bool,
     ) -> Result<Subscription, DomainError> {
@@ -114,7 +110,7 @@ impl Writes for UnusedWrites {
 
     async fn set_default_payment_method(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _payment_method_id: PaymentMethodId,
     ) -> Result<PaymentMethod, DomainError> {
         Err(DomainError::Provider(UNUSED.to_string()))
@@ -122,7 +118,7 @@ impl Writes for UnusedWrites {
 
     async fn remove_payment_method(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _payment_method_id: PaymentMethodId,
     ) -> Result<(), DomainError> {
         Err(DomainError::Provider(UNUSED.to_string()))
@@ -130,7 +126,7 @@ impl Writes for UnusedWrites {
 
     async fn start_checkout_session(
         &self,
-        _tenant: TenantId,
+        _ctx: RequestContext,
         _plan_id: PlanId,
         _success_url: &str,
         _cancel_url: &str,
@@ -154,46 +150,4 @@ pub fn unused_state() -> AppState {
             cancel: "https://example.invalid/cancel".to_string(),
         },
     )
-}
-
-/// A `tracing` sink that appends every formatted line to a shared buffer, so
-/// a test can install it with `tracing::subscriber::set_default` and assert
-/// on what was (not) logged during a request. Mirrors `api`'s own
-/// `CapturedLogs` (`crates/api/tests/common/mod.rs`).
-#[derive(Clone, Default)]
-pub struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
-
-impl CapturedLogs {
-    /// Everything logged through this sink so far, as a lossy UTF-8 string.
-    pub fn contents(&self) -> String {
-        String::from_utf8_lossy(
-            &self
-                .0
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()),
-        )
-        .into_owned()
-    }
-}
-
-impl io::Write for CapturedLogs {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> MakeWriter<'a> for CapturedLogs {
-    type Writer = CapturedLogs;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
 }

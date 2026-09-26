@@ -27,7 +27,7 @@ pub struct UpdateCustomerParams {
 }
 
 /// What Stripe returned about a customer, in domain terms. A named struct
-/// rather than a bare `String` so a later phase can add a field (e.g.
+/// rather than a bare `String` so a field can be added later (e.g.
 /// `default_payment_method`) without changing the trait's signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomerSnapshot {
@@ -49,16 +49,16 @@ pub enum CancellationTiming {
 /// What Stripe returned about a subscription, in domain terms. Deliberately
 /// not the `Subscription` aggregate: Stripe supplies none of the local ids
 /// (`SubscriptionId`, `CustomerId`, `PlanId`) or `deleted_at`, so returning
-/// the aggregate would mean the adapter inventing local state -- exactly
-/// what `init-spec.md` §7.4 forbids ("Stripe is authoritative, local tables
-/// are a cache").
+/// the aggregate would mean the adapter inventing local state. For
+/// anything Stripe owns, Stripe is authoritative and the local tables are a
+/// queryable cache; the module never invents billing state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubscriptionSnapshot {
     /// The Stripe subscription id.
     pub stripe_subscription_id: String,
     /// The Stripe subscription *item* id -- stored so a later plan change
-    /// updates this item rather than adding a second one (`init-spec.md`
-    /// §5.1).
+    /// updates this item rather than adding a second one, which would bill
+    /// the customer twice.
     pub stripe_subscription_item_id: String,
     /// The subscription's current lifecycle status.
     pub status: SubscriptionStatus,
@@ -76,8 +76,7 @@ pub struct SubscriptionSnapshot {
 /// -- the frontend uses it with Stripe.js to collect and confirm a payment
 /// method against this customer -- and it is **bearer-ish**: whoever holds
 /// it can attach a payment method to that customer. It travels in the API
-/// response body and **must never reach a log line** (`init-spec.md` §15's
-/// Never list; `docs/spec/phase-4c-write-routes.md` §9).
+/// response body and **must never reach a log line**.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupIntentSnapshot {
     /// The SetupIntent's `client_secret` (`seti_..._secret_...`). Never log
@@ -88,10 +87,9 @@ pub struct SetupIntentSnapshot {
 /// Inputs for creating a Stripe Checkout Session in `subscription` mode.
 ///
 /// The two URLs are **not** caller-supplied -- the host sets them once when
-/// it constructs `api`'s `AppState` (`docs/spec/phase-4c-write-routes.md`
-/// Open Question 3 / Plan P4). A caller that could set `success_url` would
-/// have an open redirect in the one flow where the customer is most primed
-/// to trust the destination.
+/// it constructs `api`'s `AppState`. A caller that could set `success_url`
+/// would have an open redirect in the one flow where the customer is most
+/// primed to trust the destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckoutSessionParams {
     /// The Stripe customer the session subscribes.
@@ -109,8 +107,7 @@ pub struct CheckoutSessionParams {
 ///
 /// Two fields. `url` is **browser-destined** -- it is the hosted checkout
 /// page the frontend redirects to -- and it travels in the API response
-/// body and **must never reach a log line** (`init-spec.md` §15's Never
-/// list; `docs/spec/phase-4c-write-routes.md` §9), the same rule as
+/// body and **must never reach a log line**, the same rule as
 /// [`SetupIntentSnapshot`]'s `client_secret`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckoutSessionSnapshot {
@@ -128,13 +125,12 @@ pub struct CheckoutSessionSnapshot {
 /// native `async fn`, because it needs to be dyn-compatible: it is held by
 /// shared application state that a host wires at runtime (a
 /// `dyn BillingProvider` in `api`'s `AppState`), not by exactly one
-/// adapter the way each repository port is. See `docs/intent/phase-2.md`
-/// for the full argument.
+/// adapter the way each repository port is.
 ///
-/// Grows method-by-method as later phases need it, not toward a speculative
-/// full surface: Phase 2 brought the customer and subscription methods;
-/// Phase 4c adds the SetupIntent, Checkout Session and payment-method
-/// methods the write routes need.
+/// Grown method-by-method as use cases needed it, not toward a speculative
+/// full surface: the customer and subscription methods first, then the
+/// SetupIntent, Checkout Session and payment-method methods the write
+/// routes need.
 #[async_trait]
 pub trait BillingProvider: Send + Sync {
     /// Creates a Stripe customer for the given tenant.
@@ -161,8 +157,9 @@ pub trait BillingProvider: Send + Sync {
     ) -> Result<SubscriptionSnapshot, DomainError>;
 
     /// Changes an existing subscription's plan by updating its subscription
-    /// item -- never by adding a second item (`init-spec.md` §5.1, §7.3).
-    /// Prorates the change (`proration_behavior=create_prorations`).
+    /// item -- never by adding a second item, which would bill twice.
+    /// Prorates the change (`proration_behavior=create_prorations`), so the
+    /// customer is credited or charged for the unused part of the period.
     async fn change_plan(
         &self,
         tenant_id: TenantId,
@@ -200,9 +197,9 @@ pub trait BillingProvider: Send + Sync {
     /// nothing -- the caller already knows which method it asked for, and the
     /// local mirror is reconciled by `service`, not from a snapshot here.
     ///
-    /// **Ordering (`init-spec.md` §7.4): the caller runs this *before*
-    /// touching the mirror.** Reversed, a failure here would leave the local
-    /// `is_default` flags disagreeing with Stripe. `service`'s test suite
+    /// **Ordering: the caller runs this *before* touching the mirror.**
+    /// Reversed, a failure here would leave the local `is_default` flags
+    /// disagreeing with Stripe. `service`'s test suite
     /// pins the order with a double that fails this call and asserts the
     /// flags did not move.
     async fn set_default_payment_method(
@@ -217,7 +214,7 @@ pub trait BillingProvider: Send + Sync {
     /// at Stripe; the local mirror is *soft*-deleted by `service`
     /// afterwards.
     ///
-    /// **Ordering (`init-spec.md` §7.4): Stripe first, then the mirror.**
+    /// **Ordering: Stripe first, then the mirror.**
     /// Reversed, a Stripe failure would leave the mirror claiming the card
     /// is gone while it is still attached and still billable -- the customer
     /// sees "removed" and keeps being charged.

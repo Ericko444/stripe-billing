@@ -1,4 +1,4 @@
-//! Router-level tests for `GET /invoices` (Phase 4b, Task 7): the limit
+//! Router-level tests for `GET /invoices`: the limit
 //! clamp, the opaque cursor, `next` omission on the last page, and tenant
 //! isolation.
 
@@ -201,7 +201,7 @@ async fn returns_only_the_calling_tenants_invoices() -> Result<(), Box<dyn Error
     Ok(())
 }
 
-// --- GET /invoices/{id} (Task 8) ---------------------------------------
+// --- GET /invoices/{id} ------------------------------------------------
 
 #[tokio::test]
 async fn get_invoice_returns_the_row_for_its_own_tenant() -> Result<(), Box<dyn Error>> {

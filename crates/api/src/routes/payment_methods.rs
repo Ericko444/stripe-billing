@@ -1,11 +1,12 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use domain::{DomainError, PaymentMethodId, TenantId};
+use service::RequestContext;
 use uuid::Uuid;
 
 use crate::dto::{PaymentMethodDto, SetupIntentDto};
-use crate::{ApiError, AppState};
+use crate::{ApiError, AppState, CorrelationId};
 
 /// Parses a path segment as a [`PaymentMethodId`]. A segment that is not a
 /// uuid names no payment method, so it takes the same 404 path as an unknown
@@ -19,7 +20,7 @@ fn parse_payment_method_id(raw: &str) -> Result<PaymentMethodId, ApiError> {
 /// `GET /payment-methods`. Every stored card for the calling tenant.
 ///
 /// Soft-deleted rows are already excluded by the repository. The DTO carries
-/// display metadata only (§7.4): brand, last4, default flag -- never card
+/// display metadata only: brand, last4, default flag -- never card
 /// data, which lives in Stripe.
 pub(crate) async fn list_payment_methods<T>(
     tenant: T,
@@ -46,15 +47,21 @@ where
 ///
 /// The response body carries a `client_secret` the frontend hands to
 /// Stripe.js. That value is bearer-ish and appears **only** in this body --
-/// this handler logs nothing, and the DTO is the one place it travels (§9).
+/// this handler logs nothing, and the DTO is the one place it travels.
 pub(crate) async fn create_setup_intent<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
 ) -> Result<Json<SetupIntentDto>, ApiError>
 where
     T: Into<TenantId>,
 {
-    let snapshot = state.writes.create_setup_intent(tenant.into()).await?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
+    let snapshot = state
+        .writes
+        .create_setup_intent(ctx)
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(SetupIntentDto::from(snapshot)))
 }
 
@@ -63,43 +70,49 @@ where
 ///
 /// Another tenant's id -- or an unknown one -- is a 404 identical to any
 /// other, and `Writes::set_default_payment_method` never reaches Stripe for
-/// it (§7.4: Stripe is only called after ownership is proven, and only then
-/// is the mirror reconciled).
+/// it (Stripe is only called after ownership is proven, and only then is
+/// the mirror reconciled).
 pub(crate) async fn set_default_payment_method<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
 ) -> Result<Json<PaymentMethodDto>, ApiError>
 where
     T: Into<TenantId>,
 {
     let id = parse_payment_method_id(&id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     let payment_method = state
         .writes
-        .set_default_payment_method(tenant.into(), id)
-        .await?;
+        .set_default_payment_method(ctx, id)
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(payment_method.into()))
 }
 
 /// `DELETE /payment-methods/{id}`. Detaches the card at Stripe, then
-/// soft-deletes the mirror row (§7.4, Stripe first).
+/// soft-deletes the mirror row (Stripe first).
 ///
-/// **204 No Content** (Plan 4c, Open Question 2): the resource is gone and
+/// **204 No Content**: the resource is gone and
 /// the caller already holds the id it deleted, so there is nothing useful to
 /// return. A second delete of the same id is a 404 -- the row is already
 /// gone. Another tenant's id is a 404 with no outbound call.
 pub(crate) async fn remove_payment_method<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError>
 where
     T: Into<TenantId>,
 {
     let id = parse_payment_method_id(&id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     state
         .writes
-        .remove_payment_method(tenant.into(), id)
-        .await?;
+        .remove_payment_method(ctx, id)
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(StatusCode::NO_CONTENT)
 }

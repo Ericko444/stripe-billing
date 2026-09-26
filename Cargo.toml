@@ -2,18 +2,32 @@
 resolver = "3"
 members = ["crates/*"]
 
-# `jsonwebtoken`'s `rust_crypto` backend (Phase 4d) pulls in enough extra
-# crates (rsa, ed25519-dalek, p256/p384, curve25519-dalek...) that linking
-# `demo`'s full debug info on Windows/MSVC overflows the linker's PDB
-# database (LNK1140). Line tables are enough for `RUST_BACKTRACE=1`; full
-# type/variable debug info is not needed for `cargo test`/`cargo build`.
+# Line tables only. Introduced when `demo`'s full debug info overflowed the
+# MSVC linker's PDB database (LNK1140); that dependency is gone, but the
+# setting stays because it keeps `target/` several gigabytes smaller, which
+# the full test gate needs on the development machine. Line tables are
+# enough for `RUST_BACKTRACE=1`; full type/variable debug info is not needed
+# for `cargo test`/`cargo build`.
 [profile.dev]
 debug = "line-tables-only"
+
+# Argon2id at the identity module's live parameters (19 MiB, t=2) is a
+# memory-hard function doing tens of millions of unoptimised block operations
+# in a debug build -- seconds per login in `cargo run`, and slow tests. Only
+# the hashing crates are optimised; the workspace's own code stays debug.
+# `cargo test` inherits these overrides from `dev`.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+# The floor is set by `sqlx` 0.9, the highest `rust-version` in the lock
+# file. CI's `msrv` job builds the workspace on exactly this toolchain.
+rust-version = "1.94"
 license = "UNLICENSED"
 publish = false
 
@@ -23,8 +37,26 @@ service = { path = "crates/service" }
 persistence = { path = "crates/persistence" }
 stripe-adapter = { path = "crates/stripe-adapter" }
 api = { path = "crates/api" }
+# The audit journal (Phase 7): typed events + the `AuditSink` port, no I/O.
+# Named separately from the six crates above -- it is deliberately not part
+# of this module's own inward dependency chain; a second, not-yet-built
+# module depends on it too, and neither module may depend on the other.
+audit = { path = "crates/audit" }
+# Postgres adapter for `audit` -- its own schema, migrator and grant. Kept
+# separate from `audit` itself so the identity module can depend on the
+# model without compiling sqlx to do it.
+audit-pg = { path = "crates/audit-pg" }
+# The identity module (Phase 8): what a host plugs in front of billing to
+# produce the `TenantId` billing consumes. Its crates name no billing crate
+# and no billing crate names them -- both directions are checked in CI.
+identity-domain = { path = "crates/identity-domain" }
+identity-pg = { path = "crates/identity-pg" }
+identity-service = { path = "crates/identity-service" }
+identity-api = { path = "crates/identity-api" }
 
-# Stripe client, modular line. Pinned exactly: see docs/intent/phase-2.md.
+# Stripe client, modular line. A release candidate over the stale 0.41 stable
+# line, so pinned exactly: a caret range would float across RCs, which may
+# break. `BillingProvider` bounds any breaking change to `stripe-adapter`.
 # `default` resolves to default-tls -> hyper-tls -> native-tls, which drags in
 # OpenSSL, so default features are off and rustls is named explicitly. Selecting
 # rustls without a crypto provider is a compile_error!, so a mistake here is loud.
@@ -33,44 +65,46 @@ async-stripe = { version = "=1.0.0-rc.8", default-features = false, features = [
     "rustls-ring",
 ] }
 # Like async-stripe-core, the billing line opts in per resource -- no default
-# feature set. "subscription" brings the create/update/cancel request builders
-# Tasks 18-20 need; the SubscriptionItem response type is ungated.
+# feature set. "subscription" brings the create/update/cancel request
+# builders; the SubscriptionItem response type is ungated.
 async-stripe-billing = { version = "=1.0.0-rc.8", features = ["subscription"] }
-# Checkout Session (subscription mode) for POST /subscriptions/checkout-session
-# (Phase 4c). default-features off, same rustls discipline as every line here.
+# Checkout Session (subscription mode) for POST /subscriptions/checkout-session.
+# default-features off, same rustls discipline as every line here.
 async-stripe-checkout = { version = "=1.0.0-rc.8", default-features = false, features = ["checkout_session"] }
 async-stripe-client-core = "=1.0.0-rc.8"
 # async-stripe-core defines no default feature set at all -- each resource
-# (customer, subscription, ...) is opt-in. "customer" is Phase 2's; Phase 4c
-# adds "setup_intent" (SetupIntent lives in core, NOT in async-stripe-payment
-# -- checked against the registry). Later tasks add their own resource features.
+# (customer, subscription, ...) is opt-in. "customer" for the customer calls,
+# "setup_intent" for SetupIntents (SetupIntent lives in core, NOT in
+# async-stripe-payment -- checked against the registry).
 async-stripe-core = { version = "=1.0.0-rc.8", features = ["customer", "setup_intent"] }
-# PaymentMethod detach + attach metadata for the payment-method routes
-# (Phase 4c). default-features off, same discipline as the lines above.
+# PaymentMethod detach + attach metadata for the payment-method routes.
+# default-features off, same discipline as the lines above.
 async-stripe-payment = { version = "=1.0.0-rc.8", default-features = false, features = ["payment_method"] }
+# Argon2id for password hashing in the identity module (RustCrypto, pure Rust).
+# Default features supply `alloc`, PHC strings and OS-random salts.
+argon2 = "0.6.0"
 async-trait = "0.1.92"
 axum = "0.8.9"
 dotenvy = "0.15.7"
-# Webhook signature verification (Phase 3). `hmac::Mac::verify_slice` is the
+# OS CSPRNG for the identity module's 256-bit token verifiers. Already in the
+# lock file (argon2's salts and rand both use it); named directly so token
+# generation depends on the OS source on purpose, not through a PRNG.
+getrandom = "0.4.3"
+# Webhook signature verification. `hmac::Mac::verify_slice` is the
 # constant-time comparison; `hex` decodes the `v1` signatures from the header.
 # No cryptography is implemented here -- `Hmac<Sha256>` over `sha2` does the
 # work. `hmac` is pinned to 0.13 to share `digest` 0.11 with the pinned
 # `sha2` 0.11; 0.12 tracks `digest` 0.10 and will not accept this `Sha256`.
 hex = "0.4"
 hmac = "0.13"
-# `rust_crypto`, not the default `use_pem`: demo's HS256 tokens use a raw
-# shared secret (`DecodingKey`/`EncodingKey::from_secret`), never a PEM key,
-# and `rust_crypto` keeps the dependency pure-Rust rather than pulling in
-# `aws-lc-rs`'s native build. Its own `hmac`/`sha2` versions differ from the
-# ones pinned above for the webhook signature (Phase 3) -- Cargo compiles
-# both; the two never interact.
-jsonwebtoken = { version = "11.0.0", default-features = false, features = [
-    "rust_crypto",
-] }
 secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
+# Constant-time byte comparison for the identity module's token verifiers.
+# Already in the lock file through rustls; named directly so the one
+# comparison that must not short-circuit depends on it on purpose.
+subtle = "2.6.1"
 sqlx = { version = "0.9.0", default-features = false, features = [
     "postgres",
     "runtime-tokio",

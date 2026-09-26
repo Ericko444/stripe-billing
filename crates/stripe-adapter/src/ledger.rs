@@ -32,8 +32,7 @@ pub struct Reservation {
 /// `unwrap` (which the workspace lints deny anyway).
 ///
 /// Lives here, next to [`Reservation`], rather than in one adapter module:
-/// every module that sends a mutating call needs it (Phase 4c Task 4 moved
-/// it out of `subscriptions.rs`).
+/// every module that sends a mutating call needs it.
 pub(crate) fn idempotency_key(reservation: &Reservation) -> Result<IdempotencyKey, DomainError> {
     IdempotencyKey::new(&reservation.idempotency_key)
         .map_err(|err| StripeError::Config(err.to_string()))
@@ -47,9 +46,7 @@ pub(crate) fn idempotency_key(reservation: &Reservation) -> Result<IdempotencyKe
 ///
 /// Generic over `R` rather than holding `Arc<dyn OutboundRequestRepository>`:
 /// every repository port in this workspace uses native `async fn`, which is
-/// not dyn-compatible. This is exactly the correction recorded at the end of
-/// `docs/intent/phase-2.md` -- the Phase 1 plan filed it as a Phase 4 risk,
-/// and it actually lands here.
+/// not dyn-compatible.
 pub struct Ledger<R: OutboundRequestRepository> {
     repo: R,
 }
@@ -61,8 +58,8 @@ impl<R: OutboundRequestRepository> Ledger<R> {
     }
 
     /// Reserves an idempotency key for `(tenant_id, operation, fingerprint)`,
-    /// implementing the six-case reserve state machine
-    /// (`docs/spec/phase-2-stripe-adapter.md`, "Resolved decisions §2"):
+    /// implementing a six-case state machine (cases A-F, named below so the
+    /// match arms and tests can refer to them):
     ///
     /// - **No row, or a completed row past the key window** (cases A, D):
     ///   insert a fresh key. A fingerprint recurring after its earlier

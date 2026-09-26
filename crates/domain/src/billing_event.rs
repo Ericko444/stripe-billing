@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{CustomerId, InvoiceId, PaymentMethodId, SubscriptionId, TenantId};
 
 /// A typed notification handed to the host after a webhook event has been
-/// mirrored (`init-spec.md` §8.3).
+/// mirrored.
 ///
 /// A domain enum, not a re-exported Stripe type: a variant carrying a Stripe
 /// object, or a raw payload `Value`, would couple every host implementation
@@ -54,8 +54,8 @@ pub enum BillingEvent {
         subscription_id: Option<SubscriptionId>,
     },
     /// An invoice payment attempt failed (`invoice.payment_failed`) -- the
-    /// variant `init-spec.md` §8.3 names as the reason a host wires a sink
-    /// at all. A host typically starts dunning or restricts access here.
+    /// main reason a host wires a sink at all. A host typically starts
+    /// dunning or restricts access here.
     PaymentFailed {
         /// The tenant the invoice belongs to.
         tenant_id: TenantId,
@@ -83,10 +83,11 @@ pub enum BillingEvent {
         payment_method_id: PaymentMethodId,
     },
     /// A Checkout session completed and linked a Stripe customer to a tenant
-    /// for the first time (`checkout.session.completed`, the bootstrap
-    /// exception -- `init-spec.md` §10.3). The subscription mirror itself
-    /// arrives via the `customer.subscription.created` that Stripe sends
-    /// alongside.
+    /// for the first time (`checkout.session.completed`). The one bootstrap
+    /// case where the tenant comes from the session this module created
+    /// rather than from a customer row, because none exists yet. The
+    /// subscription mirror itself arrives via the
+    /// `customer.subscription.created` that Stripe sends alongside.
     CheckoutCompleted {
         /// The tenant the Checkout session was for.
         tenant_id: TenantId,
@@ -97,10 +98,10 @@ pub enum BillingEvent {
 
 /// The host's error type for a failed [`BillingEventSink::handle`] call.
 ///
-/// Deliberately a single opaque variant: by the time this reaches `service`
-/// (a later phase), the mirror write has already succeeded and does not roll
-/// back (§8.3) -- the failure is logged against the correlation id, not
-/// interpreted. The host is free to wrap whatever it wants in the message.
+/// Deliberately a single opaque variant: by the time this reaches `service`,
+/// the mirror write has already succeeded and does not roll back -- the
+/// failure is logged against the correlation id, not interpreted. The host
+/// is free to wrap whatever it wants in the message.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error("billing event sink failed: {0}")]
 pub struct SinkError(pub String);
@@ -110,12 +111,11 @@ pub struct SinkError(pub String);
 ///
 /// `#[async_trait]` and `Send + Sync` for the same reason
 /// [`BillingProvider`](crate::BillingProvider) and
-/// [`WebhookVerifier`](crate::WebhookVerifier) have them: a later phase's
-/// `api` holds this as a `dyn BillingEventSink` in shared application state,
-/// wired at runtime to whatever the host provides.
+/// [`WebhookVerifier`](crate::WebhookVerifier) have them: it is held as a
+/// `dyn BillingEventSink`, wired at runtime to whatever the host provides.
 ///
-/// Two behaviours are fixed at the port, not left to the implementation
-/// (§8.3): deduplication and mirror persistence happen *before* `handle` is
+/// Two behaviours are fixed at the port, not left to the implementation:
+/// deduplication and mirror persistence happen *before* `handle` is
 /// called, so the sink never sees an event that is not already recorded and
 /// already reflected in the mirror tables; and a sink failure must not roll
 /// back the mirror -- the mirror is a fact about what Stripe said, the sink

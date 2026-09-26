@@ -1,0 +1,225 @@
+//! Wire types. Owned by this crate and built by hand from service types --
+//! the billing module's rule: nothing in `identity-domain` or
+//! `identity-service` is `Serialize`, so a field added there cannot silently
+//! become a field on the wire.
+
+use identity_domain::{Membership, SessionTenant, TenantMember};
+use serde::{Deserialize, Serialize};
+use time::{OffsetDateTime, UtcOffset};
+use uuid::Uuid;
+
+/// `POST /auth/login` body.
+///
+/// Deliberately no `Debug`: a derived one would print the password. The
+/// handler moves `password` into a `Password` secret immediately.
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    /// The address, as typed.
+    pub email: String,
+    /// The password, as typed.
+    pub password: String,
+}
+
+/// `POST /auth/tenant` body. The tenant is chosen by the caller -- and then
+/// checked against the caller's own active memberships, which is what makes
+/// accepting it from a body safe here when billing accepts a tenant from
+/// nowhere but the session.
+#[derive(Debug, Deserialize)]
+pub struct SelectTenantRequest {
+    /// The tenant to scope the session to.
+    pub tenant_id: Uuid,
+}
+
+/// A membership, for a tenant picker.
+#[derive(Debug, Serialize)]
+pub struct MembershipDto {
+    /// The membership's id.
+    pub membership_id: Uuid,
+    /// The tenant's id.
+    pub tenant_id: Uuid,
+    /// The tenant's display name.
+    pub tenant_name: String,
+    /// `owner`, `admin` or `member`.
+    pub role: &'static str,
+}
+
+impl From<&Membership> for MembershipDto {
+    fn from(membership: &Membership) -> Self {
+        Self {
+            membership_id: membership.id.as_uuid(),
+            tenant_id: membership.tenant_id.as_uuid(),
+            tenant_name: membership.tenant_name.clone(),
+            role: membership.role.as_str(),
+        }
+    }
+}
+
+/// The tenant a session is scoped to.
+#[derive(Debug, Serialize)]
+pub struct CurrentTenantDto {
+    /// The tenant's id.
+    pub tenant_id: Uuid,
+    /// The tenant's display name.
+    pub tenant_name: String,
+    /// The caller's role in it.
+    pub role: &'static str,
+}
+
+impl CurrentTenantDto {
+    /// The current tenant, named from `memberships`. `None` if the session is
+    /// not scoped, or -- a race with a suspension between two queries -- if
+    /// the membership is no longer listed.
+    pub fn find(tenant: Option<SessionTenant>, memberships: &[Membership]) -> Option<Self> {
+        let tenant = tenant?;
+        memberships
+            .iter()
+            .find(|membership| membership.tenant_id == tenant.tenant_id)
+            .map(|membership| Self {
+                tenant_id: tenant.tenant_id.as_uuid(),
+                tenant_name: membership.tenant_name.clone(),
+                role: tenant.role.as_str(),
+            })
+    }
+}
+
+/// `POST /auth/login` response. The token itself is only in `Set-Cookie`.
+#[derive(Debug, Serialize)]
+pub struct SessionDto {
+    /// Who logged in.
+    pub user_id: Uuid,
+    /// The tenant the new session is scoped to, or `null` when a tenant must
+    /// be picked.
+    pub tenant: Option<CurrentTenantDto>,
+    /// Every active membership.
+    pub memberships: Vec<MembershipDto>,
+    /// When the session stops being accepted, RFC 3339 UTC.
+    pub expires_at: String,
+}
+
+/// `GET /auth/me` response.
+#[derive(Debug, Serialize)]
+pub struct MeDto {
+    /// Who the caller is.
+    pub user_id: Uuid,
+    /// The caller's address.
+    pub email: String,
+    /// The caller's display name.
+    pub display_name: String,
+    /// The tenant the session is scoped to, or `null`.
+    pub tenant: Option<CurrentTenantDto>,
+    /// Every active membership.
+    pub memberships: Vec<MembershipDto>,
+    /// When the session stops being accepted, RFC 3339 UTC.
+    pub expires_at: String,
+}
+
+/// RFC 3339 UTC with second precision, built from the datetime's fields --
+/// the same approach as the billing `api` crate, rather than enabling
+/// `time`'s `formatting` feature for one call site.
+pub fn rfc3339_utc(datetime: OffsetDateTime) -> String {
+    let datetime = datetime.to_offset(UtcOffset::UTC);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        datetime.year(),
+        u8::from(datetime.month()),
+        datetime.day(),
+        datetime.hour(),
+        datetime.minute(),
+        datetime.second(),
+    )
+}
+
+/// `PATCH /auth/me` body.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMeRequest {
+    /// The new display name. Trimmed; at most 100 characters.
+    pub display_name: String,
+}
+
+/// `POST /auth/password/change` body. No `Debug`, for the reason
+/// [`LoginRequest`] has none.
+#[derive(Deserialize)]
+pub struct ChangePasswordRequest {
+    /// The password the caller has now.
+    pub current_password: String,
+    /// The password to replace it with.
+    pub new_password: String,
+}
+
+/// `POST /auth/password-reset/request` body.
+#[derive(Debug, Deserialize)]
+pub struct ResetRequest {
+    /// The address to send a link to, if it has an account.
+    pub email: String,
+}
+
+/// `POST /auth/password-reset/request` response -- one body, always, whatever
+/// the address. Nothing in it is computed from the request.
+#[derive(Debug, Serialize)]
+pub struct ResetRequestAccepted {
+    /// A fixed sentence the frontend may show as is.
+    pub message: &'static str,
+}
+
+/// The only body `POST /auth/password-reset/request` ever answers `202` with.
+pub const RESET_REQUEST_ACCEPTED: ResetRequestAccepted = ResetRequestAccepted {
+    message: "If an account exists for that address, a password reset link is on its way.",
+};
+
+/// `POST /auth/password-reset/complete` body. No `Debug`: it holds the whole
+/// credential and a password.
+#[derive(Deserialize)]
+pub struct CompleteResetRequest {
+    /// The token from the link's fragment.
+    pub token: String,
+    /// The password to set.
+    pub new_password: String,
+}
+
+/// `POST /tenant/members` body.
+#[derive(Debug, Deserialize)]
+pub struct AddMemberRequest {
+    /// The address to add.
+    pub email: String,
+    /// `owner`, `admin` or `member`.
+    pub role: String,
+}
+
+/// One member of the session's tenant.
+///
+/// No display name, and nothing that says whether the account has a password
+/// yet: either would tell the tenant whether the address already had an
+/// account elsewhere.
+#[derive(Debug, Serialize)]
+pub struct MemberDto {
+    /// The membership's id.
+    pub membership_id: Uuid,
+    /// The member's id.
+    pub user_id: Uuid,
+    /// The member's address.
+    pub email: String,
+    /// `owner`, `admin` or `member`.
+    pub role: &'static str,
+    /// `active` or `suspended`.
+    pub status: &'static str,
+}
+
+impl From<&TenantMember> for MemberDto {
+    fn from(member: &TenantMember) -> Self {
+        Self {
+            membership_id: member.membership_id.as_uuid(),
+            user_id: member.user_id.as_uuid(),
+            email: member.email.as_str().to_string(),
+            role: member.role.as_str(),
+            status: member.status.as_str(),
+        }
+    }
+}
+
+/// `GET /tenant/members` response -- `items`, like the billing module's
+/// lists.
+#[derive(Debug, Serialize)]
+pub struct MembersDto {
+    /// The members, ordered by address.
+    pub items: Vec<MemberDto>,
+}

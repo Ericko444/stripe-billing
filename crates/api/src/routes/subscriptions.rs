@@ -1,12 +1,13 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use domain::{DomainError, PlanId, SubscriptionId, TenantId};
+use service::RequestContext;
 use uuid::Uuid;
 
 use crate::dto::{
     CancelRequest, ChangePlanRequest, CheckoutSessionDto, CheckoutSessionRequest, SubscriptionDto,
 };
-use crate::{ApiError, AppState};
+use crate::{ApiError, AppState, CorrelationId};
 
 /// Parses a path segment as a [`SubscriptionId`]. A segment that is not a
 /// uuid names no subscription, so it takes the same 404 path as an unknown
@@ -37,6 +38,7 @@ fn parse_plan_id(raw: &str) -> Result<PlanId, ApiError> {
 pub(crate) async fn change_plan<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
     Json(body): Json<ChangePlanRequest>,
 ) -> Result<Json<SubscriptionDto>, ApiError>
@@ -45,7 +47,12 @@ where
 {
     let id = parse_subscription_id(&id)?;
     let plan_id = parse_plan_id(&body.plan_id)?;
-    let subscription = state.writes.change_plan(tenant.into(), id, plan_id).await?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
+    let subscription = state
+        .writes
+        .change_plan(ctx, id, plan_id)
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(subscription.into()))
 }
 
@@ -60,6 +67,7 @@ where
 pub(crate) async fn cancel_subscription<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Path(id): Path<String>,
     Json(body): Json<CancelRequest>,
 ) -> Result<Json<SubscriptionDto>, ApiError>
@@ -67,10 +75,12 @@ where
     T: Into<TenantId>,
 {
     let id = parse_subscription_id(&id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     let subscription = state
         .writes
-        .cancel_subscription(tenant.into(), id, body.at_period_end)
-        .await?;
+        .cancel_subscription(ctx, id, body.at_period_end)
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(subscription.into()))
 }
 
@@ -81,24 +91,27 @@ where
 /// An unknown or another tenant's `plan_id` is a 404, checked before any
 /// outbound call. The success/cancel URLs come from `AppState`'s
 /// `checkout_urls` (host config), never the request. This handler logs
-/// nothing -- the returned `url` travels only in the response body (§9).
+/// nothing -- the returned `url` travels only in the response body.
 pub(crate) async fn start_checkout_session<T>(
     tenant: T,
     State(state): State<AppState>,
+    Extension(correlation_id): Extension<CorrelationId>,
     Json(body): Json<CheckoutSessionRequest>,
 ) -> Result<Json<CheckoutSessionDto>, ApiError>
 where
     T: Into<TenantId>,
 {
     let plan_id = parse_plan_id(&body.plan_id)?;
+    let ctx = RequestContext::new(tenant.into(), correlation_id.as_uuid());
     let snapshot = state
         .writes
         .start_checkout_session(
-            tenant.into(),
+            ctx,
             plan_id,
             &state.checkout_urls.success,
             &state.checkout_urls.cancel,
         )
-        .await?;
+        .await
+        .map_err(|err| ApiError::from(err).with_correlation_id(correlation_id))?;
     Ok(Json(snapshot.into()))
 }

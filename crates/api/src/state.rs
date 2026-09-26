@@ -5,12 +5,11 @@ use service::{Reads, WebhookHandler, Writes};
 
 /// The success/cancel URLs a Checkout Session redirects the customer to.
 ///
-/// **Host config, never a request field** (Plan 4c, P4 / spec Open
-/// Question 3). Stripe requires both. Taking them from the request body
-/// would let a caller redirect a customer anywhere after payment -- an open
-/// redirect in the one flow where the user is most primed to trust the
-/// destination -- so `api` reads them only from here, set once when the host
-/// builds [`AppState`].
+/// **Host config, never a request field.** Stripe requires both. Taking
+/// them from the request body would let a caller redirect a customer
+/// anywhere after payment -- an open redirect in the one flow where the
+/// user is most primed to trust the destination -- so `api` reads them only
+/// from here, set once when the host builds [`AppState`].
 #[derive(Clone, Debug)]
 pub struct CheckoutUrls {
     /// Where Stripe returns the customer after a completed checkout.
@@ -43,12 +42,9 @@ pub struct AppState {
     pub webhook_handler: Arc<dyn WebhookHandler>,
     /// The tenant-scoped read use cases behind the `GET` routes.
     pub reads: Arc<dyn Reads>,
-    /// The tenant-scoped write use cases behind the `POST`/`DELETE` routes
-    /// (Phase 4c).
+    /// The tenant-scoped write use cases behind the `POST`/`DELETE` routes.
     pub writes: Arc<dyn Writes>,
-    /// The Checkout Session redirect URLs (Phase 4c, P4). The **second** new
-    /// field this phase, and the reason the spec's "exactly one field" line
-    /// no longer holds -- called out rather than hidden.
+    /// The Checkout Session redirect URLs, from host config.
     pub checkout_urls: CheckoutUrls,
 }
 

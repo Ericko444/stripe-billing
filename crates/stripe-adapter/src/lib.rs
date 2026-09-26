@@ -2,9 +2,9 @@
 //! webhook path, with everything each needs.
 //!
 //! **Outbound** — every mutating call `domain::BillingProvider` names:
-//! customer create/update and subscription create/change/cancel (Phase 2),
-//! plus SetupIntent, Checkout Session and payment-method set-default/detach
-//! (Phase 4c). One file per Stripe resource (`customers.rs`,
+//! customer create/update and subscription create/change/cancel, plus
+//! SetupIntent, Checkout Session and payment-method set-default/detach. One
+//! file per Stripe resource (`customers.rs`,
 //! `subscriptions.rs`, `setup_intents.rs`, `checkout.rs`,
 //! `payment_methods.rs`); `provider.rs` is pure delegation. Everything each
 //! needs: client construction with a base-URL override ([`build_client`]),
@@ -12,9 +12,9 @@
 //! the request [`fingerprint`], the reserve/complete state machine
 //! ([`Ledger`]), and [`StripeBillingProvider`], which wires them together.
 //!
-//! Ordering against the local mirror (`init-spec.md` §7.4 — Stripe first for
-//! detach and set-default; the returned `SubscriptionSnapshot` applied
-//! through the §10.2 guard for change-plan/cancel) is a `service` concern,
+//! Ordering against the local mirror (Stripe first for detach and
+//! set-default; the returned `SubscriptionSnapshot` applied through the
+//! webhook ordering guard for change-plan/cancel) is a `service` concern,
 //! not this crate's: each method here just makes the call and returns a
 //! `domain` snapshot. Its rustdoc says so, so an implementer reading the
 //! adapter is pointed back to `service` for the sequence.

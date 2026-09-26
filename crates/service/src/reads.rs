@@ -1,10 +1,9 @@
-//! The read use cases behind the five `GET` routes (`init-spec.md` §8.2).
+//! The read use cases behind the five `GET` routes.
 //!
 //! Each is a thin pass-through to one repository today. They exist as their
 //! own layer anyway because `api` depends on `service`, not on
 //! `persistence`: a route reaching a repository directly would skip the
-//! layer the architecture is built on. When 4c adds proration and payment
-//! method ordering, they land in functions that already exist.
+//! layer the architecture is built on.
 
 use async_trait::async_trait;
 use domain::{
@@ -36,8 +35,8 @@ pub trait Reads: Send + Sync {
     /// "Current" is the most recently created subscription that is **not**
     /// terminal (`Canceled` or `IncompleteExpired`). `billing.subscriptions`
     /// has no "one active per tenant" constraint and the repository returns
-    /// every row; enforcing that invariant is a §7 concern this phase does
-    /// not take on (Open Question 2).
+    /// every row; enforcing that invariant would belong to the Stripe write
+    /// path, and is deliberately not taken on here.
     async fn get_current_subscription(
         &self,
         tenant: TenantId,
@@ -45,7 +44,7 @@ pub trait Reads: Send + Sync {
 
     /// Every payment method for the tenant, soft-deleted rows excluded (the
     /// repository already does the exclusion). Display metadata only -- the
-    /// mirror table never held card data (§7.4).
+    /// mirror table never held card data.
     async fn list_payment_methods(
         &self,
         tenant: TenantId,
@@ -73,7 +72,7 @@ pub trait Reads: Send + Sync {
 /// Generic over each port, matching [`WebhookProcessor`]: `demo` monomorphises
 /// the concrete `persistence` types, and nothing is boxed on the read path.
 /// All four repositories were taken from the start, so `AppState` and every
-/// host's wiring stayed fixed as the trait filled in over Tasks 2-8.
+/// host's wiring stayed fixed as the trait filled in.
 ///
 /// [`WebhookProcessor`]: crate::WebhookProcessor
 pub struct ReadService<L, S, I, M> {

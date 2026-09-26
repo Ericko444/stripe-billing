@@ -17,13 +17,13 @@ pub enum DomainError {
 
     /// A persistence-layer operation failed. The message is opaque by
     /// design: `domain` must not depend on `sqlx` or any adapter's error
-    /// type (S1), so adapters map their errors to this variant's `String`.
+    /// type, so adapters map their errors to this variant's `String`.
     #[error("repository error: {0}")]
     Repository(String),
 
     /// A `BillingProvider` operation failed. The message is opaque for the
     /// same reason as `Repository`: `domain` must not depend on the Stripe
-    /// client's error type (S1), so `stripe-adapter` maps its errors to this
+    /// client's error type, so `stripe-adapter` maps its errors to this
     /// variant's `String`.
     #[error("provider error: {0}")]
     Provider(String),
@@ -50,10 +50,8 @@ pub enum DomainError {
     /// caller "forged or stale signature, do not retry" for a failure that
     /// is really ours (a field this code expects moved, or Stripe's account
     /// API version does not match this handler's assumption). It surfaces
-    /// as a 500 at the route, which is the correct signal to retry --
-    /// `init-spec.md` §5.5's error-model layering, extended to the one
-    /// payload-shape failure mode webhook processing introduces. Carries a
-    /// message for server-side logs, same reasoning as `Repository` and
+    /// as a 500 at the route, which is the correct signal to retry. Carries
+    /// a message for server-side logs, same reasoning as `Repository` and
     /// `Provider`.
     #[error("malformed webhook event: {0}")]
     MalformedEvent(String),
@@ -62,7 +60,7 @@ pub enum DomainError {
     /// often. Distinct from `MalformedEvent`, which is named for webhook
     /// payloads and maps to 500: this is the *caller's* mistake, not ours,
     /// and surfaces as 400. Carries a message for server-side logs; the
-    /// response body stays coarse (`init-spec.md` §5.5).
+    /// response body stays coarse, since a parse error can echo internals.
     #[error("malformed request: {0}")]
     MalformedRequest(String),
 }

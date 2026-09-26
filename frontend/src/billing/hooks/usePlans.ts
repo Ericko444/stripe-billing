@@ -4,11 +4,10 @@ import { changePlan, getPlans } from "../api/endpoints";
 import { billingKeys } from "../api/keys";
 
 export function usePlans() {
-  const { tenantId, token } = useAuth();
+  const { tenantId } = useAuth();
   return useQuery({
     queryKey: billingKeys.plans(tenantId),
     queryFn: getPlans,
-    enabled: token !== null,
   });
 }
 

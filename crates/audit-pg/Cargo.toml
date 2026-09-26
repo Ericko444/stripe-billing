@@ -1,0 +1,27 @@
+[package]
+name = "audit-pg"
+description = "Postgres adapter for the audit crate: its own schema, an append-only table, and an insert usable inside a caller's transaction."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+audit.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+# `persistence` is a dev-only edge, the same reasoning as `stripe-adapter`'s
+# own dev-dependency on it: proving the billing module's migrator and this
+# crate's migrator coexist against one real Postgres needs the real other
+# migrator. It never appears in the production dependency graph.
+[dev-dependencies]
+persistence.workspace = true
+testcontainers.workspace = true
+time.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

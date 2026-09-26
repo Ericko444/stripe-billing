@@ -59,7 +59,7 @@ pub async fn set_default_payment_method<R: OutboundRequestRepository>(
 /// `BillingProvider::detach_payment_method`'s real implementation.
 ///
 /// `POST /v1/payment_methods/{id}/detach`. Permanent at Stripe; `service`
-/// soft-deletes the mirror row *after* this returns `Ok` (§7.4).
+/// soft-deletes the mirror row *after* this returns `Ok`.
 ///
 /// **The fingerprint is tenant + payment method id only -- no timestamp.**
 /// A retry inside the ~23h key window replays the original detach instead of

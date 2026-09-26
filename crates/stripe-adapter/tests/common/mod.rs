@@ -17,16 +17,16 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use wiremock::MockServer;
 
-/// Everything a Phase E/F test needs to assemble a
+/// Everything an adapter integration test needs to assemble a
 /// `StripeBillingProvider<PgOutboundRequestRepository>` against a real
 /// Postgres ledger and a faked Stripe HTTP API.
 ///
-/// Deliberately *not* a pre-assembled `StripeBillingProvider`: that type is
-/// this crate's own Task 15 deliverable, and this harness (Task 14) has no
-/// dependency on it. Handing back the ingredients -- a ready repository, the
-/// pool for raw-SQL test setup, the mock server, and a `StripeConfig`
-/// already pointed at it -- lets each test assemble exactly the provider it
-/// needs in one line, without this file needing to know that type's shape.
+/// Deliberately *not* a pre-assembled `StripeBillingProvider`: this harness
+/// has no dependency on that type. Handing back the ingredients -- a ready
+/// repository, the pool for raw-SQL test setup, the mock server, and a
+/// `StripeConfig` already pointed at it -- lets each test assemble exactly
+/// the provider it needs in one line, without this file needing to know
+/// that type's shape.
 ///
 /// Keep `TestEnv` alive for the duration of the test: the Postgres
 /// container is torn down (via `Drop`) as soon as it goes out of scope, and

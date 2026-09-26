@@ -1,12 +1,14 @@
+use audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
 use domain::{
     BillingEvent, Currency, CustomerRepository, DomainError, EventApplication, InvoiceId,
     InvoiceRepository, InvoiceStatus, Money, SubscriptionRepository, TenantId, VerifiedEvent,
 };
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
 
-/// Which invoice event is being applied. Each of the two §10.4 invoice
+/// Which invoice event is being applied. Each of the two handled invoice
 /// types pins both the status mirrored onto the row and the `BillingEvent`
 /// handed to the sink, so there is no partial/unreachable state to handle.
 #[derive(Debug, Clone, Copy)]
@@ -24,12 +26,19 @@ impl Kind {
             Kind::PaymentFailed => InvoiceStatus::Failed,
         }
     }
+
+    fn action(self) -> Action {
+        match self {
+            Kind::Paid => Action::PaymentSucceeded,
+            Kind::PaymentFailed => Action::PaymentFailed,
+        }
+    }
 }
 
 /// Applies an `invoice.paid` / `invoice.payment_failed` event: resolves the
-/// tenant from the invoice's Stripe customer id (§10.3), best-effort links
-/// the local subscription mirror, and mirrors the invoice through
-/// [`InvoiceRepository::apply_event`]'s upsert + ordering guard (§10.2).
+/// tenant from the invoice's Stripe customer id, best-effort links the
+/// local subscription mirror, and mirrors the invoice through
+/// [`InvoiceRepository::apply_event`]'s upsert + ordering guard.
 ///
 /// Unlike the subscription handler this may *create* the local invoice row:
 /// there is no `invoice.created` webhook, so `paid` / `payment_failed` are
@@ -41,6 +50,7 @@ pub async fn apply<C, S, I>(
     invoices: &I,
     event: &VerifiedEvent,
     kind: Kind,
+    correlation_id: Uuid,
 ) -> Result<EventOutcome, DomainError>
 where
     C: CustomerRepository,
@@ -68,6 +78,20 @@ where
         None => None,
     };
 
+    // `Target::Customer`, not an invoice-specific target: `apply_event` is
+    // an upsert, so the local `InvoiceId` does not exist yet when this call
+    // is made (it may be created inside the same statement) -- unlike the
+    // subscription handler, which always resolves or creates its local id
+    // *before* calling `apply_event`. The customer id is known and stable
+    // either way.
+    let entry = AuditEntry::new(
+        audit::TenantId::new(tenant_id.as_uuid()),
+        Actor::System,
+        kind.action(),
+        Target::Customer(TargetId::new(customer.id.as_uuid())),
+        event.created,
+        CorrelationId::new(correlation_id),
+    );
     let application = invoices
         .apply_event(
             tenant_id,
@@ -77,6 +101,7 @@ where
             fields.amount,
             kind.status(),
             event.created,
+            entry,
         )
         .await?;
 
@@ -241,6 +266,7 @@ mod tests {
                 &self.invoices,
                 event,
                 kind,
+                Uuid::new_v4(),
             )
             .await
         }
@@ -293,7 +319,7 @@ mod tests {
     #[tokio::test]
     async fn invoice_paid_mirrors_and_emits_payment_succeeded() -> Result<(), Box<dyn Error>> {
         let ports = Ports::new();
-        let (tenant_id, _) = ports.seed_customer("cus_1");
+        let (tenant_id, customer_id) = ports.seed_customer("cus_1");
         let event = verified(
             invoice_payload("invoice.paid", "cus_1", "in_1", None, 4200, "usd"),
             OffsetDateTime::now_utc(),
@@ -316,6 +342,17 @@ mod tests {
         );
         assert_eq!(mirrored.status, InvoiceStatus::Paid);
         assert_eq!(mirrored.amount, Money::new(4200, Currency::Usd));
+
+        let entries = ports.invoices.apply_event_entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tenant_id().as_uuid(), tenant_id.as_uuid());
+        assert_eq!(entry.actor(), audit::Actor::System);
+        assert_eq!(entry.action(), audit::Action::PaymentSucceeded);
+        assert_eq!(
+            entry.target(),
+            audit::Target::Customer(audit::TargetId::new(customer_id.as_uuid()))
+        );
         Ok(())
     }
 

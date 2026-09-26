@@ -160,7 +160,7 @@ fn check_replay_window(
 mod tests {
     use super::*;
     // One signing implementation, shared with the `tests/` integration
-    // tests (Task 10) rather than duplicated here.
+    // tests rather than duplicated here.
     use crate::test_support::sign;
 
     /// A concrete `OffsetDateTime` `unix` seconds after the epoch, without a

@@ -125,7 +125,7 @@ async fn stripe_price_id_can_be_reused_after_soft_delete() -> Result<(), Box<dyn
     Ok(())
 }
 
-// --- Task 21: find_by_stripe_price_id ---
+// --- find_by_stripe_price_id ---
 
 #[tokio::test]
 async fn find_by_stripe_price_id_scoped_to_tenant_and_none_for_unmapped_price()

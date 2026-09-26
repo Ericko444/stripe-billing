@@ -1,24 +1,24 @@
-//! Router-level tests for the Phase 4c write routes, driven through
+//! Router-level tests for the write routes, driven through
 //! `billing_router<T>` with a stub tenant extractor and a `StubWrites` fake.
 //!
-//! Task 7 covers `POST /payment-methods/setup-intent`: it answers 200 with a
+//! `POST /payment-methods/setup-intent`: it answers 200 with a
 //! `client_secret`, it resolves the tenant's customer first (a tenant with
 //! none still succeeds), that secret never reaches a log line, and two
 //! tenants get intents for their own customers.
 //!
-//! Tasks 8-9 cover `POST /subscriptions/{id}/change-plan` and
+//! `POST /subscriptions/{id}/change-plan` and
 //! `POST /subscriptions/{id}/cancel`: malformed path/body ids 404 the same
 //! way an unknown or cross-tenant subscription does, and the latter never
 //! reaches `Writes` at all; `cancel`'s `at_period_end` defaults to `true`
 //! when absent; cancelling an already-canceled subscription is a 200 with no
 //! second call.
 //!
-//! Task 13 covers `POST /payment-methods/{id}/default` (200, updated card)
+//! `POST /payment-methods/{id}/default` (200, updated card)
 //! and `DELETE /payment-methods/{id}` (204): a malformed or cross-tenant id
 //! is a 404 that never reaches `Writes`, and a second delete of the same id
 //! is a 404.
 //!
-//! Task 16 covers `POST /subscriptions/checkout-session`: 200 with a hosted
+//! `POST /subscriptions/checkout-session`: 200 with a hosted
 //! `url`, an unknown or cross-tenant `plan_id` is a 404 that never reaches
 //! `Writes`, the url never reaches a log line, and two tenants get sessions
 //! for their own plans.
@@ -226,7 +226,7 @@ async fn two_tenants_get_intents_for_their_own_customers() -> Result<(), Box<dyn
     Ok(())
 }
 
-// --- Task 8: POST /subscriptions/{id}/change-plan ---------------------
+// --- POST /subscriptions/{id}/change-plan ---------------------
 
 #[tokio::test]
 async fn change_plan_returns_the_updated_subscription() -> Result<(), Box<dyn Error>> {
@@ -324,7 +324,7 @@ async fn change_plan_for_another_tenants_subscription_is_404_and_never_reached()
     Ok(())
 }
 
-// --- Task 9: POST /subscriptions/{id}/cancel ---------------------------
+// --- POST /subscriptions/{id}/cancel ---------------------------
 
 #[tokio::test]
 async fn cancel_at_period_end_true_sets_the_flag_without_canceling() -> Result<(), Box<dyn Error>> {
@@ -466,7 +466,7 @@ async fn cancelling_an_already_canceled_subscription_is_200_with_no_second_call(
     Ok(())
 }
 
-// --- Task 13: POST /payment-methods/{id}/default -----------------------
+// --- POST /payment-methods/{id}/default -----------------------
 
 #[tokio::test]
 async fn set_default_returns_the_updated_card() -> Result<(), Box<dyn Error>> {
@@ -533,7 +533,7 @@ async fn set_default_for_another_tenants_card_is_404_and_never_reached()
     Ok(())
 }
 
-// --- Task 13: DELETE /payment-methods/{id} ---------------------------
+// --- DELETE /payment-methods/{id} ---------------------------
 
 #[tokio::test]
 async fn delete_returns_204_and_records_the_removal() -> Result<(), Box<dyn Error>> {
@@ -572,6 +572,81 @@ async fn delete_with_a_malformed_id_is_404() -> Result<(), Box<dyn Error>> {
     .await?;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+/// An unknown id (well-formed, but no such row) fails *inside*
+/// `Writes::remove_payment_method`, unlike `delete_with_a_malformed_id_is_404`
+/// above -- so this is the path that actually attaches the request's own
+/// `CorrelationId` (`correlation::layer` mints it; `remove_payment_method`
+/// reads it and calls `ApiError::with_correlation_id` on failure), not the
+/// self-minted fallback a pre-validation 404 still uses.
+#[tokio::test]
+async fn a_write_routes_error_body_carries_this_requests_correlation_id()
+-> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+    let unknown_id = Uuid::new_v4().to_string();
+
+    let (status, body) = send(
+        app_state_writes(Arc::new(StubWrites::default())),
+        Request::delete(format!("/payment-methods/{unknown_id}"))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let correlation_id = body["correlation_id"].as_str().unwrap_or_default();
+    assert!(Uuid::parse_str(correlation_id).is_ok());
+    Ok(())
+}
+
+/// The correlation id in the body above is minted by `correlation::layer`,
+/// never accepted from the caller -- the same rule `ApiError`'s own id
+/// generation always followed, just extended one layer out.
+#[tokio::test]
+async fn an_inbound_correlation_id_header_is_ignored() -> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+    let unknown_id = Uuid::new_v4().to_string();
+    let spoofed = "00000000-0000-0000-0000-000000000000";
+
+    let (status, body) = send(
+        app_state_writes(Arc::new(StubWrites::default())),
+        Request::delete(format!("/payment-methods/{unknown_id}"))
+            .header("x-tenant", &tenant)
+            .header("x-correlation-id", spoofed)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_ne!(body["correlation_id"].as_str(), Some(spoofed));
+    Ok(())
+}
+
+/// Two failing write requests get two different ids -- proving this is a
+/// fresh, per-request mint, not a value fixed for the process.
+#[tokio::test]
+async fn two_failing_write_requests_get_different_correlation_ids() -> Result<(), Box<dyn Error>> {
+    let tenant = Uuid::new_v4().to_string();
+    let writes = Arc::new(StubWrites::default());
+
+    let (_, first) = send(
+        app_state_writes(writes.clone()),
+        Request::delete(format!("/payment-methods/{}", Uuid::new_v4()))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+    let (_, second) = send(
+        app_state_writes(writes),
+        Request::delete(format!("/payment-methods/{}", Uuid::new_v4()))
+            .header("x-tenant", &tenant)
+            .body(Body::empty())?,
+    )
+    .await?;
+
+    assert_ne!(first["correlation_id"], second["correlation_id"]);
     Ok(())
 }
 
@@ -627,7 +702,7 @@ async fn deleting_an_already_removed_card_is_404() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-// --- Task 16: POST /subscriptions/checkout-session -------------------
+// --- POST /subscriptions/checkout-session -------------------
 
 #[tokio::test]
 async fn checkout_session_returns_a_url() -> Result<(), Box<dyn Error>> {

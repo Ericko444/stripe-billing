@@ -1,8 +1,8 @@
 /** Timestamps cross the wire as RFC 3339 strings. Rendering them raw is
  * accurate and unreadable; this makes them legible on a screen share.
  *
- * The locale is pinned to `en-US` for the same reason D10 pins
- * `formatMoney`'s: the machine default is not the same everywhere, and a
+ * The locale is pinned to `en-US` for the same reason `formatMoney`'s is:
+ * the machine default is not the same everywhere, and a
  * demo's dates should not change shape depending on who runs it. */
 const DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
