@@ -225,10 +225,38 @@ the same page.
 
 ### What it looks like
 
-The demo host is one page: the tenant switcher in the nav, the subscription
-panel, then payment methods and invoices side by side. Both screenshots below
-are the same build against the same database — only the selected tenant
-differs.
+Six screenshots, one build against one database. Identity comes first, because
+no billing route is reachable until a session exists.
+
+**Log in.** An address, a password, and the way into the reset path. An address
+with no account does not fail faster than a wrong password: it is verified
+against a dummy Argon2id hash, so both answers cost the same.
+
+![The demo's log in screen: an email field, a password field and a "Forgot your password?" link](docs/screenshots/identity-login.jpg)
+
+**Asking for a reset.** One field, and the copy already promises only what the
+route can honestly deliver — a link *if* the address has an account.
+
+![The reset request form: a single email field above a "Send the link" button](docs/screenshots/identity-forgot.jpg)
+
+**The answer every address gets.** This is the whole response, for a known
+address and an unknown one alike. It is not careful wording over a branch: the
+handler's state holds a rate limiter and a queue and no repository at all, so
+it cannot look the address up before answering. Lookup, token and mail happen
+afterwards in a worker — decision 3 in §6, and the reason timing cannot
+enumerate accounts here.
+
+![The confirmation after requesting a reset: "Check your mail — if an account exists for that address, a link to reset its password is on its way. It works for 15 minutes."](docs/screenshots/identity-reset-sent.jpg)
+
+**The link's page.** The token travels in the URL fragment, and the page strips
+it on load — this form is what is left once it has. Setting a password here
+starts no session and ends every session the account had, in every tenant.
+
+![The reset form: "Choose a new password", a new-password field, a repeat field, and a "Set the new password" button](docs/screenshots/identity-reset-form.jpg)
+
+Then billing, one page: the tenant switcher in the nav, the subscription panel,
+then payment methods and invoices side by side. The two below are the same
+build against the same database — only the selected tenant differs.
 
 **Tenant A**, after running the demo path above: an `active` subscription on
 Pro, the card that paid for it plus a second one, and the invoice Stripe
