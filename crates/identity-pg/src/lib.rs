@@ -24,7 +24,6 @@ pub use session_repository::PgSessionRepository;
 pub use user_repository::PgUserRepository;
 
 use sqlx::PgPool;
-use sqlx::migrate::Migrator;
 
 /// Applies this crate's `migrations/` directory to `pool`, tracking applied
 /// migrations in `identity._sqlx_migrations`.
@@ -34,11 +33,11 @@ use sqlx::migrate::Migrator;
 /// either table would collide with it on version numbers; schema- and
 /// table-qualifying this one is what lets all three run against one
 /// database, in any order, repeatedly.
+///
+/// The SQL is embedded at compile time by `sqlx::migrate!` rather than read
+/// from disk -- see `persistence::run_migrations` for why.
 pub async fn run_migrations(pool: &PgPool) -> Result<(), IdentityPgError> {
-    let migrations_dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
-    let mut migrator = Migrator::new(migrations_dir)
-        .await
-        .map_err(sqlx::Error::from)?;
+    let mut migrator = sqlx::migrate!("./migrations");
     migrator.create_schema("identity");
     migrator.dangerous_set_table_name("identity._sqlx_migrations");
     migrator.run(pool).await.map_err(sqlx::Error::from)?;

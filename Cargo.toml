@@ -114,6 +114,14 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "json",
     "migrate",
     "derive",
+    # `migrate!` lives in sqlx's `macros` module, which is gated on this
+    # feature -- `migrate` alone enables the `Migrator` runtime but not the
+    # macro that embeds the SQL. The compile-time *query* macros it also
+    # unlocks (`query!`, `query_as!`, `query_scalar!`) stay unused
+    # everywhere in the tree: those need a live database at build time,
+    # `migrate!` needs only the directory and no `DATABASE_URL`, which is
+    # why CI and docs.rs still build offline.
+    "macros",
 ] }
 thiserror = "2.0.20"
 time = { version = "0.3.55", features = ["serde"] }

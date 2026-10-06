@@ -41,7 +41,7 @@ Out of scope / TODO later:
 crates/
   domain/          models, value objects, ports (traits), error taxonomy
   service/         use cases orchestrating ports — no I/O of its own
-  persistence/     sqlx adapters implementing the domain ports
+  persistence/     sqlx adapters + billing's thirteen SQL migrations
   stripe-adapter/  Stripe client, idempotency ledger, webhook verification
   api/             Axum router factory, wire DTOs, error → HTTP mapping
   demo/            binary: composition root, config, seed, the seam between modules
@@ -52,7 +52,6 @@ crates/
   identity-pg/      Postgres adapter for identity: its own schema and migrator
   identity-api/     Axum router factory, session cookie and extractor, CSRF check
 frontend/          React + TypeScript + Vite (the demo host)
-migrations/        billing's thirteen numbered, idempotent SQL migrations
 ```
 
 | crate | depends on | kind |

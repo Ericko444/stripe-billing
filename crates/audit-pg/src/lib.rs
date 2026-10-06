@@ -21,7 +21,6 @@ pub use insert::insert;
 pub use sink::PgAuditSink;
 
 use sqlx::PgPool;
-use sqlx::migrate::Migrator;
 
 /// Applies this crate's `migrations/` directory to `pool`, tracking applied
 /// migrations in `audit._sqlx_migrations` rather than the default
@@ -34,12 +33,13 @@ use sqlx::migrate::Migrator;
 /// database safe, and is the reason `audit` and the billing module can
 /// share a database at all without either coordinating with the other.
 ///
+/// The SQL is embedded at compile time by `sqlx::migrate!` rather than read
+/// from disk, so the migration travels with the compiled crate -- see
+/// `persistence::run_migrations` for the full argument.
+///
 /// Safe to call repeatedly: already-applied migrations are skipped.
 pub async fn run_migrations(pool: &PgPool) -> Result<(), AuditPgError> {
-    let migrations_dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
-    let mut migrator = Migrator::new(migrations_dir)
-        .await
-        .map_err(sqlx::Error::from)?;
+    let mut migrator = sqlx::migrate!("./migrations");
     migrator.create_schema("audit");
     migrator.dangerous_set_table_name("audit._sqlx_migrations");
     migrator.run(pool).await.map_err(sqlx::Error::from)?;
