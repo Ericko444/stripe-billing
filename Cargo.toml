@@ -29,65 +29,71 @@ edition = "2024"
 # file. CI's `msrv` job builds the workspace on exactly this toolchain.
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
-publish = false
+publish = true
 repository = "https://github.com/Ericko444/stripe-billing"
 # Five is the crates.io maximum. Chosen for what someone would search for
 # rather than what the crates are called.
 keywords = ["billing", "subscriptions", "stripe", "multi-tenant", "saas"]
 # Both are real crates.io category slugs; an unrecognised one is rejected on
 # upload. Deliberately the two that apply to every crate in the workspace,
-# including `domain`, which has no HTTP and no SQL of its own.
+# including `tenantry-domain`, which has no HTTP and no SQL of its own.
 categories = ["web-programming", "database"]
 
 [workspace.dependencies]
-tenantry-domain = { path = "crates/domain" }
-tenantry-service = { path = "crates/service" }
-tenantry-persistence = { path = "crates/persistence" }
-tenantry-stripe-adapter = { path = "crates/stripe-adapter" }
-tenantry-api = { path = "crates/api" }
+tenantry-domain = { path = "crates/domain", version = "0.1.0" }
+tenantry-service = { path = "crates/service", version = "0.1.0" }
+tenantry-persistence = { path = "crates/persistence", version = "0.1.0" }
+tenantry-stripe-adapter = { path = "crates/stripe-adapter", version = "0.1.0" }
+tenantry-api = { path = "crates/api", version = "0.1.0" }
 # The audit journal (Phase 7): typed events + the `AuditSink` port, no I/O.
 # Named separately from the six crates above -- it is deliberately not part
 # of this module's own inward dependency chain; a second, not-yet-built
 # module depends on it too, and neither module may depend on the other.
-tenantry-audit = { path = "crates/audit" }
+tenantry-audit = { path = "crates/audit", version = "0.1.0" }
 # Postgres adapter for `audit` -- its own schema, migrator and grant. Kept
 # separate from `audit` itself so the identity module can depend on the
 # model without compiling sqlx to do it.
-tenantry-audit-pg = { path = "crates/audit-pg" }
+tenantry-audit-pg = { path = "crates/audit-pg", version = "0.1.0" }
 # The identity module (Phase 8): what a host plugs in front of billing to
 # produce the `TenantId` billing consumes. Its crates name no billing crate
 # and no billing crate names them -- both directions are checked in CI.
-tenantry-identity-domain = { path = "crates/identity-domain" }
-tenantry-identity-pg = { path = "crates/identity-pg" }
-tenantry-identity-service = { path = "crates/identity-service" }
-tenantry-identity-api = { path = "crates/identity-api" }
+tenantry-identity-domain = { path = "crates/identity-domain", version = "0.1.0" }
+tenantry-identity-pg = { path = "crates/identity-pg", version = "0.1.0" }
+tenantry-identity-service = { path = "crates/identity-service", version = "0.1.0" }
+tenantry-identity-api = { path = "crates/identity-api", version = "0.1.0" }
 
 # Stripe client, modular line. A release candidate over the stale 0.41 stable
-# line, so pinned exactly: a caret range would float across RCs, which may
-# break. `BillingProvider` bounds any breaking change to `stripe-adapter`.
+# line. These were pinned exactly (`=1.0.0-rc.8`) while this was an
+# application: a caret range floats across release candidates, which may break.
+# Published as libraries the exact pin stops being ours to make -- it is
+# inherited by every consumer, who then cannot upgrade without waiting for us,
+# and a yank of that one RC leaves them with no route out. So the pin moves to
+# the consumer's manifest, where it can still be written, and `BillingProvider`
+# keeps bounding any breaking change to `tenantry-stripe-adapter` -- which is
+# what made the pin affordable to give up.
 # `default` resolves to default-tls -> hyper-tls -> native-tls, which drags in
 # OpenSSL, so default features are off and rustls is named explicitly. Selecting
 # rustls without a crypto provider is a compile_error!, so a mistake here is loud.
-async-stripe = { version = "=1.0.0-rc.8", default-features = false, features = [
+async-stripe = { version = "1.0.0-rc.8", default-features = false, features = [
     "rustls-tls-webpki-roots",
     "rustls-ring",
 ] }
 # Like async-stripe-core, the billing line opts in per resource -- no default
 # feature set. "subscription" brings the create/update/cancel request
 # builders; the SubscriptionItem response type is ungated.
-async-stripe-billing = { version = "=1.0.0-rc.8", features = ["subscription"] }
+async-stripe-billing = { version = "1.0.0-rc.8", features = ["subscription"] }
 # Checkout Session (subscription mode) for POST /subscriptions/checkout-session.
 # default-features off, same rustls discipline as every line here.
-async-stripe-checkout = { version = "=1.0.0-rc.8", default-features = false, features = ["checkout_session"] }
-async-stripe-client-core = "=1.0.0-rc.8"
+async-stripe-checkout = { version = "1.0.0-rc.8", default-features = false, features = ["checkout_session"] }
+async-stripe-client-core = "1.0.0-rc.8"
 # async-stripe-core defines no default feature set at all -- each resource
 # (customer, subscription, ...) is opt-in. "customer" for the customer calls,
 # "setup_intent" for SetupIntents (SetupIntent lives in core, NOT in
 # async-stripe-payment -- checked against the registry).
-async-stripe-core = { version = "=1.0.0-rc.8", features = ["customer", "setup_intent"] }
+async-stripe-core = { version = "1.0.0-rc.8", features = ["customer", "setup_intent"] }
 # PaymentMethod detach + attach metadata for the payment-method routes.
 # default-features off, same discipline as the lines above.
-async-stripe-payment = { version = "=1.0.0-rc.8", default-features = false, features = ["payment_method"] }
+async-stripe-payment = { version = "1.0.0-rc.8", default-features = false, features = ["payment_method"] }
 # Argon2id for password hashing in the identity module (RustCrypto, pure Rust).
 # Default features supply `alloc`, PHC strings and OS-random salts.
 argon2 = "0.6.0"

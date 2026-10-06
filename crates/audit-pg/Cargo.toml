@@ -21,7 +21,13 @@ uuid.workspace = true
 # crate's migrator coexist against one real Postgres needs the real other
 # migrator. It never appears in the production dependency graph.
 [dev-dependencies]
-tenantry-persistence.workspace = true
+# Path-only on purpose, and NOT inherited from the workspace, so it carries no
+# version requirement: `cargo publish` strips a dev-dependency that has none.
+# That is what breaks the publish-order cycle -- `tenantry-persistence` depends
+# on this crate normally, while this crate's own tests depend back on it to
+# prove the two migrators share one database. The test needs the cycle; the
+# published manifest must not have it.
+tenantry-persistence = { path = "../persistence" }
 testcontainers.workspace = true
 time.workspace = true
 tokio.workspace = true
