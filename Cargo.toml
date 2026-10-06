@@ -28,8 +28,16 @@ edition = "2024"
 # The floor is set by `sqlx` 0.9, the highest `rust-version` in the lock
 # file. CI's `msrv` job builds the workspace on exactly this toolchain.
 rust-version = "1.94"
-license = "UNLICENSED"
+license = "MIT OR Apache-2.0"
 publish = false
+repository = "https://github.com/Ericko444/stripe-billing"
+# Five is the crates.io maximum. Chosen for what someone would search for
+# rather than what the crates are called.
+keywords = ["billing", "subscriptions", "stripe", "multi-tenant", "saas"]
+# Both are real crates.io category slugs; an unrecognised one is rejected on
+# upload. Deliberately the two that apply to every crate in the workspace,
+# including `domain`, which has no HTTP and no SQL of its own.
+categories = ["web-programming", "database"]
 
 [workspace.dependencies]
 domain = { path = "crates/domain" }

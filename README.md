@@ -630,3 +630,20 @@ stored row to JSON and asserts the verifier appears in no column in any
 encoding, and R8 asserts the handler made **zero** use-case calls — a
 structural claim, not a timing measurement, which would be flaky or
 meaningless as a unit test.
+
+## 7. Licence
+
+Dual-licensed under either of
+
+- Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE), or
+  <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT licence ([`LICENSE-MIT`](LICENSE-MIT), or
+  <https://opensource.org/licenses/MIT>)
+
+at your option. This is the Rust ecosystem's convention rather than a
+preference: a consumer who can take only one of the two is not blocked, and
+the Apache-2.0 half carries an explicit patent grant that MIT does not.
+
+Unless you state otherwise, any contribution you intentionally submit for
+inclusion in this work, as defined in the Apache-2.0 licence, is dual-licensed
+as above, with no additional terms.
