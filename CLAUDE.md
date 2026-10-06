@@ -19,6 +19,18 @@ Current state:
   its owner or by an admin of the one tenant it belongs to. No migration:
   `deactivated_at` already existed and was written by nothing. Identity is
   fourteen routes now.
+- **crates.io publication (Phase 10): prepared, not yet published.** The
+  eleven library crates are renamed `tenantry-*` (five of the old bare names
+  were taken on crates.io); the workspace is `MIT OR Apache-2.0` with both
+  licence texts at the root; every internal dependency carries a `version`
+  beside its `path`; the Stripe requirement is a caret range rather than an
+  exact pin, so a consumer makes that choice; each published crate has its
+  own README. All three migrators embed their SQL with `sqlx::migrate!`
+  instead of reading a path at runtime, and billing's thirteen migrations
+  moved to `crates/persistence/migrations/` because the macro cannot reach
+  outside its own crate. `cargo publish --workspace --dry-run` is green.
+  **Nothing has been uploaded**, and `cargo publish` is a one-way door: a
+  version can never be replaced and a name is held forever.
 
 `demo` serves all twenty-six routes under `/api/v1`. The frontend — React 19
 / TypeScript / Vite, ~2,300 lines under `frontend/src` — drives billing, login,
