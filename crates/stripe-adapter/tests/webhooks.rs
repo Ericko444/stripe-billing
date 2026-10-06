@@ -12,10 +12,10 @@ mod common;
 
 use std::error::Error;
 
-use domain::{DomainError, WebhookReceipt, WebhookVerifier};
 use serde_json::json;
 use sqlx::PgPool;
-use stripe_adapter::{StripeWebhookVerifier, test_support};
+use tenantry_domain::{DomainError, WebhookReceipt, WebhookVerifier};
+use tenantry_stripe_adapter::{StripeWebhookVerifier, test_support};
 use time::{Duration, OffsetDateTime};
 
 use common::WEBHOOK_SIGNING_SECRET;

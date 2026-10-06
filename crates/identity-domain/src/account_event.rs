@@ -1,4 +1,4 @@
-use audit::{Action, Actor, CorrelationId, Target};
+use tenantry_audit::{Action, Actor, CorrelationId, Target};
 use time::OffsetDateTime;
 
 /// Something that happened to an **account** rather than within one tenant

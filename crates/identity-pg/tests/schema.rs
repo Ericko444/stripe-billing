@@ -71,10 +71,10 @@ async fn migrations_are_idempotent_and_coexist_with_the_audit_migrator()
 -> Result<(), Box<dyn Error>> {
     let db = common::fresh().await?;
 
-    identity_pg::run_migrations(&db.pool).await?;
-    audit_pg::run_migrations(&db.pool).await?;
-    identity_pg::run_migrations(&db.pool).await?;
-    audit_pg::run_migrations(&db.pool).await?;
+    tenantry_identity_pg::run_migrations(&db.pool).await?;
+    tenantry_audit_pg::run_migrations(&db.pool).await?;
+    tenantry_identity_pg::run_migrations(&db.pool).await?;
+    tenantry_audit_pg::run_migrations(&db.pool).await?;
 
     let identity_migrations: i64 =
         sqlx::query_scalar("SELECT count(*) FROM identity._sqlx_migrations")

@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use domain::{DomainError, InvoiceId, TenantId};
+use tenantry_domain::{DomainError, InvoiceId, TenantId};
 use uuid::Uuid;
 
 use crate::dto::{InvoiceDto, InvoicePageDto, PageParams};

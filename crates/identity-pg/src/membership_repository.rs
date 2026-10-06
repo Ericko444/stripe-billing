@@ -1,11 +1,11 @@
-use audit::{Action, Actor, AuditEntry, SubjectId, Target, TargetId};
-use identity_domain::{
+use sqlx::postgres::PgRow;
+use sqlx::{PgPool, Row};
+use tenantry_audit::{Action, Actor, AuditEntry, SubjectId, Target, TargetId};
+use tenantry_identity_domain::{
     Email, GrantOutcome, MemberGrant, MemberRepository, MemberSuspension, Membership, MembershipId,
     MembershipRepository, MembershipStatus, RepositoryError, Role, TenantId, TenantMember,
     TokenPurpose, UserId,
 };
-use sqlx::postgres::PgRow;
-use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::error::repository_error;
@@ -127,14 +127,14 @@ impl MemberRepository for PgMembershipRepository {
             .map_err(repository_error)?;
 
         let entry = AuditEntry::new(
-            audit::TenantId::new(suspension.tenant_id.as_uuid()),
+            tenantry_audit::TenantId::new(suspension.tenant_id.as_uuid()),
             Actor::User(SubjectId::new(suspension.suspended_by.as_uuid())),
             Action::MembershipSuspended,
             Target::Membership(TargetId::new(suspension.membership_id.as_uuid())),
             suspension.occurred_at,
             suspension.correlation_id,
         );
-        audit_pg::insert(&mut tx, &entry)
+        tenantry_audit_pg::insert(&mut tx, &entry)
             .await
             .map_err(repository_error)?;
 
@@ -144,7 +144,7 @@ impl MemberRepository for PgMembershipRepository {
 
     async fn grant(&self, grant: &MemberGrant) -> Result<GrantOutcome, RepositoryError> {
         let mut tx = self.pool.begin().await.map_err(repository_error)?;
-        let tenant = audit::TenantId::new(grant.tenant_id.as_uuid());
+        let tenant = tenantry_audit::TenantId::new(grant.tenant_id.as_uuid());
         let actor = Actor::User(SubjectId::new(grant.granted_by.as_uuid()));
         let entry = |action, target| {
             AuditEntry::new(
@@ -205,14 +205,14 @@ impl MemberRepository for PgMembershipRepository {
         };
 
         if created.is_some() {
-            audit_pg::insert(
+            tenantry_audit_pg::insert(
                 &mut tx,
                 &entry(Action::UserCreated, Target::User(TargetId::new(user_id))),
             )
             .await
             .map_err(repository_error)?;
         }
-        audit_pg::insert(
+        tenantry_audit_pg::insert(
             &mut tx,
             &entry(
                 Action::MembershipGranted,

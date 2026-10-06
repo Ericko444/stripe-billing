@@ -6,11 +6,11 @@ mod common;
 use std::collections::BTreeSet;
 use std::error::Error;
 
-use audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
 use common::{membership, tenant, user};
-use identity_domain::{AccountEvent, DisplayName, UserId, UserRepository};
-use identity_pg::PgUserRepository;
 use sqlx::PgPool;
+use tenantry_audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
+use tenantry_identity_domain::{AccountEvent, DisplayName, UserId, UserRepository};
+use tenantry_identity_pg::PgUserRepository;
 use time::OffsetDateTime;
 use uuid::Uuid;
 

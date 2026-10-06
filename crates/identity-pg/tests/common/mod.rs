@@ -44,8 +44,8 @@ pub async fn fresh() -> Result<TestDb, Box<dyn Error>> {
 /// applied -- the two schemas this crate's repositories write to.
 pub async fn setup() -> Result<TestDb, Box<dyn Error>> {
     let db = fresh().await?;
-    identity_pg::run_migrations(&db.pool).await?;
-    audit_pg::run_migrations(&db.pool).await?;
+    tenantry_identity_pg::run_migrations(&db.pool).await?;
+    tenantry_audit_pg::run_migrations(&db.pool).await?;
     Ok(db)
 }
 
@@ -57,14 +57,17 @@ pub fn sqlstate(err: &sqlx::Error) -> Option<String> {
 }
 
 /// Inserts a tenant named `name`.
-pub async fn tenant(pool: &PgPool, name: &str) -> Result<identity_domain::TenantId, sqlx::Error> {
+pub async fn tenant(
+    pool: &PgPool,
+    name: &str,
+) -> Result<tenantry_identity_domain::TenantId, sqlx::Error> {
     let id = uuid::Uuid::new_v4();
     sqlx::query("INSERT INTO identity.tenants (id, name) VALUES ($1, $2)")
         .bind(id)
         .bind(name)
         .execute(pool)
         .await?;
-    Ok(identity_domain::TenantId::new(id))
+    Ok(tenantry_identity_domain::TenantId::new(id))
 }
 
 /// Inserts a user with `email` and an optional stored hash.
@@ -72,7 +75,7 @@ pub async fn user(
     pool: &PgPool,
     email: &str,
     hash: Option<&str>,
-) -> Result<identity_domain::UserId, sqlx::Error> {
+) -> Result<tenantry_identity_domain::UserId, sqlx::Error> {
     let id = uuid::Uuid::new_v4();
     sqlx::query(
         "INSERT INTO identity.users (id, email_normalized, display_name, password_hash) \
@@ -83,14 +86,14 @@ pub async fn user(
     .bind(hash)
     .execute(pool)
     .await?;
-    Ok(identity_domain::UserId::new(id))
+    Ok(tenantry_identity_domain::UserId::new(id))
 }
 
 /// Inserts a membership with the given role and status spellings.
 pub async fn membership(
     pool: &PgPool,
-    user: identity_domain::UserId,
-    tenant: identity_domain::TenantId,
+    user: tenantry_identity_domain::UserId,
+    tenant: tenantry_identity_domain::TenantId,
     role: &str,
     status: &str,
 ) -> Result<(), sqlx::Error> {
@@ -118,12 +121,12 @@ pub fn now_micros() -> time::OffsetDateTime {
 
 /// A session row for `token`, eight hours long from now.
 pub fn session_for(
-    token: &identity_domain::SplitToken,
-    user: identity_domain::UserId,
-    tenant: Option<identity_domain::TenantId>,
-) -> identity_domain::NewSession {
+    token: &tenantry_identity_domain::SplitToken,
+    user: tenantry_identity_domain::UserId,
+    tenant: Option<tenantry_identity_domain::TenantId>,
+) -> tenantry_identity_domain::NewSession {
     let authenticated_at = now_micros();
-    identity_domain::NewSession {
+    tenantry_identity_domain::NewSession {
         selector: token.selector(),
         verifier_hash: token.verifier().hash(),
         user_id: user,

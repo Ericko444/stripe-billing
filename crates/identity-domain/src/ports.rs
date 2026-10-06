@@ -8,7 +8,7 @@
 
 use std::future::Future;
 
-use audit::AuditEntry;
+use tenantry_audit::AuditEntry;
 use thiserror::Error;
 use time::OffsetDateTime;
 
@@ -276,7 +276,7 @@ pub trait Clock: Send + Sync {
 }
 
 /// A persistence operation failed. Opaque for the reason
-/// `domain::DomainError::Repository` is: this crate must not know `sqlx`'s
+/// `tenantry_domain::DomainError::Repository` is: this crate must not know `sqlx`'s
 /// error type, so the adapter renders its own into the message.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error("repository error: {0}")]

@@ -1,10 +1,10 @@
-use domain::{
-    CheckoutSessionParams, CheckoutSessionSnapshot, DomainError, OutboundRequestRepository,
-    TenantId,
-};
 use stripe::{RequestStrategy, StripeRequest};
 use stripe_checkout::CheckoutSessionMode;
 use stripe_checkout::checkout_session::{CreateCheckoutSession, CreateCheckoutSessionLineItems};
+use tenantry_domain::{
+    CheckoutSessionParams, CheckoutSessionSnapshot, DomainError, OutboundRequestRepository,
+    TenantId,
+};
 
 use crate::ledger::{Ledger, idempotency_key};
 use crate::{StripeError, fingerprint};

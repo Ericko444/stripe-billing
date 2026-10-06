@@ -1,8 +1,8 @@
-use audit::CorrelationId;
 use axum::extract::Request;
 use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::Response;
+use tenantry_audit::CorrelationId;
 use uuid::Uuid;
 
 /// Middleware minting one [`CorrelationId`] per request into the request
@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// server-side and **never** read from an inbound header. Routes here are
 /// reachable unauthenticated -- login and password reset exist for callers
 /// with no session -- so trusting a caller-supplied id would let anyone plant
-/// a chosen value in our logs and audit rows. `audit::CorrelationId` is used
+/// a chosen value in our logs and audit rows. `tenantry_audit::CorrelationId` is used
 /// directly: this crate already depends on `audit`, and a third newtype over
 /// the same `Uuid` would only add a conversion.
 pub async fn layer(mut request: Request, next: Next) -> Response {

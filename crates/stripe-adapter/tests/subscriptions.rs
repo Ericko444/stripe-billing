@@ -7,9 +7,9 @@ mod common;
 
 use std::error::Error;
 
-use domain::{CancellationTiming, SubscriptionStatus, TenantId};
 use serde_json::json;
-use stripe_adapter::StripeBillingProvider;
+use tenantry_domain::{CancellationTiming, SubscriptionStatus, TenantId};
+use tenantry_stripe_adapter::StripeBillingProvider;
 use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};

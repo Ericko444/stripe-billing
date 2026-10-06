@@ -1,7 +1,7 @@
 //! Maps the domain `Currency` to and from the `CHAR(3)` column used by
 //! every money-bearing table. Shared by the `Plan` and `Invoice` adapters.
 
-use domain::{Currency, DomainError};
+use tenantry_domain::{Currency, DomainError};
 
 /// Parses a `CHAR(3)` currency code into the domain `Currency`. An
 /// unrecognized code is a repository-level error, not a panic.

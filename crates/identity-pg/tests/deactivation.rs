@@ -6,14 +6,14 @@ mod common;
 
 use std::error::Error;
 
-use audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
 use common::{membership, session_for, tenant, user};
-use identity_domain::{
+use sqlx::PgPool;
+use tenantry_audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
+use tenantry_identity_domain::{
     AccountEvent, DeactivateOutcome, SessionRepository, SplitToken, TenantId, UserId,
     UserRepository,
 };
-use identity_pg::{PgSessionRepository, PgUserRepository};
-use sqlx::PgPool;
+use tenantry_identity_pg::{PgSessionRepository, PgUserRepository};
 use uuid::Uuid;
 
 fn event(action: Action, user: UserId, correlation_id: CorrelationId) -> AccountEvent {

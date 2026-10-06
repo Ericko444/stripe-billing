@@ -13,20 +13,20 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use audit::CorrelationId;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
-use identity_api::{IdentityState, identity_router};
-use identity_domain::{
+use serde_json::Value;
+use tenantry_audit::CorrelationId;
+use tenantry_identity_api::{IdentityState, identity_router};
+use tenantry_identity_domain::{
     Email, MembershipId, Password, Role, SessionId, SessionTenant, TenantId, UserId,
 };
-use identity_service::{
+use tenantry_identity_service::{
     ActiveSession, Authentication, CompleteResetError, Deactivations, InMemoryRateLimiter,
     LoginError, LoginOutcome, Me, MembersError, PasswordChangeError, PasswordResets, ProfileError,
     SelectTenantError, SessionError, SystemClock, TenantSelection, reset_queue,
 };
-use serde_json::Value;
 use time::{Duration, OffsetDateTime};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -133,11 +133,11 @@ impl PasswordResets for NoResets {
 struct NoMembers;
 
 #[async_trait]
-impl identity_service::Members for NoMembers {
+impl tenantry_identity_service::Members for NoMembers {
     async fn list_members(
         &self,
         _: &ActiveSession,
-    ) -> Result<Vec<identity_domain::TenantMember>, MembersError> {
+    ) -> Result<Vec<tenantry_identity_domain::TenantMember>, MembersError> {
         Err(MembersError::Unavailable("not used here".into()))
     }
 
@@ -147,7 +147,7 @@ impl identity_service::Members for NoMembers {
         _: &Email,
         _: Role,
         _: CorrelationId,
-    ) -> Result<identity_domain::TenantMember, MembersError> {
+    ) -> Result<tenantry_identity_domain::TenantMember, MembersError> {
         Err(MembersError::Unavailable("not used here".into()))
     }
 

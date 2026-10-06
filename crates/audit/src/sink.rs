@@ -32,7 +32,7 @@ pub trait AuditSink {
 
 /// Errors from writing an audit entry.
 ///
-/// Opaque by design, the same reasoning as `domain::DomainError::Repository`
+/// Opaque by design, the same reasoning as `tenantry_domain::DomainError::Repository`
 /// in the module this crate is written alongside: this crate must not
 /// depend on `sqlx` or any adapter's error type, so an adapter maps its own
 /// error into this variant's message.

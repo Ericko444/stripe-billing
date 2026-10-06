@@ -1,5 +1,5 @@
-use audit::{Action, Actor, AuditEntry, CorrelationId, SubjectId, Target, TargetId};
-use identity_domain::{
+use tenantry_audit::{Action, Actor, AuditEntry, CorrelationId, SubjectId, Target, TargetId};
+use tenantry_identity_domain::{
     Clock, Email, Membership, MembershipRepository, NewPassword, NewSession, Password,
     PasswordHasher, SessionRepository, SplitToken, UserId, UserRepository, Verification,
 };
@@ -188,7 +188,7 @@ pub(crate) fn session_started(
 ) -> AuditEntry {
     let user = membership.user_id.as_uuid();
     AuditEntry::new(
-        audit::TenantId::new(membership.tenant_id.as_uuid()),
+        tenantry_audit::TenantId::new(membership.tenant_id.as_uuid()),
         Actor::User(SubjectId::new(user)),
         Action::SessionStarted,
         Target::User(TargetId::new(user)),
@@ -205,7 +205,7 @@ fn unavailable(err: impl std::fmt::Display) -> LoginError {
 mod tests {
     use std::error::Error;
 
-    use identity_domain::{MembershipId, PasswordHash, Role, TenantId, User};
+    use tenantry_identity_domain::{MembershipId, PasswordHash, Role, TenantId, User};
     use uuid::Uuid;
 
     use super::*;

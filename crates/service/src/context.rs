@@ -1,4 +1,4 @@
-use domain::TenantId;
+use tenantry_domain::TenantId;
 use uuid::Uuid;
 
 /// Identifies the request behind a [`Writes`](crate::Writes) call, replacing
@@ -8,11 +8,11 @@ use uuid::Uuid;
 /// model at all -- a host's tenant extractor produces only a `TenantId`,
 /// never a user id (see the project's own documented boundary: no
 /// authentication, no user management here) -- so an audit entry for a
-/// billing write is always `audit::Actor::System`, unconditionally. A
+/// billing write is always `tenantry_audit::Actor::System`, unconditionally. A
 /// per-request field would carry no information; whatever constructs the
 /// `AuditEntry` sets that constant itself rather than reading it from here.
 ///
-/// `correlation_id` is a raw `Uuid`, not `audit::CorrelationId`: this crate
+/// `correlation_id` is a raw `Uuid`, not `tenantry_audit::CorrelationId`: this crate
 /// does not depend on `audit` (nothing here constructs an `AuditEntry`
 /// yet), and `Uuid` is the neutral type both `api` and `audit` already
 /// wrap in their own newtypes. Each converts at its own boundary -- the

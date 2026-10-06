@@ -6,12 +6,12 @@ mod common;
 
 use std::error::Error;
 
-use api::billing_router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use common::{HeaderTenant, StubReads, app_state};
-use domain::{Currency, CustomerId, Invoice, InvoiceId, InvoiceStatus, Money, TenantId};
 use serde_json::Value;
+use tenantry_api::billing_router;
+use tenantry_domain::{Currency, CustomerId, Invoice, InvoiceId, InvoiceStatus, Money, TenantId};
 use time::{Duration, OffsetDateTime};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -32,7 +32,7 @@ fn invoice(tenant: TenantId, seconds_from_epoch: i64) -> Invoice {
 }
 
 async fn get_invoices(
-    state: api::AppState,
+    state: tenantry_api::AppState,
     tenant: &str,
     query: &str,
 ) -> Result<(StatusCode, Option<String>, Value), Box<dyn Error>> {
@@ -64,7 +64,7 @@ fn item_count(body: &Value) -> usize {
 }
 
 async fn get_invoice_by_id(
-    state: api::AppState,
+    state: tenantry_api::AppState,
     tenant: &str,
     id: &str,
 ) -> Result<(StatusCode, Option<String>, Value), Box<dyn Error>> {

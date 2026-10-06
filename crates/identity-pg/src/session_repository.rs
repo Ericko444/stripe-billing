@@ -1,10 +1,10 @@
-use audit::AuditEntry;
-use identity_domain::{
+use sqlx::PgPool;
+use sqlx::Row;
+use tenantry_audit::AuditEntry;
+use tenantry_identity_domain::{
     NewSession, RepositoryError, Role, Selector, SessionId, SessionRepository, SessionTenant,
     StoredSession, TenantId, UserId, VERIFIER_BYTES, VerifierHash,
 };
-use sqlx::PgPool;
-use sqlx::Row;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -39,7 +39,7 @@ impl SessionRepository for PgSessionRepository {
         insert_session(&mut tx, id, session).await?;
 
         if let Some(entry) = audit {
-            audit_pg::insert(&mut tx, entry)
+            tenantry_audit_pg::insert(&mut tx, entry)
                 .await
                 .map_err(repository_error)?;
         }
@@ -71,7 +71,7 @@ impl SessionRepository for PgSessionRepository {
 
         insert_session(&mut tx, id, new).await?;
         if let Some(entry) = audit {
-            audit_pg::insert(&mut tx, entry)
+            tenantry_audit_pg::insert(&mut tx, entry)
                 .await
                 .map_err(repository_error)?;
         }

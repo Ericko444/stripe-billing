@@ -11,11 +11,11 @@
 //! exactly), never a pre-formatted `"€19.99"` (which forces every consumer
 //! to parse a locale back out). Timestamps are RFC 3339 UTC strings.
 
-use domain::{
+use serde::{Deserialize, Serialize};
+use tenantry_domain::{
     CheckoutSessionSnapshot, Currency, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
     Money, PaymentMethod, Plan, SetupIntentSnapshot, Subscription,
 };
-use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcOffset};
 use uuid::Uuid;
 
@@ -191,7 +191,7 @@ impl From<PaymentMethod> for PaymentMethodDto {
 ///
 /// The `client_secret` is browser-destined and bearer-ish -- whoever holds
 /// it can attach a payment method to that customer. It belongs in this body
-/// and in no log line (see `domain::SetupIntentSnapshot`'s own docs).
+/// and in no log line (see `tenantry_domain::SetupIntentSnapshot`'s own docs).
 /// The DTO carries only it on purpose: there is nothing else about the
 /// SetupIntent a caller of this route needs.
 #[derive(Debug, Serialize)]

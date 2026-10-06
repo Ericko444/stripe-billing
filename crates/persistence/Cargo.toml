@@ -1,5 +1,5 @@
 [package]
-name = "persistence"
+name = "tenantry-persistence"
 description = "sqlx adapters implementing the domain repository ports, plus the migration runner."
 version.workspace = true
 edition.workspace = true
@@ -11,13 +11,13 @@ categories.workspace = true
 publish.workspace = true
 
 [dependencies]
-domain.workspace = true
+tenantry-domain.workspace = true
 async-trait.workspace = true
 # Both audit-side crates: `audit` to name `AuditEntry` in the `PaymentMethodRepository::remove`
 # signature, `audit-pg` to call its `insert` inside the same transaction as
 # the business write (D1(h) -- the transaction stays inside this crate).
-audit.workspace = true
-audit-pg.workspace = true
+tenantry-audit.workspace = true
+tenantry-audit-pg.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true

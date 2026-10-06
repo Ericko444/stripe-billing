@@ -1,5 +1,5 @@
-use audit::{Action, Actor, AuditEntry, Target};
 use sqlx::PgConnection;
+use tenantry_audit::{Action, Actor, AuditEntry, Target};
 use uuid::Uuid;
 
 use crate::AuditPgError;
@@ -49,7 +49,7 @@ fn actor_columns(actor: &Actor) -> (&'static str, Option<Uuid>) {
 }
 
 /// A `#[non_exhaustive]`-free match: the compiler requires a new arm here
-/// the moment `audit::Action` gains a variant, which is exactly the point
+/// the moment `tenantry_audit::Action` gains a variant, which is exactly the point
 /// where this function has to decide that variant's column value.
 fn action_kind(action: &Action) -> &'static str {
     match action {

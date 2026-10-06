@@ -1,4 +1,4 @@
-use domain::DomainError;
+use tenantry_domain::DomainError;
 use thiserror::Error;
 
 /// Why a webhook delivery failed verification, at the granularity this crate

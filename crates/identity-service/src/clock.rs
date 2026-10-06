@@ -1,4 +1,4 @@
-use identity_domain::Clock;
+use tenantry_identity_domain::Clock;
 use time::OffsetDateTime;
 
 /// The real clock: `OffsetDateTime::now_utc()`.

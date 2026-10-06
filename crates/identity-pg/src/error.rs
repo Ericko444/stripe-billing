@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use identity_domain::RepositoryError;
+use tenantry_identity_domain::RepositoryError;
 use thiserror::Error;
 
 /// Errors from the Postgres identity adapter's own setup, wrapping

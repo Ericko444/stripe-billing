@@ -1,8 +1,8 @@
-use audit::CorrelationId;
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use tenantry_audit::CorrelationId;
 
 /// An identity route's failure, carrying the request's correlation id so the
 /// id in the response body is the id in the server log line -- and, on a

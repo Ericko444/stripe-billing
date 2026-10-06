@@ -1,11 +1,11 @@
-use audit::CorrelationId;
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, PathRejection};
 use axum::extract::{Extension, Path};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use identity_domain::{Email, MembershipId, Role};
-use identity_service::MembersError;
+use tenantry_audit::CorrelationId;
+use tenantry_identity_domain::{Email, MembershipId, Role};
+use tenantry_identity_service::MembersError;
 use uuid::Uuid;
 
 use crate::cookie;

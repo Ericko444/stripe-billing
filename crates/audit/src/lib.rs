@@ -17,7 +17,7 @@
 //! string:
 //!
 //! ```compile_fail
-//! use audit::Actor;
+//! use tenantry_audit::Actor;
 //!
 //! // Does not compile: `Actor::User` has no variant that accepts a raw
 //! // string. There is no way to attach one to who acted.

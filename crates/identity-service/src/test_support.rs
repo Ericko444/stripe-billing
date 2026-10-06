@@ -7,8 +7,8 @@
 use std::future::{Future, ready};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use audit::AuditEntry;
-use identity_domain::{
+use tenantry_audit::AuditEntry;
+use tenantry_identity_domain::{
     AccountEvent, Clock, DeactivateOutcome, DisplayName, Email, GrantOutcome, MailError,
     MailPurpose, Mailer, MemberGrant, MemberRepository, MemberSuspension, Membership, MembershipId,
     MembershipRepository, MembershipStatus, NewPassword, NewPasswordToken, NewSession,
@@ -555,7 +555,7 @@ impl MemberRepository for FakeMembers {
 
 /// A mail as the fake received it: recipient, purpose, the link exposed,
 /// correlation id.
-pub type SentMail = (Email, MailPurpose, String, audit::CorrelationId);
+pub type SentMail = (Email, MailPurpose, String, tenantry_audit::CorrelationId);
 
 /// Records every mail; `failing()` refuses to send.
 #[derive(Clone, Default)]

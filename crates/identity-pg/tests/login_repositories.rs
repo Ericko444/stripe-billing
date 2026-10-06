@@ -4,12 +4,12 @@ mod common;
 
 use std::error::Error;
 
-use audit::{Action, Actor, AuditEntry, CorrelationId, SubjectId, Target, TargetId};
-use identity_domain::{
+use tenantry_audit::{Action, Actor, AuditEntry, CorrelationId, SubjectId, Target, TargetId};
+use tenantry_identity_domain::{
     Email, MembershipRepository, PasswordHash, Role, SessionRepository, SplitToken, TenantId,
     UserId, UserRepository,
 };
-use identity_pg::{PgMembershipRepository, PgSessionRepository, PgUserRepository};
+use tenantry_identity_pg::{PgMembershipRepository, PgSessionRepository, PgUserRepository};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -17,7 +17,7 @@ use common::{membership, session_for, tenant, user};
 
 fn session_started(user: UserId, tenant: TenantId, correlation: Uuid) -> AuditEntry {
     AuditEntry::new(
-        audit::TenantId::new(tenant.as_uuid()),
+        tenantry_audit::TenantId::new(tenant.as_uuid()),
         Actor::User(SubjectId::new(user.as_uuid())),
         Action::SessionStarted,
         Target::User(TargetId::new(user.as_uuid())),

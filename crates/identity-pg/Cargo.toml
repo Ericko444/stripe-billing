@@ -1,5 +1,5 @@
 [package]
-name = "identity-pg"
+name = "tenantry-identity-pg"
 description = "Postgres adapter for the identity module: its own schema and migrator, and the repositories implementing identity-domain's ports."
 version.workspace = true
 edition.workspace = true
@@ -11,11 +11,11 @@ categories.workspace = true
 publish.workspace = true
 
 [dependencies]
-audit.workspace = true
+tenantry-audit.workspace = true
 # Composes `audit_pg::insert` into this crate's own transactions, so an
 # identity write and its audit row commit together.
-audit-pg.workspace = true
-identity-domain.workspace = true
+tenantry-audit-pg.workspace = true
+tenantry-identity-domain.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 time.workspace = true

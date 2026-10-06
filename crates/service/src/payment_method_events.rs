@@ -1,9 +1,9 @@
-use audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
-use domain::{
+use serde_json::Value;
+use tenantry_audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
+use tenantry_domain::{
     BillingEvent, CustomerRepository, DomainError, EventApplication, PaymentMethodRepository,
     VerifiedEvent,
 };
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
@@ -42,7 +42,7 @@ where
     // exist yet when this call is made -- unlike `apply_detached` below,
     // which always looks the row up first.
     let entry = AuditEntry::new(
-        audit::TenantId::new(customer.tenant_id.as_uuid()),
+        tenantry_audit::TenantId::new(customer.tenant_id.as_uuid()),
         Actor::System,
         Action::PaymentMethodAttached,
         Target::Customer(TargetId::new(customer.id.as_uuid())),
@@ -126,7 +126,7 @@ where
     // the local `PaymentMethodId` is known here -- the target is the
     // payment method itself, not its customer.
     let entry = AuditEntry::new(
-        audit::TenantId::new(customer.tenant_id.as_uuid()),
+        tenantry_audit::TenantId::new(customer.tenant_id.as_uuid()),
         Actor::System,
         Action::PaymentMethodDetached,
         Target::PaymentMethod(TargetId::new(mirrored.id.as_uuid())),
@@ -214,8 +214,10 @@ fn read_payment_method(payload: &Value) -> Result<PaymentMethodFields, DomainErr
 mod tests {
     use std::error::Error;
 
-    use domain::{Customer, CustomerId, PaymentMethod, PaymentMethodId, TenantId, WebhookEventId};
     use serde_json::json;
+    use tenantry_domain::{
+        Customer, CustomerId, PaymentMethod, PaymentMethodId, TenantId, WebhookEventId,
+    };
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
@@ -335,11 +337,14 @@ mod tests {
 
         let entries = ports.payment_methods.apply_event_entries();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].actor(), audit::Actor::System);
-        assert_eq!(entries[0].action(), audit::Action::PaymentMethodAttached);
+        assert_eq!(entries[0].actor(), tenantry_audit::Actor::System);
+        assert_eq!(
+            entries[0].action(),
+            tenantry_audit::Action::PaymentMethodAttached
+        );
         assert_eq!(
             entries[0].target(),
-            audit::Target::Customer(audit::TargetId::new(customer_id.as_uuid()))
+            tenantry_audit::Target::Customer(tenantry_audit::TargetId::new(customer_id.as_uuid()))
         );
         Ok(())
     }
@@ -405,8 +410,11 @@ mod tests {
 
         let entries = ports.payment_methods.detach_event_entries();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].actor(), audit::Actor::System);
-        assert_eq!(entries[0].action(), audit::Action::PaymentMethodDetached);
+        assert_eq!(entries[0].actor(), tenantry_audit::Actor::System);
+        assert_eq!(
+            entries[0].action(),
+            tenantry_audit::Action::PaymentMethodDetached
+        );
         Ok(())
     }
 

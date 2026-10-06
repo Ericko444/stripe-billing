@@ -9,16 +9,16 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use time::OffsetDateTime;
 
-use api::{ApiError, AppState, CheckoutUrls};
 use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use domain::{
+use tenantry_api::{ApiError, AppState, CheckoutUrls};
+use tenantry_domain::{
     CheckoutSessionSnapshot, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
     PaymentMethod, PaymentMethodId, Plan, PlanId, SetupIntentSnapshot, Subscription,
     SubscriptionId, SubscriptionStatus, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
-use service::{EventOutcome, Reads, RequestContext, WebhookHandler, Writes};
+use tenantry_service::{EventOutcome, Reads, RequestContext, WebhookHandler, Writes};
 use tracing_subscriber::fmt::MakeWriter;
 use uuid::Uuid;
 

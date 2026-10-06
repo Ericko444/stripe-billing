@@ -7,8 +7,8 @@ mod common;
 use std::error::Error;
 
 use common::{membership, session_for, tenant, user};
-use identity_domain::{Role, SessionRepository, SessionTenant, SplitToken};
-use identity_pg::PgSessionRepository;
+use tenantry_identity_domain::{Role, SessionRepository, SessionTenant, SplitToken};
+use tenantry_identity_pg::PgSessionRepository;
 
 #[tokio::test]
 async fn a_tenant_scoped_session_resolves_with_its_role() -> Result<(), Box<dyn Error>> {

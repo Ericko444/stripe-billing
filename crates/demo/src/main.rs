@@ -30,31 +30,33 @@ use std::net::{IpAddr, SocketAddr};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use api::{AppState, CheckoutUrls, billing_router, webhook_router};
 use async_trait::async_trait;
 use axum::Router;
 use axum::extract::Extension;
 use axum::middleware;
 use demo::identity_tenant::IdentityTenant;
 use demo::log_mailer::LogMailer;
-use domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
-use identity_api::{AllowedOrigins, IdentityState, identity_router, origin_check};
-use identity_pg::{
+use secrecy::SecretString;
+use sqlx::postgres::PgPoolOptions;
+use tenantry_api::{AppState, CheckoutUrls, billing_router, webhook_router};
+use tenantry_domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
+use tenantry_identity_api::{AllowedOrigins, IdentityState, identity_router, origin_check};
+use tenantry_identity_pg::{
     PgMembershipRepository, PgPasswordTokenRepository, PgSessionRepository, PgUserRepository,
 };
-use identity_service::{
+use tenantry_identity_service::{
     Argon2Hasher, AuthService, DeactivationService, InMemoryRateLimiter, MembersService,
     PasswordResetService, RESET_QUEUE_CAPACITY, SystemClock, reset_queue, run_reset_worker,
 };
-use persistence::{
+use tenantry_persistence::{
     PgCustomerRepository, PgInvoiceRepository, PgOutboundRequestRepository,
     PgPaymentMethodRepository, PgPlanRepository, PgSubscriptionRepository,
     PgWebhookEventRepository, run_migrations,
 };
-use secrecy::SecretString;
-use service::{ReadService, Reads, WebhookHandler, WebhookProcessor, WriteService, Writes};
-use sqlx::postgres::PgPoolOptions;
-use stripe_adapter::{
+use tenantry_service::{
+    ReadService, Reads, WebhookHandler, WebhookProcessor, WriteService, Writes,
+};
+use tenantry_stripe_adapter::{
     DEFAULT_TOLERANCE, StripeBillingProvider, StripeConfig, StripeWebhookVerifier, WebhookConfig,
 };
 use thiserror::Error;
@@ -177,8 +179,8 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     // `audit-pg`'s and `identity-pg`'s own migrators, against the same
     // database -- safe beside the one above because each tracks its state in
     // its own schema's `_sqlx_migrations`, not the default table.
-    audit_pg::run_migrations(&pool).await?;
-    identity_pg::run_migrations(&pool).await?;
+    tenantry_audit_pg::run_migrations(&pool).await?;
+    tenantry_identity_pg::run_migrations(&pool).await?;
 
     // Postgres repositories: customer, subscription and invoice lookups plus
     // the webhook ledger for the processor, and a second ledger handle for
@@ -233,7 +235,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         PgSubscriptionRepository::new(pool.clone()),
         PgPaymentMethodRepository::new(pool.clone()),
         PgPlanRepository::new(pool.clone()),
-        audit_pg::PgAuditSink::new(pool.clone()),
+        tenantry_audit_pg::PgAuditSink::new(pool.clone()),
     ));
 
     // The Checkout Session redirect URLs the write path needs. From config,

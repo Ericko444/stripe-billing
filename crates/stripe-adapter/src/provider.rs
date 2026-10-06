@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use domain::{
+use tenantry_domain::{
     BillingProvider, CancellationTiming, CheckoutSessionParams, CheckoutSessionSnapshot,
     CreateCustomerParams, CustomerSnapshot, DomainError, OutboundRequestRepository,
     SetupIntentSnapshot, SubscriptionSnapshot, TenantId, UpdateCustomerParams,
@@ -11,7 +11,7 @@ use crate::{
     subscriptions,
 };
 
-/// Stripe-backed implementation of `domain::BillingProvider`: fingerprint
+/// Stripe-backed implementation of `tenantry_domain::BillingProvider`: fingerprint
 /// every mutating call, reserve and persist an idempotency key through
 /// `Ledger<R>` *before* the call, then send it with
 /// `RequestStrategy::Idempotent`.

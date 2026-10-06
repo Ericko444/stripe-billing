@@ -8,7 +8,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use axum::middleware;
 use axum::routing::any;
-use identity_api::{AllowedOrigins, origin_check};
+use tenantry_identity_api::{AllowedOrigins, origin_check};
 use tower::ServiceExt;
 
 const APP: &str = "http://localhost:5173";

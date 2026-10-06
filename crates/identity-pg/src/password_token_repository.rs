@@ -1,9 +1,9 @@
-use identity_domain::{
+use sqlx::postgres::PgRow;
+use sqlx::{PgPool, Row};
+use tenantry_identity_domain::{
     AccountEvent, NewPasswordToken, PasswordHash, PasswordTokenRepository, RepositoryError,
     Selector, StoredPasswordToken, TokenPurpose, UserId, VERIFIER_BYTES, VerifierHash,
 };
-use sqlx::postgres::PgRow;
-use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 

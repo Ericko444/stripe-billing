@@ -1,5 +1,5 @@
-use audit::{Action, Actor, CorrelationId, Target, TargetId};
-use identity_domain::{
+use tenantry_audit::{Action, Actor, CorrelationId, Target, TargetId};
+use tenantry_identity_domain::{
     AccountEvent, Clock, Email, MailPurpose, Mailer, NewPassword, NewPasswordToken, OutgoingMail,
     Password, PasswordHasher, PasswordPolicyError, PasswordTokenRepository, SplitToken,
     TokenPurpose, UserId, UserRepository,
@@ -267,8 +267,8 @@ fn anonymous(
 mod tests {
     use std::error::Error;
 
-    use identity_domain::{PasswordHash, User};
     use secrecy::ExposeSecret;
+    use tenantry_identity_domain::{PasswordHash, User};
     use uuid::Uuid;
 
     use super::*;

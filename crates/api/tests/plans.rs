@@ -6,12 +6,12 @@ mod common;
 
 use std::error::Error;
 
-use api::billing_router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::{HeaderTenant, StubReads, app_state};
-use domain::{Currency, Money, Plan, PlanId, TenantId};
 use serde_json::Value;
+use tenantry_api::billing_router;
+use tenantry_domain::{Currency, Money, Plan, PlanId, TenantId};
 use time::OffsetDateTime;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -30,7 +30,7 @@ fn plan(tenant: TenantId, name: &str, amount_minor: i64) -> Plan {
 }
 
 async fn get_plans(
-    state: api::AppState,
+    state: tenantry_api::AppState,
     tenant: &str,
 ) -> Result<(StatusCode, Value), Box<dyn Error>> {
     let response = billing_router::<HeaderTenant>(state)

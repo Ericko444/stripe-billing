@@ -12,8 +12,8 @@ use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use domain::{DomainError, TenantId};
-use stripe_adapter::StripeBillingProvider;
+use tenantry_domain::{DomainError, TenantId};
+use tenantry_stripe_adapter::StripeBillingProvider;
 use uuid::Uuid;
 use wiremock::matchers::{header_exists, method, path};
 use wiremock::{Mock, ResponseTemplate};

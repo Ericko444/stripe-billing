@@ -1,7 +1,7 @@
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use identity_domain::{Role, TenantId, UserId};
-use identity_service::{ActiveSession, SessionError};
+use tenantry_identity_domain::{Role, TenantId, UserId};
+use tenantry_identity_service::{ActiveSession, SessionError};
 
 use crate::cookie::session_token;
 use crate::correlation::correlation_id;

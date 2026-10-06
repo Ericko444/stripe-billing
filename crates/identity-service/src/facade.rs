@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use audit::CorrelationId;
-use identity_domain::{
+use tenantry_audit::CorrelationId;
+use tenantry_identity_domain::{
     Clock, Email, Mailer, MemberRepository, MembershipId, MembershipRepository, Password,
     PasswordHasher, PasswordTokenRepository, Role, SessionRepository, TenantId, TenantMember,
     UserRepository,
@@ -14,7 +14,7 @@ use crate::{
 
 /// The identity use cases as an object-safe trait, so a router can hold
 /// `Arc<dyn Authentication>` without naming five type parameters -- the
-/// same façade role `service::Reads` and `service::Writes` play for billing.
+/// same façade role `tenantry_service::Reads` and `tenantry_service::Writes` play for billing.
 #[async_trait]
 pub trait Authentication: Send + Sync {
     /// See [`AuthService::login`].

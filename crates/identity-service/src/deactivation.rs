@@ -6,8 +6,8 @@
 //! **everywhere**. That difference is the whole reason this module's
 //! authorization rule is not the members rule.
 
-use audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
-use identity_domain::{
+use tenantry_audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
+use tenantry_identity_domain::{
     AccountEvent, Clock, DeactivateOutcome, MemberRepository, MembershipId, TenantId, UserId,
     UserRepository,
 };
@@ -166,7 +166,7 @@ where
         &self,
         tenant_id: TenantId,
         membership_id: MembershipId,
-    ) -> Result<identity_domain::TenantMember, MembersError> {
+    ) -> Result<tenantry_identity_domain::TenantMember, MembersError> {
         self.members
             .find(tenant_id, membership_id)
             .await
@@ -209,7 +209,7 @@ fn subject(user_id: UserId) -> SubjectId {
     SubjectId::new(user_id.as_uuid())
 }
 
-fn unavailable(err: identity_domain::RepositoryError) -> MembersError {
+fn unavailable(err: tenantry_identity_domain::RepositoryError) -> MembersError {
     MembersError::Unavailable(err.to_string())
 }
 
@@ -217,13 +217,13 @@ fn unavailable(err: identity_domain::RepositoryError) -> MembersError {
 mod tests {
     use std::error::Error;
 
-    use identity_domain::{Email, MembershipStatus, Role, SessionId, TenantMember, User};
+    use tenantry_identity_domain::{Email, MembershipStatus, Role, SessionId, TenantMember, User};
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
     use super::*;
     use crate::test_support::{FakeMembers, FakeUsers, FixedClock};
-    use identity_domain::SessionTenant;
+    use tenantry_identity_domain::SessionTenant;
 
     fn tenant_a() -> TenantId {
         TenantId::new(Uuid::from_u128(0xa))

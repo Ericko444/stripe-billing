@@ -1,5 +1,5 @@
-use audit::CorrelationId;
-use identity_domain::{
+use tenantry_audit::CorrelationId;
+use tenantry_identity_domain::{
     Clock, Email, Membership, MembershipRepository, NewSession, PasswordHasher, SessionId,
     SessionRepository, SessionTenant, SplitToken, TenantId, UserId, UserRepository,
 };
@@ -129,8 +129,9 @@ where
 
     /// The caller's own account and memberships.
     pub async fn me(&self, session: &ActiveSession) -> Result<Me, SessionError> {
-        let unavailable =
-            |err: identity_domain::RepositoryError| SessionError::Unavailable(err.to_string());
+        let unavailable = |err: tenantry_identity_domain::RepositoryError| {
+            SessionError::Unavailable(err.to_string())
+        };
         let user = self
             .users
             .find(session.user_id)
@@ -169,8 +170,9 @@ where
         tenant_id: TenantId,
         correlation_id: CorrelationId,
     ) -> Result<TenantSelection, SelectTenantError> {
-        let unavailable =
-            |err: identity_domain::RepositoryError| SelectTenantError::Unavailable(err.to_string());
+        let unavailable = |err: tenantry_identity_domain::RepositoryError| {
+            SelectTenantError::Unavailable(err.to_string())
+        };
         let memberships = self
             .memberships
             .active_for_user(session.user_id)
@@ -228,8 +230,8 @@ where
 mod tests {
     use std::error::Error;
 
-    use identity_domain::{Role, StoredSession, TenantId, User};
     use secrecy::ExposeSecret;
+    use tenantry_identity_domain::{Role, StoredSession, TenantId, User};
     use time::Duration;
     use uuid::Uuid;
 
@@ -355,7 +357,7 @@ mod tests {
 
     fn membership_in(user: UserId, name: &str) -> Membership {
         Membership {
-            id: identity_domain::MembershipId::new(Uuid::new_v4()),
+            id: tenantry_identity_domain::MembershipId::new(Uuid::new_v4()),
             user_id: user,
             tenant_id: TenantId::new(Uuid::new_v4()),
             tenant_name: name.to_string(),
@@ -403,7 +405,7 @@ mod tests {
                 .verifies(selection.token.verifier())
         );
         assert_eq!(entry.tenant_id().as_uuid(), tenant_b.tenant_id.as_uuid());
-        assert_eq!(entry.action(), audit::Action::SessionStarted);
+        assert_eq!(entry.action(), tenantry_audit::Action::SessionStarted);
         assert_eq!(entry.correlation_id(), correlation_id);
         assert_eq!(selection.membership, tenant_b);
         Ok(())

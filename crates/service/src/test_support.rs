@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
-use audit::AuditEntry;
-use domain::{
+use tenantry_audit::AuditEntry;
+use tenantry_domain::{
     BillingEvent, BillingEventSink, BillingProvider, CancellationTiming, CheckoutSessionParams,
     CheckoutSessionSnapshot, CreateCustomerParams, Customer, CustomerId, CustomerRepository,
     CustomerSnapshot, DomainError, EventApplication, Invoice, InvoiceCursor, InvoiceId,
@@ -137,7 +137,7 @@ impl SubscriptionRepository for InMemorySubscriptions {
         &self,
         tenant_id: TenantId,
         customer_id: CustomerId,
-        plan_id: domain::PlanId,
+        plan_id: tenantry_domain::PlanId,
         stripe_subscription_id: String,
         stripe_subscription_item_id: String,
         status: SubscriptionStatus,
@@ -1137,8 +1137,8 @@ impl StubAuditSink {
     }
 }
 
-impl audit::AuditSink for StubAuditSink {
-    async fn record(&self, entry: AuditEntry) -> Result<(), audit::AuditError> {
+impl tenantry_audit::AuditSink for StubAuditSink {
+    async fn record(&self, entry: AuditEntry) -> Result<(), tenantry_audit::AuditError> {
         lock(&self.entries).push(entry);
         Ok(())
     }

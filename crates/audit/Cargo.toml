@@ -1,5 +1,5 @@
 [package]
-name = "audit"
+name = "tenantry-audit"
 description = "A typed, append-only audit journal, consumable by any module without depending on it. No I/O, no other workspace crate."
 version.workspace = true
 edition.workspace = true

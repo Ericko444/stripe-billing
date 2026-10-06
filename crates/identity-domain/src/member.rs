@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use audit::CorrelationId;
+use tenantry_audit::CorrelationId;
 use thiserror::Error;
 use time::OffsetDateTime;
 

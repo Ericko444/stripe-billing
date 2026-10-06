@@ -1,9 +1,9 @@
-use audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
-use domain::{
+use serde_json::Value;
+use tenantry_audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
+use tenantry_domain::{
     BillingEvent, CustomerRepository, DomainError, EventApplication, PlanRepository,
     SubscriptionId, SubscriptionRepository, SubscriptionStatus, TenantId, VerifiedEvent,
 };
-use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -92,7 +92,7 @@ where
     };
 
     let entry = AuditEntry::new(
-        audit::TenantId::new(tenant_id.as_uuid()),
+        tenantry_audit::TenantId::new(tenant_id.as_uuid()),
         Actor::System,
         action_for(fields.status),
         Target::Subscription(TargetId::new(subscription_id.as_uuid())),
@@ -130,7 +130,7 @@ async fn create_mirror<S, L>(
     subscriptions: &S,
     plans: &L,
     tenant_id: TenantId,
-    customer_id: domain::CustomerId,
+    customer_id: tenantry_domain::CustomerId,
     fields: &SubscriptionFields,
 ) -> Result<Option<SubscriptionId>, DomainError>
 where
@@ -328,8 +328,8 @@ fn read_subscription(payload: &Value) -> Result<SubscriptionFields, DomainError>
 
 #[cfg(test)]
 mod tests {
-    use domain::{Customer, CustomerId, Subscription, SubscriptionId, TenantId};
     use serde_json::json;
+    use tenantry_domain::{Customer, CustomerId, Subscription, SubscriptionId, TenantId};
     use time::Duration;
     use uuid::Uuid;
 
@@ -388,7 +388,7 @@ mod tests {
 
     fn verified_event(payload: Value, created: OffsetDateTime) -> VerifiedEvent {
         VerifiedEvent {
-            id: domain::WebhookEventId::new(Uuid::new_v4()),
+            id: tenantry_domain::WebhookEventId::new(Uuid::new_v4()),
             stripe_event_id: "evt_test".to_string(),
             event_type: "customer.subscription.updated".to_string(),
             created,
@@ -419,7 +419,7 @@ mod tests {
             id: SubscriptionId::new(Uuid::new_v4()),
             tenant_id,
             customer_id: customer.id,
-            plan_id: domain::PlanId::new(Uuid::new_v4()),
+            plan_id: tenantry_domain::PlanId::new(Uuid::new_v4()),
             stripe_subscription_id: stripe_subscription_id.to_string(),
             stripe_subscription_item_id: "si_original".to_string(),
             status: SubscriptionStatus::Incomplete,
@@ -472,11 +472,16 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.tenant_id().as_uuid(), tenant_id.as_uuid());
-        assert_eq!(entry.actor(), audit::Actor::System);
-        assert_eq!(entry.action(), audit::Action::SubscriptionActivated);
+        assert_eq!(entry.actor(), tenantry_audit::Actor::System);
+        assert_eq!(
+            entry.action(),
+            tenantry_audit::Action::SubscriptionActivated
+        );
         assert_eq!(
             entry.target(),
-            audit::Target::Subscription(audit::TargetId::new(subscription_id.as_uuid()))
+            tenantry_audit::Target::Subscription(tenantry_audit::TargetId::new(
+                subscription_id.as_uuid()
+            ))
         );
     }
 

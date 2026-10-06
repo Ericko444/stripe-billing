@@ -1,9 +1,9 @@
-use domain::{
+use stripe::{IdempotencyKey, RequestStrategy, StripeRequest};
+use stripe_core::customer::{CreateCustomer, UpdateCustomer};
+use tenantry_domain::{
     CreateCustomerParams, CustomerSnapshot, DomainError, OutboundRequestRepository, TenantId,
     UpdateCustomerParams,
 };
-use stripe::{IdempotencyKey, RequestStrategy, StripeRequest};
-use stripe_core::customer::{CreateCustomer, UpdateCustomer};
 
 use crate::ledger::Ledger;
 use crate::{StripeError, fingerprint};
@@ -31,7 +31,7 @@ pub async fn create_customer<R: OutboundRequestRepository>(
 ) -> Result<CustomerSnapshot, DomainError> {
     // Every field of CreateCustomerParams varies the request body, so every
     // field is in the fingerprint -- see CreateCustomerParams's own doc
-    // comment in domain::billing_provider.
+    // comment in tenantry_domain::billing_provider.
     let email_field = encode_optional(params.email.as_deref());
     let name_field = encode_optional(params.name.as_deref());
     let request_fingerprint = fingerprint("create_customer", &[&email_field, &name_field]);

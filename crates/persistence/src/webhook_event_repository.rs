@@ -1,6 +1,8 @@
-use domain::{DomainError, TenantId, WebhookEvent, WebhookEventId, WebhookEventRepository};
 use serde_json::Value;
 use sqlx::PgPool;
+use tenantry_domain::{
+    DomainError, TenantId, WebhookEvent, WebhookEventId, WebhookEventRepository,
+};
 use time::OffsetDateTime;
 use uuid::Uuid;
 

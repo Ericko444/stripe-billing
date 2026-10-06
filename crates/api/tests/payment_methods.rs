@@ -7,12 +7,12 @@ mod common;
 use std::collections::BTreeSet;
 use std::error::Error;
 
-use api::billing_router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::{HeaderTenant, StubReads, app_state};
-use domain::{CustomerId, PaymentMethod, PaymentMethodId, TenantId};
 use serde_json::Value;
+use tenantry_api::billing_router;
+use tenantry_domain::{CustomerId, PaymentMethod, PaymentMethodId, TenantId};
 use time::OffsetDateTime;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -33,7 +33,7 @@ fn payment_method(tenant: TenantId, last4: &str, is_default: bool) -> PaymentMet
 }
 
 async fn get_payment_methods(
-    state: api::AppState,
+    state: tenantry_api::AppState,
     tenant: &str,
 ) -> Result<(StatusCode, Value), Box<dyn Error>> {
     let response = billing_router::<HeaderTenant>(state)

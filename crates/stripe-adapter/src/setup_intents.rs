@@ -1,6 +1,6 @@
-use domain::{DomainError, OutboundRequestRepository, SetupIntentSnapshot, TenantId};
 use stripe::{RequestStrategy, StripeRequest};
 use stripe_core::setup_intent::CreateSetupIntent;
+use tenantry_domain::{DomainError, OutboundRequestRepository, SetupIntentSnapshot, TenantId};
 
 use crate::ledger::{Ledger, idempotency_key};
 use crate::{StripeError, fingerprint};

@@ -5,15 +5,17 @@ mod common;
 
 use std::error::Error;
 
-use audit::CorrelationId;
 use common::{membership, session_for, tenant, user};
-use identity_domain::{
+use sqlx::PgPool;
+use tenantry_audit::CorrelationId;
+use tenantry_identity_domain::{
     Email, GrantOutcome, MemberGrant, MemberRepository, MemberSuspension, MembershipId,
     MembershipStatus, PasswordHash, PasswordTokenRepository, PendingInvitation, Role,
     SessionRepository, SplitToken, TenantId, TokenPurpose, UserId,
 };
-use identity_pg::{PgMembershipRepository, PgPasswordTokenRepository, PgSessionRepository};
-use sqlx::PgPool;
+use tenantry_identity_pg::{
+    PgMembershipRepository, PgPasswordTokenRepository, PgSessionRepository,
+};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 

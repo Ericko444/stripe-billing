@@ -12,14 +12,16 @@ mod common;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 
-use api::{AppState, webhook_router};
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use common::{StubReads, UnusedWrites, checkout_urls};
-use domain::{DomainError, VerifiedEvent, WebhookEventId, WebhookReceipt, WebhookVerifier};
 use serde_json::json;
-use service::{EventOutcome, NotAppliedReason, WebhookHandler};
+use tenantry_api::{AppState, webhook_router};
+use tenantry_domain::{
+    DomainError, VerifiedEvent, WebhookEventId, WebhookReceipt, WebhookVerifier,
+};
+use tenantry_service::{EventOutcome, NotAppliedReason, WebhookHandler};
 use time::OffsetDateTime;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -31,7 +33,7 @@ enum VerifierResponse {
     VerificationFailed,
 }
 
-/// Doubles `domain::WebhookVerifier` at the trait: at the router layer the
+/// Doubles `tenantry_domain::WebhookVerifier` at the trait: at the router layer the
 /// signature check itself is not under test. Records the exact payload
 /// bytes it was handed, so a test can assert they reached the verifier
 /// byte-for-byte -- the guard for the raw-bytes precondition.
@@ -78,7 +80,7 @@ impl WebhookVerifier for StubVerifier {
     }
 }
 
-/// Doubles `service::WebhookHandler`: always returns the configured
+/// Doubles `tenantry_service::WebhookHandler`: always returns the configured
 /// outcome. The route's own logic (Fresh/Duplicate handling, status
 /// mapping) is what these tests exercise -- what the handler decided is
 /// not under test here, so a fixed response is all this needs.
@@ -257,7 +259,7 @@ async fn not_applied_outcome_still_returns_200() -> Result<(), Box<dyn Error>> {
 /// answers 200 for a good delivery and 400 for a missing signature while
 /// driven through [`webhook_router`], which takes no type parameter -- there
 /// is no tenant extractor to name, in this test or anywhere it can reach.
-/// Splitting `webhook_router` off [`billing_router<T>`](api::billing_router)
+/// Splitting `webhook_router` off [`billing_router<T>`](tenantry_api::billing_router)
 /// is what guarantees a later refactor cannot make a tenant a precondition of
 /// this route without deleting this factory outright.
 #[tokio::test]

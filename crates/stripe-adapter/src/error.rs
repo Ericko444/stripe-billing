@@ -1,4 +1,4 @@
-use domain::DomainError;
+use tenantry_domain::DomainError;
 use thiserror::Error;
 
 /// Errors from the Stripe adapter: transport failures, response

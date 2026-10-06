@@ -3,14 +3,14 @@
 // setup for the extractor-level tests.
 #![allow(dead_code)]
 
-use api::{AppState, CheckoutUrls};
 use async_trait::async_trait;
-use domain::{
+use tenantry_api::{AppState, CheckoutUrls};
+use tenantry_domain::{
     CheckoutSessionSnapshot, DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
     PaymentMethod, PaymentMethodId, Plan, PlanId, SetupIntentSnapshot, Subscription,
     SubscriptionId, TenantId, VerifiedEvent, WebhookReceipt, WebhookVerifier,
 };
-use service::{EventOutcome, Reads, RequestContext, WebhookHandler, Writes};
+use tenantry_service::{EventOutcome, Reads, RequestContext, WebhookHandler, Writes};
 
 /// The one message every `Unused*` double's error carries -- these fakes
 /// exist only so [`unused_state`] can build a complete `AppState`; nothing

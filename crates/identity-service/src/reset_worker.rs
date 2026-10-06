@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use audit::CorrelationId;
-use identity_domain::{
+use tenantry_audit::CorrelationId;
+use tenantry_identity_domain::{
     Clock, Email, Mailer, PasswordHasher, PasswordTokenRepository, UserRepository,
 };
 use tokio::sync::mpsc;
@@ -97,7 +97,7 @@ pub async fn run_reset_worker<U, T, H, M, C>(
 mod tests {
     use std::error::Error;
 
-    use identity_domain::{PasswordHash, User, UserId};
+    use tenantry_identity_domain::{PasswordHash, User, UserId};
     use uuid::Uuid;
 
     use super::*;

@@ -43,7 +43,7 @@ jobs:
             echo "::error file=crates/domain/Cargo.toml::domain must not depend on sqlx, axum or a Stripe client"
             exit 1
           fi
-          if cargo tree -p domain -e normal,build --prefix none --locked \
+          if cargo tree -p tenantry-domain -e normal,build --prefix none --locked \
               | grep -E "^(sqlx|axum|async-stripe|stripe)"; then
             echo "::error::domain pulls in sqlx, axum or a Stripe client transitively"
             exit 1
@@ -55,12 +55,12 @@ jobs:
       # exempt -- it is expected to depend on `audit` and on `sqlx`.
       - name: Audit crate boundary
         run: |
-          if grep -E "domain|service|persistence|stripe-adapter|^api|axum|stripe|sqlx" crates/audit/Cargo.toml; then
+          if grep -E "tenantry-(domain|service|persistence|stripe-adapter|api)|axum|stripe|sqlx" crates/audit/Cargo.toml; then
             echo "::error file=crates/audit/Cargo.toml::audit must not depend on any other workspace crate, axum, a Stripe client, or sqlx"
             exit 1
           fi
-          if cargo tree -p audit -e normal,build --prefix none --locked \
-              | grep -E "^(domain|service|persistence|stripe-adapter|api|axum|async-stripe|stripe|sqlx)"; then
+          if cargo tree -p tenantry-audit -e normal,build --prefix none --locked \
+              | grep -E "^(tenantry-(domain|service|persistence|stripe-adapter|api)|axum|async-stripe|stripe|sqlx)"; then
             echo "::error::audit pulls in a workspace crate, axum, a Stripe client, or sqlx transitively"
             exit 1
           fi
@@ -70,14 +70,14 @@ jobs:
       # in both directions, over every `identity-*` crate present.
       - name: Identity does not depend on billing
         run: |
-          if grep -E "^(domain|service|persistence|stripe-adapter|api)(\.workspace| *=)" crates/identity-*/Cargo.toml; then
+          if grep -E "^tenantry-(domain|service|persistence|stripe-adapter|api)(\.workspace| *=)" crates/identity-*/Cargo.toml; then
             echo "::error::an identity crate names a billing crate"
             exit 1
           fi
           for dir in crates/identity-*/; do
-            name="$(basename "$dir")"
+            name="tenantry-$(basename "$dir")"
             if cargo tree -p "$name" -e normal,build --prefix none --locked \
-                | grep -E "^(domain|service|persistence|stripe-adapter|api) v"; then
+                | grep -E "^tenantry-(domain|service|persistence|stripe-adapter|api) v"; then
               echo "::error::$name pulls in a billing crate transitively"
               exit 1
             fi
@@ -85,13 +85,13 @@ jobs:
 
       - name: Billing does not depend on identity
         run: |
-          if grep -E "^identity-" crates/domain/Cargo.toml crates/service/Cargo.toml \
+          if grep -E "^tenantry-identity-" crates/domain/Cargo.toml crates/service/Cargo.toml \
               crates/persistence/Cargo.toml crates/stripe-adapter/Cargo.toml crates/api/Cargo.toml; then
             echo "::error::a billing crate names an identity crate"
             exit 1
           fi
-          for name in domain service persistence stripe-adapter api; do
-            if cargo tree -p "$name" -e normal,build --prefix none --locked | grep -E "^identity-"; then
+          for name in tenantry-domain tenantry-service tenantry-persistence tenantry-stripe-adapter tenantry-api; do
+            if cargo tree -p "$name" -e normal,build --prefix none --locked | grep -E "^tenantry-identity-"; then
               echo "::error::$name pulls in an identity crate transitively"
               exit 1
             fi
@@ -105,7 +105,7 @@ jobs:
             echo "::error file=crates/identity-domain/Cargo.toml::identity-domain must not depend on sqlx, axum or argon2"
             exit 1
           fi
-          if cargo tree -p identity-domain -e normal,build --prefix none --locked \
+          if cargo tree -p tenantry-identity-domain -e normal,build --prefix none --locked \
               | grep -E "^(sqlx|axum|argon2) v"; then
             echo "::error::identity-domain pulls in sqlx, axum or argon2 transitively"
             exit 1

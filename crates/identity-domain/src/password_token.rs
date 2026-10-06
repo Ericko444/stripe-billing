@@ -1,7 +1,7 @@
 use std::fmt;
 
-use audit::CorrelationId;
 use secrecy::SecretString;
+use tenantry_audit::CorrelationId;
 use time::OffsetDateTime;
 
 use crate::{Email, Selector, UserId, VerifierHash};

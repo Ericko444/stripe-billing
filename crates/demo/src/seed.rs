@@ -16,20 +16,20 @@
 
 use std::error::Error;
 
-use domain::{
-    CreateCustomerParams, Currency, CustomerRepository, Money, Plan, PlanRepository,
-    SubscriptionRepository, TenantId,
-};
-use identity_domain::{NewPassword, Password, PasswordHasher};
-use identity_service::Argon2Hasher;
-use persistence::{
-    PgCustomerRepository, PgOutboundRequestRepository, PgPlanRepository, PgSubscriptionRepository,
-    run_migrations,
-};
 use secrecy::SecretString;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use stripe_adapter::{StripeBillingProvider, StripeConfig};
+use tenantry_domain::{
+    CreateCustomerParams, Currency, CustomerRepository, Money, Plan, PlanRepository,
+    SubscriptionRepository, TenantId,
+};
+use tenantry_identity_domain::{NewPassword, Password, PasswordHasher};
+use tenantry_identity_service::Argon2Hasher;
+use tenantry_persistence::{
+    PgCustomerRepository, PgOutboundRequestRepository, PgPlanRepository, PgSubscriptionRepository,
+    run_migrations,
+};
+use tenantry_stripe_adapter::{StripeBillingProvider, StripeConfig};
 use uuid::Uuid;
 
 /// The two demo tenants. Fixed rather than random so the seed is
@@ -154,8 +154,8 @@ pub async fn run_seed() -> Result<(), Box<dyn Error>> {
 
     let pool = PgPoolOptions::new().connect(&database_url).await?;
     run_migrations(&pool).await?;
-    audit_pg::run_migrations(&pool).await?;
-    identity_pg::run_migrations(&pool).await?;
+    tenantry_audit_pg::run_migrations(&pool).await?;
+    tenantry_identity_pg::run_migrations(&pool).await?;
     seed_identity(&pool, seed_password).await?;
 
     let stripe_secret_key = required_env("STRIPE_SECRET_KEY")?;

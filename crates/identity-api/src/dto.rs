@@ -3,8 +3,8 @@
 //! `identity-service` is `Serialize`, so a field added there cannot silently
 //! become a field on the wire.
 
-use identity_domain::{Membership, SessionTenant, TenantMember};
 use serde::{Deserialize, Serialize};
+use tenantry_identity_domain::{Membership, SessionTenant, TenantMember};
 use time::{OffsetDateTime, UtcOffset};
 use uuid::Uuid;
 

@@ -6,20 +6,20 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use audit::CorrelationId;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
 use axum::http::{Request, Response, StatusCode, header};
-use identity_api::{IdentityState, identity_router};
-use identity_domain::{Email, NewPassword, Password, TenantId};
-use identity_service::{
+use secrecy::ExposeSecret;
+use serde_json::Value;
+use tenantry_audit::CorrelationId;
+use tenantry_identity_api::{IdentityState, identity_router};
+use tenantry_identity_domain::{Email, NewPassword, Password, TenantId};
+use tenantry_identity_service::{
     ActiveSession, Authentication, CompleteResetError, InMemoryRateLimiter, LoginError,
     LoginOutcome, Me, PasswordChangeError, PasswordResets, ProfileError, SelectTenantError,
     SessionError, SystemClock, TenantSelection, reset_queue,
 };
-use secrecy::ExposeSecret;
-use serde_json::Value;
 use tower::ServiceExt;
 
 const GOOD_TOKEN: &str = "good.token";
@@ -165,7 +165,7 @@ async fn every_unusable_link_gets_one_identical_400() -> Result<(), Box<dyn Erro
         .oneshot(request(GOOD_TOKEN, NEW_PASSWORD)?)
         .await?;
     assert_eq!(used_once.status(), StatusCode::NO_CONTENT);
-    let forged = identity_domain::SplitToken::from_bytes([1; 16], [2; 32])
+    let forged = tenantry_identity_domain::SplitToken::from_bytes([1; 16], [2; 32])
         .to_wire()
         .expose_secret()
         .to_string();
@@ -233,35 +233,37 @@ async fn completions_from_one_ip_are_limited() -> Result<(), Box<dyn Error>> {
 struct NoMembers;
 
 #[async_trait]
-impl identity_service::Members for NoMembers {
+impl tenantry_identity_service::Members for NoMembers {
     async fn list_members(
         &self,
-        _: &identity_service::ActiveSession,
-    ) -> Result<Vec<identity_domain::TenantMember>, identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+    ) -> Result<Vec<tenantry_identity_domain::TenantMember>, tenantry_identity_service::MembersError>
+    {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn add_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: &identity_domain::Email,
-        _: identity_domain::Role,
+        _: &tenantry_identity_service::ActiveSession,
+        _: &tenantry_identity_domain::Email,
+        _: tenantry_identity_domain::Role,
         _: CorrelationId,
-    ) -> Result<identity_domain::TenantMember, identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<tenantry_identity_domain::TenantMember, tenantry_identity_service::MembersError>
+    {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn suspend_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
@@ -273,35 +275,35 @@ impl identity_service::Members for NoMembers {
 struct NoDeactivations;
 
 #[async_trait]
-impl identity_service::Deactivations for NoDeactivations {
+impl tenantry_identity_service::Deactivations for NoDeactivations {
     async fn deactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn reactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn deactivate_self(
         &self,
-        _: &identity_service::ActiveSession,
+        _: &tenantry_identity_service::ActiveSession,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }

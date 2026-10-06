@@ -1,9 +1,9 @@
-use audit::AuditEntry;
-use domain::{
+use sqlx::PgPool;
+use tenantry_audit::AuditEntry;
+use tenantry_domain::{
     CustomerId, DomainError, EventApplication, PlanId, Subscription, SubscriptionId,
     SubscriptionRepository, SubscriptionSnapshot, SubscriptionStatus, TenantId,
 };
-use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -216,7 +216,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
             EventApplication::Applied
         };
 
-        audit_pg::insert(&mut tx, &entry)
+        tenantry_audit_pg::insert(&mut tx, &entry)
             .await
             .map_err(RepositoryError::from)
             .map_err(to_domain_error)?;
@@ -313,7 +313,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .map_err(RepositoryError::from)
         .map_err(to_domain_error)?;
 
-        audit_pg::insert(&mut tx, &entry)
+        tenantry_audit_pg::insert(&mut tx, &entry)
             .await
             .map_err(RepositoryError::from)
             .map_err(to_domain_error)?;
@@ -383,7 +383,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .map_err(RepositoryError::from)
         .map_err(to_domain_error)?;
 
-        audit_pg::insert(&mut tx, &entry)
+        tenantry_audit_pg::insert(&mut tx, &entry)
             .await
             .map_err(RepositoryError::from)
             .map_err(to_domain_error)?;

@@ -9,7 +9,7 @@
 //! primitive a caller composes into its own transaction (`persistence`
 //! does exactly this for every audited write that has a local business
 //! write to be atomic with); [`PgAuditSink`] is for the two write routes
-//! that don't -- it implements `audit::AuditSink` over a `PgPool`,
+//! that don't -- it implements `tenantry_audit::AuditSink` over a `PgPool`,
 //! acquiring its own connection per call.
 
 mod error;
@@ -26,7 +26,7 @@ use sqlx::PgPool;
 /// migrations in `audit._sqlx_migrations` rather than the default
 /// `_sqlx_migrations`.
 ///
-/// The billing module's own `persistence::run_migrations` runs against the
+/// The billing module's own `tenantry_persistence::run_migrations` runs against the
 /// same database and tracks its state in the default table name -- the two
 /// migrators would collide on version numbers if both used it. Schema- and
 /// table-qualifying this one is what makes running both against one
@@ -35,7 +35,7 @@ use sqlx::PgPool;
 ///
 /// The SQL is embedded at compile time by `sqlx::migrate!` rather than read
 /// from disk, so the migration travels with the compiled crate -- see
-/// `persistence::run_migrations` for the full argument.
+/// `tenantry_persistence::run_migrations` for the full argument.
 ///
 /// Safe to call repeatedly: already-applied migrations are skipped.
 pub async fn run_migrations(pool: &PgPool) -> Result<(), AuditPgError> {

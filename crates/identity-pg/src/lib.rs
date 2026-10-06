@@ -6,7 +6,7 @@
 //! its own table, so none of them has to know the others exist -- the
 //! pattern `audit-pg` established.
 //!
-//! Every write that has an audit entry writes it with `audit_pg::insert` on
+//! Every write that has an audit entry writes it with `tenantry_audit_pg::insert` on
 //! the same transaction, so the business change and the record of it commit
 //! or fail together.
 
@@ -35,7 +35,7 @@ use sqlx::PgPool;
 /// database, in any order, repeatedly.
 ///
 /// The SQL is embedded at compile time by `sqlx::migrate!` rather than read
-/// from disk -- see `persistence::run_migrations` for why.
+/// from disk -- see `tenantry_persistence::run_migrations` for why.
 pub async fn run_migrations(pool: &PgPool) -> Result<(), IdentityPgError> {
     let mut migrator = sqlx::migrate!("./migrations");
     migrator.create_schema("identity");

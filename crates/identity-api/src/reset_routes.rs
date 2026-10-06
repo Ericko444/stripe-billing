@@ -1,11 +1,11 @@
-use audit::CorrelationId;
 use axum::Json;
 use axum::extract::Extension;
 use axum::extract::rejection::JsonRejection;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use identity_domain::{Email, Password};
-use identity_service::{CompleteResetError, ResetJob};
+use tenantry_audit::CorrelationId;
+use tenantry_identity_domain::{Email, Password};
+use tenantry_identity_service::{CompleteResetError, ResetJob};
 
 use crate::client_ip::ClientAddress;
 use crate::dto::{CompleteResetRequest, RESET_REQUEST_ACCEPTED, ResetRequest};
@@ -100,7 +100,7 @@ pub async fn complete_password_reset(
 async fn complete(
     state: &IdentityState,
     correlation_id: CorrelationId,
-    ip: identity_domain::ClientIp,
+    ip: tenantry_identity_domain::ClientIp,
     body: Result<Json<CompleteResetRequest>, JsonRejection>,
 ) -> Result<(), IdentityError> {
     let error = |kind| IdentityError::new(kind, correlation_id);

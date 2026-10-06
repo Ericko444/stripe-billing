@@ -7,8 +7,8 @@ use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use domain::{CreateCustomerParams, DomainError, OutboundRequestId, TenantId};
-use stripe_adapter::{Ledger, StripeBillingProvider};
+use tenantry_domain::{CreateCustomerParams, DomainError, OutboundRequestId, TenantId};
+use tenantry_stripe_adapter::{Ledger, StripeBillingProvider};
 use uuid::Uuid;
 use wiremock::matchers::{header_exists, method, path};
 use wiremock::{Mock, ResponseTemplate};

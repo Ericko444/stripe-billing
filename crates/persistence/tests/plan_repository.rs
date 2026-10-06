@@ -4,8 +4,8 @@ mod common;
 
 use std::error::Error;
 
-use domain::{Currency, Money, PlanRepository, TenantId};
-use persistence::PgPlanRepository;
+use tenantry_domain::{Currency, Money, PlanRepository, TenantId};
+use tenantry_persistence::PgPlanRepository;
 use uuid::Uuid;
 
 #[tokio::test]

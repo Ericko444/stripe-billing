@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::extract::{Extension, Path, State};
-use domain::{DomainError, PlanId, SubscriptionId, TenantId};
-use service::RequestContext;
+use tenantry_domain::{DomainError, PlanId, SubscriptionId, TenantId};
+use tenantry_service::RequestContext;
 use uuid::Uuid;
 
 use crate::dto::{

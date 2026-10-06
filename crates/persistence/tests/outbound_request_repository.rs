@@ -4,8 +4,8 @@ mod common;
 
 use std::error::Error;
 
-use domain::{DomainError, OutboundRequestRepository, TenantId};
-use persistence::PgOutboundRequestRepository;
+use tenantry_domain::{DomainError, OutboundRequestRepository, TenantId};
+use tenantry_persistence::PgOutboundRequestRepository;
 use uuid::Uuid;
 
 #[tokio::test]

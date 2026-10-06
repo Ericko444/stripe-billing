@@ -1,5 +1,5 @@
 [package]
-name = "identity-domain"
+name = "tenantry-identity-domain"
 description = "Identity module: models, value objects, ports and errors. No I/O, and no dependency on the billing module."
 version.workspace = true
 edition.workspace = true
@@ -11,7 +11,7 @@ categories.workspace = true
 publish.workspace = true
 
 [dependencies]
-audit.workspace = true
+tenantry-audit.workspace = true
 hex.workspace = true
 secrecy.workspace = true
 sha2.workspace = true

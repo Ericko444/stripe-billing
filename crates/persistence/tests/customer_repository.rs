@@ -4,8 +4,8 @@ mod common;
 
 use std::error::Error;
 
-use domain::{CustomerRepository, TenantId};
-use persistence::PgCustomerRepository;
+use tenantry_domain::{CustomerRepository, TenantId};
+use tenantry_persistence::PgCustomerRepository;
 use uuid::Uuid;
 
 #[tokio::test]

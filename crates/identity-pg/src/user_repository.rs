@@ -1,10 +1,10 @@
-use identity_domain::{
-    AccountEvent, DeactivateOutcome, DisplayName, Email, PasswordHash, RepositoryError, SessionId,
-    TenantId, User, UserId, UserRepository,
-};
 use sqlx::PgPool;
 use sqlx::Row;
 use sqlx::postgres::PgRow;
+use tenantry_identity_domain::{
+    AccountEvent, DeactivateOutcome, DisplayName, Email, PasswordHash, RepositoryError, SessionId,
+    TenantId, User, UserId, UserRepository,
+};
 use time::OffsetDateTime;
 use uuid::Uuid;
 

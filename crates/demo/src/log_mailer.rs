@@ -7,8 +7,8 @@
 //! `main` warns at startup that it is in use, and a real `Mailer` hands the
 //! body to a mail provider and logs, at most, that a mail was sent.
 
-use identity_domain::{MailError, MailPurpose, Mailer, OutgoingMail};
 use secrecy::ExposeSecret;
+use tenantry_identity_domain::{MailError, MailPurpose, Mailer, OutgoingMail};
 
 /// Logs each mail, link included, at `warn` so it stands out.
 #[derive(Debug, Clone, Copy, Default)]

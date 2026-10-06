@@ -20,21 +20,21 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use common::unused_state;
 use demo::identity_tenant::IdentityTenant;
-use identity_api::{IdentityState, identity_router};
-use identity_domain::{
-    MailError, MailPurpose, Mailer, NewPassword, OutgoingMail, Password, PasswordHasher,
-};
-use identity_pg::{
-    PgMembershipRepository, PgPasswordTokenRepository, PgSessionRepository, PgUserRepository,
-};
-use identity_service::{
-    Argon2Hasher, AuthService, InMemoryRateLimiter, MembersService, PasswordResetService,
-    SystemClock, reset_queue,
-};
 use secrecy::ExposeSecret;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use tenantry_identity_api::{IdentityState, identity_router};
+use tenantry_identity_domain::{
+    MailError, MailPurpose, Mailer, NewPassword, OutgoingMail, Password, PasswordHasher,
+};
+use tenantry_identity_pg::{
+    PgMembershipRepository, PgPasswordTokenRepository, PgSessionRepository, PgUserRepository,
+};
+use tenantry_identity_service::{
+    Argon2Hasher, AuthService, InMemoryRateLimiter, MembersService, PasswordResetService,
+    SystemClock, reset_queue,
+};
 use testcontainers::core::wait::LogWaitStrategy;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
@@ -94,8 +94,8 @@ async fn world() -> Result<World, Box<dyn Error>> {
     let port = container.get_host_port_ipv4(5432.tcp()).await?;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = PgPoolOptions::new().connect(&url).await?;
-    identity_pg::run_migrations(&pool).await?;
-    audit_pg::run_migrations(&pool).await?;
+    tenantry_identity_pg::run_migrations(&pool).await?;
+    tenantry_audit_pg::run_migrations(&pool).await?;
 
     // Wired as `main` wires it, with the outbox standing in for `LogMailer`.
     let hasher = Argon2Hasher::new()?;
@@ -146,7 +146,7 @@ async fn world() -> Result<World, Box<dyn Error>> {
 }
 
 async fn whoami(tenant: IdentityTenant) -> impl IntoResponse {
-    let tenant_id: domain::TenantId = tenant.into();
+    let tenant_id: tenantry_domain::TenantId = tenant.into();
     tenant_id.as_uuid().to_string()
 }
 
@@ -512,35 +512,35 @@ async fn a_suspended_member_loses_that_tenant_and_keeps_the_other() -> Result<()
 struct NoDeactivations;
 
 #[async_trait::async_trait]
-impl identity_service::Deactivations for NoDeactivations {
+impl tenantry_identity_service::Deactivations for NoDeactivations {
     async fn deactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
-        _: audit::CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
+        _: tenantry_audit::CorrelationId,
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn reactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
-        _: audit::CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
+        _: tenantry_audit::CorrelationId,
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn deactivate_self(
         &self,
-        _: &identity_service::ActiveSession,
-        _: audit::CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_audit::CorrelationId,
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }

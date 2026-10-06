@@ -1,5 +1,5 @@
 [package]
-name = "stripe-adapter"
+name = "tenantry-stripe-adapter"
 description = "Stripe adapter: BillingProvider implementation, idempotency, webhook verification and parsing."
 version.workspace = true
 edition.workspace = true
@@ -11,7 +11,7 @@ categories.workspace = true
 publish.workspace = true
 
 [dependencies]
-domain.workspace = true
+tenantry-domain.workspace = true
 async-stripe.workspace = true
 async-stripe-billing.workspace = true
 async-stripe-checkout.workspace = true
@@ -32,7 +32,7 @@ uuid.workspace = true
 # tests run the real adapter against a real Postgres. It never appears in the
 # production dependency graph, which stays strictly inward.
 [dev-dependencies]
-persistence.workspace = true
+tenantry-persistence.workspace = true
 sqlx.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true

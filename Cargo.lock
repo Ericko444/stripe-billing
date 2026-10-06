@@ -33,26 +33,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "api"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "domain",
- "hex",
- "serde",
- "serde_json",
- "service",
- "thiserror",
- "time",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "argon2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -258,29 +238,6 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
-
-[[package]]
-name = "audit"
-version = "0.1.0"
-dependencies = [
- "thiserror",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "audit-pg"
-version = "0.1.0"
-dependencies = [
- "audit",
- "persistence",
- "sqlx",
- "testcontainers",
- "thiserror",
- "time",
- "tokio",
- "uuid",
-]
 
 [[package]]
 name = "autocfg"
@@ -695,24 +652,24 @@ checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 name = "demo"
 version = "0.1.0"
 dependencies = [
- "api",
  "async-trait",
- "audit",
- "audit-pg",
  "axum",
- "domain",
  "dotenvy",
- "identity-api",
- "identity-domain",
- "identity-pg",
- "identity-service",
- "persistence",
  "secrecy",
  "serde",
  "serde_json",
- "service",
  "sqlx",
- "stripe-adapter",
+ "tenantry-api",
+ "tenantry-audit",
+ "tenantry-audit-pg",
+ "tenantry-domain",
+ "tenantry-identity-api",
+ "tenantry-identity-domain",
+ "tenantry-identity-pg",
+ "tenantry-identity-service",
+ "tenantry-persistence",
+ "tenantry-service",
+ "tenantry-stripe-adapter",
  "testcontainers",
  "thiserror",
  "time",
@@ -774,19 +731,6 @@ dependencies = [
  "base64",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "domain"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "audit",
- "serde",
- "serde_json",
- "thiserror",
- "time",
- "uuid",
 ]
 
 [[package]]
@@ -1390,74 +1334,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
-name = "identity-api"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "audit",
- "axum",
- "identity-domain",
- "identity-service",
- "secrecy",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "tower",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "identity-domain"
-version = "0.1.0"
-dependencies = [
- "audit",
- "hex",
- "secrecy",
- "serde",
- "sha2 0.11.0",
- "subtle",
- "thiserror",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "identity-pg"
-version = "0.1.0"
-dependencies = [
- "audit",
- "audit-pg",
- "hex",
- "identity-domain",
- "secrecy",
- "sqlx",
- "testcontainers",
- "thiserror",
- "time",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "identity-service"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "async-trait",
- "audit",
- "getrandom 0.4.3",
- "identity-domain",
- "secrecy",
- "thiserror",
- "time",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "idna"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1824,23 +1700,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "persistence"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "audit",
- "audit-pg",
- "domain",
- "serde_json",
- "sqlx",
- "testcontainers",
- "thiserror",
- "time",
- "tokio",
- "uuid",
-]
 
 [[package]]
 name = "phc"
@@ -2321,21 +2180,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "service"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "audit",
- "domain",
- "serde_json",
- "thiserror",
- "time",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "sha1"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2636,33 +2480,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "stripe-adapter"
-version = "0.1.0"
-dependencies = [
- "async-stripe",
- "async-stripe-billing",
- "async-stripe-checkout",
- "async-stripe-client-core",
- "async-stripe-core",
- "async-stripe-payment",
- "async-trait",
- "domain",
- "hex",
- "hmac",
- "persistence",
- "secrecy",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "testcontainers",
- "thiserror",
- "time",
- "tokio",
- "uuid",
- "wiremock",
-]
-
-[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2734,6 +2551,189 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "tenantry-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "hex",
+ "serde",
+ "serde_json",
+ "tenantry-domain",
+ "tenantry-service",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-audit"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-audit-pg"
+version = "0.1.0"
+dependencies = [
+ "sqlx",
+ "tenantry-audit",
+ "tenantry-persistence",
+ "testcontainers",
+ "thiserror",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-domain"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tenantry-audit",
+ "thiserror",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-identity-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "tenantry-audit",
+ "tenantry-identity-domain",
+ "tenantry-identity-service",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-identity-domain"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "secrecy",
+ "serde",
+ "sha2 0.11.0",
+ "subtle",
+ "tenantry-audit",
+ "thiserror",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-identity-pg"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "secrecy",
+ "sqlx",
+ "tenantry-audit",
+ "tenantry-audit-pg",
+ "tenantry-identity-domain",
+ "testcontainers",
+ "thiserror",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-identity-service"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "async-trait",
+ "getrandom 0.4.3",
+ "secrecy",
+ "tenantry-audit",
+ "tenantry-identity-domain",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-persistence"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "sqlx",
+ "tenantry-audit",
+ "tenantry-audit-pg",
+ "tenantry-domain",
+ "testcontainers",
+ "thiserror",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-service"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "tenantry-audit",
+ "tenantry-domain",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "tenantry-stripe-adapter"
+version = "0.1.0"
+dependencies = [
+ "async-stripe",
+ "async-stripe-billing",
+ "async-stripe-checkout",
+ "async-stripe-client-core",
+ "async-stripe-core",
+ "async-stripe-payment",
+ "async-trait",
+ "hex",
+ "hmac",
+ "secrecy",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tenantry-domain",
+ "tenantry-persistence",
+ "testcontainers",
+ "thiserror",
+ "time",
+ "tokio",
+ "uuid",
+ "wiremock",
 ]
 
 [[package]]

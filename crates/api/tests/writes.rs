@@ -28,15 +28,15 @@ mod common;
 use std::error::Error;
 use std::sync::Arc;
 
-use api::billing_router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::{CapturedLogs, HeaderTenant, StubWrites, app_state_writes};
-use domain::{
+use serde_json::{Value, json};
+use tenantry_api::billing_router;
+use tenantry_domain::{
     Currency, CustomerId, Money, PaymentMethod, PaymentMethodId, Plan, PlanId, Subscription,
     SubscriptionId, SubscriptionStatus, TenantId,
 };
-use serde_json::{Value, json};
 use time::OffsetDateTime;
 use tower::ServiceExt;
 use tracing_subscriber::fmt;
@@ -90,7 +90,7 @@ fn payment_method(tenant: TenantId, is_default: bool) -> PaymentMethod {
 }
 
 async fn send(
-    state: api::AppState,
+    state: tenantry_api::AppState,
     request: Request<Body>,
 ) -> Result<(StatusCode, Value), Box<dyn Error>> {
     let response = billing_router::<HeaderTenant>(state)
@@ -103,7 +103,7 @@ async fn send(
 }
 
 async fn post_json(
-    state: api::AppState,
+    state: tenantry_api::AppState,
     tenant: &str,
     path: &str,
     body: Value,
@@ -123,7 +123,7 @@ async fn post_json(
 }
 
 async fn post_setup_intent(
-    state: api::AppState,
+    state: tenantry_api::AppState,
     tenant: &str,
 ) -> Result<(StatusCode, Value), Box<dyn Error>> {
     let response = billing_router::<HeaderTenant>(state)

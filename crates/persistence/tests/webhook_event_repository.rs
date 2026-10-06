@@ -4,9 +4,9 @@ mod common;
 
 use std::error::Error;
 
-use domain::{DomainError, TenantId, WebhookEventRepository};
-use persistence::PgWebhookEventRepository;
 use serde_json::json;
+use tenantry_domain::{DomainError, TenantId, WebhookEventRepository};
+use tenantry_persistence::PgWebhookEventRepository;
 use uuid::Uuid;
 
 #[tokio::test]

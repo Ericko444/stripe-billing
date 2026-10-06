@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::State;
-use domain::TenantId;
+use tenantry_domain::TenantId;
 
 use crate::dto::SubscriptionDto;
 use crate::{ApiError, AppState};

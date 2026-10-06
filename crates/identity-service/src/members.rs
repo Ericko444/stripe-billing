@@ -1,10 +1,10 @@
-use audit::CorrelationId;
-use identity_domain::{
+use secrecy::SecretString;
+use tenantry_audit::CorrelationId;
+use tenantry_identity_domain::{
     Clock, Email, GrantOutcome, MailPurpose, Mailer, MemberGrant, MemberRepository,
     MemberSuspension, MembershipId, OutgoingMail, PendingInvitation, Role, SessionTenant,
     TenantMember, UserId,
 };
-use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::token::{generate_token, password_link};
@@ -206,8 +206,9 @@ where
         correlation_id: CorrelationId,
     ) -> Result<(), MembersError> {
         let tenant = managed_tenant(session)?;
-        let unavailable =
-            |err: identity_domain::RepositoryError| MembersError::Unavailable(err.to_string());
+        let unavailable = |err: tenantry_identity_domain::RepositoryError| {
+            MembersError::Unavailable(err.to_string())
+        };
         let target = self
             .members
             .find(tenant.tenant_id, membership_id)
@@ -236,7 +237,7 @@ where
 mod tests {
     use std::error::Error;
 
-    use identity_domain::{MembershipStatus, SessionId, SplitToken, TenantId};
+    use tenantry_identity_domain::{MembershipStatus, SessionId, SplitToken, TenantId};
     use time::Duration;
     use uuid::Uuid;
 

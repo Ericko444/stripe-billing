@@ -1,5 +1,5 @@
 [package]
-name = "domain"
+name = "tenantry-domain"
 description = "Models, value objects, ports (traits) and the error taxonomy. Depends on no I/O crate."
 version.workspace = true
 edition.workspace = true
@@ -12,7 +12,7 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-audit.workspace = true
+tenantry-audit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

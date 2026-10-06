@@ -1,12 +1,12 @@
-use audit::CorrelationId;
 use axum::Json;
 use axum::extract::Extension;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
-use identity_domain::{Email, Password, TenantId};
-use identity_service::{
+use tenantry_audit::CorrelationId;
+use tenantry_identity_domain::{Email, Password, TenantId};
+use tenantry_identity_service::{
     LoginError, Me, PasswordChangeError, ProfileError, SelectTenantError, SessionError,
     SessionScope, TENANT_SESSION_LIFETIME, UNSCOPED_SESSION_LIFETIME,
 };

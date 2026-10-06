@@ -6,14 +6,14 @@ mod common;
 use std::collections::BTreeMap;
 use std::error::Error;
 
-use audit::{Action, Actor, CorrelationId, Target, TargetId};
 use common::{membership, session_for, tenant, user};
-use identity_domain::{
+use sqlx::PgPool;
+use tenantry_audit::{Action, Actor, CorrelationId, Target, TargetId};
+use tenantry_identity_domain::{
     AccountEvent, NewPasswordToken, PasswordHash, PasswordTokenRepository, SessionRepository,
     SplitToken, TokenPurpose, UserId,
 };
-use identity_pg::{PgPasswordTokenRepository, PgSessionRepository};
-use sqlx::PgPool;
+use tenantry_identity_pg::{PgPasswordTokenRepository, PgSessionRepository};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 

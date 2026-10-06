@@ -1,7 +1,7 @@
-use domain::{
+use stripe::IdempotencyKey;
+use tenantry_domain::{
     DomainError, OutboundRequest, OutboundRequestId, OutboundRequestRepository, TenantId,
 };
-use stripe::IdempotencyKey;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 

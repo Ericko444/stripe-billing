@@ -40,27 +40,27 @@ keywords = ["billing", "subscriptions", "stripe", "multi-tenant", "saas"]
 categories = ["web-programming", "database"]
 
 [workspace.dependencies]
-domain = { path = "crates/domain" }
-service = { path = "crates/service" }
-persistence = { path = "crates/persistence" }
-stripe-adapter = { path = "crates/stripe-adapter" }
-api = { path = "crates/api" }
+tenantry-domain = { path = "crates/domain" }
+tenantry-service = { path = "crates/service" }
+tenantry-persistence = { path = "crates/persistence" }
+tenantry-stripe-adapter = { path = "crates/stripe-adapter" }
+tenantry-api = { path = "crates/api" }
 # The audit journal (Phase 7): typed events + the `AuditSink` port, no I/O.
 # Named separately from the six crates above -- it is deliberately not part
 # of this module's own inward dependency chain; a second, not-yet-built
 # module depends on it too, and neither module may depend on the other.
-audit = { path = "crates/audit" }
+tenantry-audit = { path = "crates/audit" }
 # Postgres adapter for `audit` -- its own schema, migrator and grant. Kept
 # separate from `audit` itself so the identity module can depend on the
 # model without compiling sqlx to do it.
-audit-pg = { path = "crates/audit-pg" }
+tenantry-audit-pg = { path = "crates/audit-pg" }
 # The identity module (Phase 8): what a host plugs in front of billing to
 # produce the `TenantId` billing consumes. Its crates name no billing crate
 # and no billing crate names them -- both directions are checked in CI.
-identity-domain = { path = "crates/identity-domain" }
-identity-pg = { path = "crates/identity-pg" }
-identity-service = { path = "crates/identity-service" }
-identity-api = { path = "crates/identity-api" }
+tenantry-identity-domain = { path = "crates/identity-domain" }
+tenantry-identity-pg = { path = "crates/identity-pg" }
+tenantry-identity-service = { path = "crates/identity-service" }
+tenantry-identity-api = { path = "crates/identity-api" }
 
 # Stripe client, modular line. A release candidate over the stale 0.41 stable
 # line, so pinned exactly: a caret range would float across RCs, which may

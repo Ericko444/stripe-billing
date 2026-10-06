@@ -1,5 +1,5 @@
 [package]
-name = "identity-service"
+name = "tenantry-identity-service"
 description = "Identity module use cases, plus the Argon2id, OS-random token and clock implementations of identity-domain's ports. No dependency on the billing module."
 version.workspace = true
 edition.workspace = true
@@ -13,9 +13,9 @@ publish.workspace = true
 [dependencies]
 argon2.workspace = true
 async-trait.workspace = true
-audit.workspace = true
+tenantry-audit.workspace = true
 getrandom.workspace = true
-identity-domain.workspace = true
+tenantry-identity-domain.workspace = true
 secrecy.workspace = true
 thiserror.workspace = true
 time.workspace = true

@@ -1,14 +1,14 @@
 //! Stripe adapter: the outbound `BillingProvider` path and the inbound
 //! webhook path, with everything each needs.
 //!
-//! **Outbound** — every mutating call `domain::BillingProvider` names:
+//! **Outbound** — every mutating call `tenantry_domain::BillingProvider` names:
 //! customer create/update and subscription create/change/cancel, plus
 //! SetupIntent, Checkout Session and payment-method set-default/detach. One
 //! file per Stripe resource (`customers.rs`,
 //! `subscriptions.rs`, `setup_intents.rs`, `checkout.rs`,
 //! `payment_methods.rs`); `provider.rs` is pure delegation. Everything each
 //! needs: client construction with a base-URL override ([`build_client`]),
-//! the [`StripeError`] taxonomy and its flattening to `domain::DomainError`,
+//! the [`StripeError`] taxonomy and its flattening to `tenantry_domain::DomainError`,
 //! the request [`fingerprint`], the reserve/complete state machine
 //! ([`Ledger`]), and [`StripeBillingProvider`], which wires them together.
 //!
@@ -20,7 +20,7 @@
 //! adapter is pointed back to `service` for the sequence.
 //!
 //! **Inbound** — verified, deduplicated webhook receipt behind
-//! `domain::WebhookVerifier`: hand-rolled signature verification
+//! `tenantry_domain::WebhookVerifier`: hand-rolled signature verification
 //! (`webhook_signature`, accepting *any* matching `v1` so an endpoint-secret
 //! rotation never rejects a valid delivery), the [`WebhookError`] taxonomy
 //! (which flattens to *nothing* — see its docs), [`WebhookConfig`], and

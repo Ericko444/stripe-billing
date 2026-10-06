@@ -9,7 +9,7 @@
 //! crate allowed to name both.
 //!
 //! It has to live here, not in `identity-api`: `TenantExtractor` requires
-//! `FromRequestParts<api::AppState, Rejection = api::ApiError>`, and naming
+//! `FromRequestParts<tenantry_api::AppState, Rejection = tenantry_api::ApiError>`, and naming
 //! either type would make the identity module depend on billing.
 //!
 //! The claim is checkable: `git diff --stat` over `crates/api` (and
@@ -38,11 +38,11 @@
 //! Each is a follow-up that starts with a deliberate change to `api`, not a
 //! workaround in the host.
 
-use api::{ApiError, AppState};
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use domain::TenantId;
-use identity_api::AuthenticatedSession;
+use tenantry_api::{ApiError, AppState};
+use tenantry_domain::TenantId;
+use tenantry_identity_api::AuthenticatedSession;
 
 /// The tenant an identity session is scoped to, as billing's `TenantId`.
 /// Satisfies `TenantExtractor` by blanket impl.

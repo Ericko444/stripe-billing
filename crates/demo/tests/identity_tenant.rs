@@ -11,7 +11,6 @@ mod common;
 use std::error::Error;
 use std::sync::Arc;
 
-use api::billing_router;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::Extension;
@@ -20,14 +19,15 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use common::unused_state;
 use demo::identity_tenant::IdentityTenant;
-use identity_api::IdentityState;
-use identity_domain::{NewSession, SessionRepository, SplitToken, TenantId, UserId};
-use identity_pg::{PgMembershipRepository, PgSessionRepository, PgUserRepository};
-use identity_service::{Argon2Hasher, AuthService, InMemoryRateLimiter, SystemClock};
 use secrecy::ExposeSecret;
 use serde_json::Value;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use tenantry_api::billing_router;
+use tenantry_identity_api::IdentityState;
+use tenantry_identity_domain::{NewSession, SessionRepository, SplitToken, TenantId, UserId};
+use tenantry_identity_pg::{PgMembershipRepository, PgSessionRepository, PgUserRepository};
+use tenantry_identity_service::{Argon2Hasher, AuthService, InMemoryRateLimiter, SystemClock};
 use testcontainers::core::wait::LogWaitStrategy;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
@@ -45,7 +45,7 @@ fn billing_router_accepts_identity_tenant() -> Router {
 }
 
 async fn whoami(tenant: IdentityTenant) -> impl IntoResponse {
-    let tenant_id: domain::TenantId = tenant.into();
+    let tenant_id: tenantry_domain::TenantId = tenant.into();
     tenant_id.as_uuid().to_string()
 }
 
@@ -68,8 +68,8 @@ async fn world() -> Result<World, Box<dyn Error>> {
     let port = container.get_host_port_ipv4(5432.tcp()).await?;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = PgPoolOptions::new().connect(&url).await?;
-    identity_pg::run_migrations(&pool).await?;
-    audit_pg::run_migrations(&pool).await?;
+    tenantry_identity_pg::run_migrations(&pool).await?;
+    tenantry_audit_pg::run_migrations(&pool).await?;
 
     let authentication = AuthService::new(
         PgUserRepository::new(pool.clone()),
@@ -91,7 +91,7 @@ async fn world() -> Result<World, Box<dyn Error>> {
             Arc::new(NoMembers),
             Arc::new(NoDeactivations),
             Arc::new(InMemoryRateLimiter::new(SystemClock)),
-            identity_service::reset_queue(1).0,
+            tenantry_identity_service::reset_queue(1).0,
         )));
 
     Ok(World {
@@ -136,7 +136,7 @@ async fn session_cookie(
     tenant: Option<TenantId>,
     expires_in: Duration,
 ) -> Result<String, Box<dyn Error>> {
-    let token = identity_service::generate_token()?;
+    let token = tenantry_identity_service::generate_token()?;
     let now = OffsetDateTime::now_utc();
     let expires_at = now + expires_in;
     PgSessionRepository::new(pool.clone())
@@ -233,14 +233,14 @@ async fn every_refusal_is_billings_one_identical_401() -> Result<(), Box<dyn Err
 struct NoResets;
 
 #[async_trait::async_trait]
-impl identity_service::PasswordResets for NoResets {
+impl tenantry_identity_service::PasswordResets for NoResets {
     async fn complete_reset(
         &self,
         _: &str,
-        _: identity_domain::Password,
-        _: audit::CorrelationId,
-    ) -> Result<(), identity_service::CompleteResetError> {
-        Err(identity_service::CompleteResetError::Unavailable(
+        _: tenantry_identity_domain::Password,
+        _: tenantry_audit::CorrelationId,
+    ) -> Result<(), tenantry_identity_service::CompleteResetError> {
+        Err(tenantry_identity_service::CompleteResetError::Unavailable(
             "not used by the boundary proof".into(),
         ))
     }
@@ -250,35 +250,37 @@ impl identity_service::PasswordResets for NoResets {
 struct NoMembers;
 
 #[async_trait::async_trait]
-impl identity_service::Members for NoMembers {
+impl tenantry_identity_service::Members for NoMembers {
     async fn list_members(
         &self,
-        _: &identity_service::ActiveSession,
-    ) -> Result<Vec<identity_domain::TenantMember>, identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+    ) -> Result<Vec<tenantry_identity_domain::TenantMember>, tenantry_identity_service::MembersError>
+    {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by the boundary proof".into(),
         ))
     }
 
     async fn add_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: &identity_domain::Email,
-        _: identity_domain::Role,
-        _: audit::CorrelationId,
-    ) -> Result<identity_domain::TenantMember, identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+        _: &tenantry_identity_domain::Email,
+        _: tenantry_identity_domain::Role,
+        _: tenantry_audit::CorrelationId,
+    ) -> Result<tenantry_identity_domain::TenantMember, tenantry_identity_service::MembersError>
+    {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by the boundary proof".into(),
         ))
     }
 
     async fn suspend_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
-        _: audit::CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
+        _: tenantry_audit::CorrelationId,
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by the boundary proof".into(),
         ))
     }
@@ -290,35 +292,35 @@ impl identity_service::Members for NoMembers {
 struct NoDeactivations;
 
 #[async_trait::async_trait]
-impl identity_service::Deactivations for NoDeactivations {
+impl tenantry_identity_service::Deactivations for NoDeactivations {
     async fn deactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
-        _: audit::CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
+        _: tenantry_audit::CorrelationId,
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn reactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
-        _: audit::CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
+        _: tenantry_audit::CorrelationId,
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn deactivate_self(
         &self,
-        _: &identity_service::ActiveSession,
-        _: audit::CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_audit::CorrelationId,
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }

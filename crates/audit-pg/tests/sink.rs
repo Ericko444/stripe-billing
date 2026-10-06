@@ -6,8 +6,10 @@ mod common;
 
 use std::error::Error;
 
-use audit::{Action, Actor, AuditEntry, AuditSink, CorrelationId, Target, TargetId, TenantId};
-use audit_pg::PgAuditSink;
+use tenantry_audit::{
+    Action, Actor, AuditEntry, AuditSink, CorrelationId, Target, TargetId, TenantId,
+};
+use tenantry_audit_pg::PgAuditSink;
 use time::OffsetDateTime;
 use uuid::Uuid;
 

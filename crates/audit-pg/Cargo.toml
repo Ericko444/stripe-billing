@@ -1,5 +1,5 @@
 [package]
-name = "audit-pg"
+name = "tenantry-audit-pg"
 description = "Postgres adapter for the audit crate: its own schema, an append-only table, and an insert usable inside a caller's transaction."
 version.workspace = true
 edition.workspace = true
@@ -11,7 +11,7 @@ categories.workspace = true
 publish.workspace = true
 
 [dependencies]
-audit.workspace = true
+tenantry-audit.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
@@ -21,7 +21,7 @@ uuid.workspace = true
 # crate's migrator coexist against one real Postgres needs the real other
 # migrator. It never appears in the production dependency graph.
 [dev-dependencies]
-persistence.workspace = true
+tenantry-persistence.workspace = true
 testcontainers.workspace = true
 time.workspace = true
 tokio.workspace = true

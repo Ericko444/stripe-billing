@@ -1,5 +1,5 @@
-use identity_domain::{SELECTOR_BYTES, SplitToken, VERIFIER_BYTES};
 use secrecy::{ExposeSecret, SecretString};
+use tenantry_identity_domain::{SELECTOR_BYTES, SplitToken, VERIFIER_BYTES};
 use thiserror::Error;
 
 /// A fresh [`SplitToken`] from the operating system's CSPRNG.

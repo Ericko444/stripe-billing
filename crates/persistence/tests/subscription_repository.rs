@@ -4,16 +4,16 @@ mod common;
 
 use std::error::Error;
 
-use audit::{
+use sqlx::PgPool;
+use tenantry_audit::{
     Action, Actor, AuditEntry, CorrelationId, Target, TargetId, TenantId as AuditTenantId,
 };
-use domain::{
+use tenantry_domain::{
     Currency, CustomerId, CustomerRepository, DomainError, EventApplication, Money, PlanId,
     PlanRepository, Subscription, SubscriptionRepository, SubscriptionSnapshot, SubscriptionStatus,
     TenantId,
 };
-use persistence::{PgCustomerRepository, PgPlanRepository, PgSubscriptionRepository};
-use sqlx::PgPool;
+use tenantry_persistence::{PgCustomerRepository, PgPlanRepository, PgSubscriptionRepository};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 

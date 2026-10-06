@@ -13,8 +13,8 @@
 //! is what keeps the read tests running in a millisecond.
 
 use async_trait::async_trait;
-use audit::{Action, Actor, AuditEntry, AuditSink, CorrelationId, Target, TargetId};
-use domain::{
+use tenantry_audit::{Action, Actor, AuditEntry, AuditSink, CorrelationId, Target, TargetId};
+use tenantry_domain::{
     BillingProvider, CancellationTiming, CheckoutSessionParams, CheckoutSessionSnapshot,
     CreateCustomerParams, CustomerRepository, DomainError, PaymentMethod, PaymentMethodId,
     PaymentMethodRepository, PlanId, PlanRepository, SetupIntentSnapshot, Subscription,
@@ -302,7 +302,7 @@ where
                 )
             })?;
         let entry = AuditEntry::new(
-            audit::TenantId::new(tenant.as_uuid()),
+            tenantry_audit::TenantId::new(tenant.as_uuid()),
             Actor::System,
             Action::SetupIntentCreated,
             Target::Customer(TargetId::new(customer_id.as_uuid())),
@@ -355,7 +355,7 @@ where
         // goes through the webhook ordering guard.
         let now = OffsetDateTime::now_utc();
         let entry = AuditEntry::new(
-            audit::TenantId::new(tenant.as_uuid()),
+            tenantry_audit::TenantId::new(tenant.as_uuid()),
             Actor::System,
             Action::SubscriptionPlanChanged,
             Target::Subscription(TargetId::new(subscription_id.as_uuid())),
@@ -396,7 +396,7 @@ where
 
         let now = OffsetDateTime::now_utc();
         let entry = AuditEntry::new(
-            audit::TenantId::new(tenant.as_uuid()),
+            tenantry_audit::TenantId::new(tenant.as_uuid()),
             Actor::System,
             Action::SubscriptionCanceled,
             Target::Subscription(TargetId::new(subscription_id.as_uuid())),
@@ -447,7 +447,7 @@ where
         // cleared and new one set together), audited in the same
         // transaction (D1(h)).
         let entry = AuditEntry::new(
-            audit::TenantId::new(tenant.as_uuid()),
+            tenantry_audit::TenantId::new(tenant.as_uuid()),
             Actor::System,
             Action::PaymentMethodSetDefault,
             Target::PaymentMethod(TargetId::new(payment_method_id.as_uuid())),
@@ -492,7 +492,7 @@ where
         // `PaymentMethodRepository::remove`'s own docs).
         let now = OffsetDateTime::now_utc();
         let entry = AuditEntry::new(
-            audit::TenantId::new(tenant.as_uuid()),
+            tenantry_audit::TenantId::new(tenant.as_uuid()),
             Actor::System,
             Action::PaymentMethodDetached,
             Target::PaymentMethod(TargetId::new(payment_method_id.as_uuid())),
@@ -546,7 +546,7 @@ where
         // own parameter, so unlike `create_setup_intent` there is no extra
         // lookup needed for the target.
         let entry = AuditEntry::new(
-            audit::TenantId::new(tenant.as_uuid()),
+            tenantry_audit::TenantId::new(tenant.as_uuid()),
             Actor::System,
             Action::CheckoutSessionStarted,
             Target::Plan(TargetId::new(plan_id.as_uuid())),
@@ -566,7 +566,7 @@ where
 mod tests {
     use std::error::Error;
 
-    use domain::{Currency, Customer, CustomerId, Money, Plan};
+    use tenantry_domain::{Currency, Customer, CustomerId, Money, Plan};
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
@@ -756,9 +756,12 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
-        assert_eq!(entry.actor(), audit::Actor::System);
-        assert_eq!(entry.action(), audit::Action::SetupIntentCreated);
-        assert!(matches!(entry.target(), audit::Target::Customer(_)));
+        assert_eq!(entry.actor(), tenantry_audit::Actor::System);
+        assert_eq!(entry.action(), tenantry_audit::Action::SetupIntentCreated);
+        assert!(matches!(
+            entry.target(),
+            tenantry_audit::Target::Customer(_)
+        ));
         assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
     }
@@ -856,11 +859,14 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
-        assert_eq!(entry.actor(), audit::Actor::System);
-        assert_eq!(entry.action(), audit::Action::SubscriptionPlanChanged);
+        assert_eq!(entry.actor(), tenantry_audit::Actor::System);
+        assert_eq!(
+            entry.action(),
+            tenantry_audit::Action::SubscriptionPlanChanged
+        );
         assert_eq!(
             entry.target(),
-            audit::Target::Subscription(audit::TargetId::new(sub_id.as_uuid()))
+            tenantry_audit::Target::Subscription(tenantry_audit::TargetId::new(sub_id.as_uuid()))
         );
         assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
@@ -991,11 +997,11 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
-        assert_eq!(entry.actor(), audit::Actor::System);
-        assert_eq!(entry.action(), audit::Action::SubscriptionCanceled);
+        assert_eq!(entry.actor(), tenantry_audit::Actor::System);
+        assert_eq!(entry.action(), tenantry_audit::Action::SubscriptionCanceled);
         assert_eq!(
             entry.target(),
-            audit::Target::Subscription(audit::TargetId::new(sub_id.as_uuid()))
+            tenantry_audit::Target::Subscription(tenantry_audit::TargetId::new(sub_id.as_uuid()))
         );
         assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
@@ -1090,11 +1096,14 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
-        assert_eq!(entry.actor(), audit::Actor::System);
-        assert_eq!(entry.action(), audit::Action::PaymentMethodSetDefault);
+        assert_eq!(entry.actor(), tenantry_audit::Actor::System);
+        assert_eq!(
+            entry.action(),
+            tenantry_audit::Action::PaymentMethodSetDefault
+        );
         assert_eq!(
             entry.target(),
-            audit::Target::PaymentMethod(audit::TargetId::new(pm_id.as_uuid()))
+            tenantry_audit::Target::PaymentMethod(tenantry_audit::TargetId::new(pm_id.as_uuid()))
         );
         assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
@@ -1236,11 +1245,14 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
-        assert_eq!(entry.actor(), audit::Actor::System);
-        assert_eq!(entry.action(), audit::Action::PaymentMethodDetached);
+        assert_eq!(entry.actor(), tenantry_audit::Actor::System);
+        assert_eq!(
+            entry.action(),
+            tenantry_audit::Action::PaymentMethodDetached
+        );
         assert_eq!(
             entry.target(),
-            audit::Target::PaymentMethod(audit::TargetId::new(pm_id.as_uuid()))
+            tenantry_audit::Target::PaymentMethod(tenantry_audit::TargetId::new(pm_id.as_uuid()))
         );
         assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())
@@ -1389,11 +1401,14 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.tenant_id().as_uuid(), tenant.as_uuid());
-        assert_eq!(entry.actor(), audit::Actor::System);
-        assert_eq!(entry.action(), audit::Action::CheckoutSessionStarted);
+        assert_eq!(entry.actor(), tenantry_audit::Actor::System);
+        assert_eq!(
+            entry.action(),
+            tenantry_audit::Action::CheckoutSessionStarted
+        );
         assert_eq!(
             entry.target(),
-            audit::Target::Plan(audit::TargetId::new(plan_id.as_uuid()))
+            tenantry_audit::Target::Plan(tenantry_audit::TargetId::new(plan_id.as_uuid()))
         );
         assert_eq!(entry.correlation_id().as_uuid(), correlation_id);
         Ok(())

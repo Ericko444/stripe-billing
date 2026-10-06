@@ -1,5 +1,5 @@
 [package]
-name = "identity-api"
+name = "tenantry-identity-api"
 description = "Axum router factory for the identity module: session cookie, session extractor, correlation id, problem+json. Exposes a Router, never a binary, and names no billing crate."
 version.workspace = true
 edition.workspace = true
@@ -11,10 +11,10 @@ categories.workspace = true
 publish.workspace = true
 
 [dependencies]
-audit.workspace = true
+tenantry-audit.workspace = true
 axum.workspace = true
-identity-domain.workspace = true
-identity-service.workspace = true
+tenantry-identity-domain.workspace = true
+tenantry-identity-service.workspace = true
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true

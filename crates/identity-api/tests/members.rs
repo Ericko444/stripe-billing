@@ -8,22 +8,22 @@ use std::future::{Future, ready};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use audit::CorrelationId;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
-use identity_api::{IdentityState, identity_router};
-use identity_domain::{
+use serde_json::Value;
+use tenantry_audit::CorrelationId;
+use tenantry_identity_api::{IdentityState, identity_router};
+use tenantry_identity_domain::{
     Email, GrantOutcome, MailError, MailPurpose, Mailer, MemberGrant, MemberRepository,
     MemberSuspension, MembershipId, MembershipStatus, OutgoingMail, Password, RepositoryError,
     Role, SessionId, SessionTenant, TenantId, TenantMember, UserId,
 };
-use identity_service::{
+use tenantry_identity_service::{
     ActiveSession, Authentication, CompleteResetError, InMemoryRateLimiter, LoginError,
     LoginOutcome, Me, MembersService, PasswordChangeError, PasswordResets, ProfileError,
     SelectTenantError, SessionError, SystemClock, TenantSelection, reset_queue,
 };
-use serde_json::Value;
 use time::{Duration, OffsetDateTime};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -505,35 +505,35 @@ async fn a_membership_that_is_not_this_tenants_is_one_404_and_a_bad_id_is_400()
 struct NoDeactivations;
 
 #[async_trait]
-impl identity_service::Deactivations for NoDeactivations {
+impl tenantry_identity_service::Deactivations for NoDeactivations {
     async fn deactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn reactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn deactivate_self(
         &self,
-        _: &identity_service::ActiveSession,
+        _: &tenantry_identity_service::ActiveSession,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }

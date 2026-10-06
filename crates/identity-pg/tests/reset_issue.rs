@@ -4,13 +4,13 @@ mod common;
 
 use std::error::Error;
 
-use audit::{Action, Actor, CorrelationId, Target, TargetId};
 use common::{membership, tenant, user};
-use identity_domain::{
+use secrecy::ExposeSecret;
+use tenantry_audit::{Action, Actor, CorrelationId, Target, TargetId};
+use tenantry_identity_domain::{
     AccountEvent, NewPasswordToken, PasswordTokenRepository, SplitToken, TokenPurpose, UserId,
 };
-use identity_pg::PgPasswordTokenRepository;
-use secrecy::ExposeSecret;
+use tenantry_identity_pg::PgPasswordTokenRepository;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 

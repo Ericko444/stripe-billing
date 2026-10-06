@@ -1,7 +1,7 @@
 use core::fmt;
 use std::future::Future;
 
-use audit::AuditEntry;
+use tenantry_audit::AuditEntry;
 use time::OffsetDateTime;
 use uuid::Uuid;
 

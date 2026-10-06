@@ -1,8 +1,10 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use identity_domain::RateLimiter;
-use identity_service::{Authentication, Deactivations, Members, PasswordResets, ResetQueue};
+use tenantry_identity_domain::RateLimiter;
+use tenantry_identity_service::{
+    Authentication, Deactivations, Members, PasswordResets, ResetQueue,
+};
 
 /// What the identity routes and [`AuthenticatedSession`] need, carried as a
 /// request extension.

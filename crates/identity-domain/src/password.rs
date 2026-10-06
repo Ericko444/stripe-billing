@@ -29,7 +29,7 @@ pub const MAX_PASSWORD_CHARS: usize = 128;
 /// `Display` or `Serialize`:
 ///
 /// ```compile_fail
-/// use identity_domain::Password;
+/// use tenantry_identity_domain::Password;
 ///
 /// let password = Password::new("correct horse battery staple".to_string());
 /// // Does not compile: `Password` has no `Display`.
@@ -37,7 +37,7 @@ pub const MAX_PASSWORD_CHARS: usize = 128;
 /// ```
 ///
 /// ```compile_fail
-/// use identity_domain::Password;
+/// use tenantry_identity_domain::Password;
 ///
 /// fn requires_serialize<T: serde::Serialize>(_: &T) {}
 ///
@@ -50,7 +50,7 @@ pub const MAX_PASSWORD_CHARS: usize = 128;
 /// for a typo: the same imports and constructor compile here.
 ///
 /// ```
-/// use identity_domain::Password;
+/// use tenantry_identity_domain::Password;
 ///
 /// fn requires_debug<T: std::fmt::Debug>(_: &T) {}
 ///

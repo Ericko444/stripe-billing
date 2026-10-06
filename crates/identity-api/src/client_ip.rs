@@ -2,7 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::request::Parts;
-use identity_domain::ClientIp;
+use tenantry_identity_domain::ClientIp;
 
 use crate::correlation::correlation_id;
 use crate::error::{ErrorKind, IdentityError};

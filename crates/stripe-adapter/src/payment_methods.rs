@@ -1,7 +1,7 @@
-use domain::{DomainError, OutboundRequestRepository, TenantId};
 use stripe::{RequestStrategy, StripeRequest};
 use stripe_core::customer::{UpdateCustomer, UpdateCustomerInvoiceSettings};
 use stripe_payment::payment_method::DetachPaymentMethod;
+use tenantry_domain::{DomainError, OutboundRequestRepository, TenantId};
 
 use crate::ledger::{Ledger, idempotency_key};
 use crate::{StripeError, fingerprint};

@@ -1,8 +1,8 @@
 use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
-use domain::{DomainError, PaymentMethodId, TenantId};
-use service::RequestContext;
+use tenantry_domain::{DomainError, PaymentMethodId, TenantId};
+use tenantry_service::RequestContext;
 use uuid::Uuid;
 
 use crate::dto::{PaymentMethodDto, SetupIntentDto};

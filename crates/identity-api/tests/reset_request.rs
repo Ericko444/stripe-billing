@@ -6,14 +6,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use audit::CorrelationId;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
-use identity_api::{IdentityState, identity_router};
-use identity_domain::{Email, Password, TenantId};
-use identity_service::{
+use tenantry_audit::CorrelationId;
+use tenantry_identity_api::{IdentityState, identity_router};
+use tenantry_identity_domain::{Email, Password, TenantId};
+use tenantry_identity_service::{
     ActiveSession, Authentication, CompleteResetError, InMemoryRateLimiter, LoginError,
     LoginOutcome, Me, PasswordChangeError, PasswordResets, ProfileError, ResetReceiver,
     SelectTenantError, SessionError, SystemClock, TenantSelection, reset_queue,
@@ -101,11 +101,12 @@ impl PasswordResets for CountingAuth {
 }
 
 #[async_trait]
-impl identity_service::Members for CountingAuth {
+impl tenantry_identity_service::Members for CountingAuth {
     async fn list_members(
         &self,
         _: &ActiveSession,
-    ) -> Result<Vec<identity_domain::TenantMember>, identity_service::MembersError> {
+    ) -> Result<Vec<tenantry_identity_domain::TenantMember>, tenantry_identity_service::MembersError>
+    {
         self.called();
         Ok(Vec::new())
     }
@@ -113,22 +114,23 @@ impl identity_service::Members for CountingAuth {
     async fn add_member(
         &self,
         _: &ActiveSession,
-        _: &identity_domain::Email,
-        _: identity_domain::Role,
+        _: &tenantry_identity_domain::Email,
+        _: tenantry_identity_domain::Role,
         _: CorrelationId,
-    ) -> Result<identity_domain::TenantMember, identity_service::MembersError> {
+    ) -> Result<tenantry_identity_domain::TenantMember, tenantry_identity_service::MembersError>
+    {
         self.called();
-        Err(identity_service::MembersError::Forbidden)
+        Err(tenantry_identity_service::MembersError::Forbidden)
     }
 
     async fn suspend_member(
         &self,
         _: &ActiveSession,
-        _: identity_domain::MembershipId,
+        _: tenantry_identity_domain::MembershipId,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
+    ) -> Result<(), tenantry_identity_service::MembersError> {
         self.called();
-        Err(identity_service::MembersError::Forbidden)
+        Err(tenantry_identity_service::MembersError::Forbidden)
     }
 }
 
@@ -311,35 +313,35 @@ async fn an_address_that_does_not_parse_is_400() -> Result<(), Box<dyn Error>> {
 struct NoDeactivations;
 
 #[async_trait]
-impl identity_service::Deactivations for NoDeactivations {
+impl tenantry_identity_service::Deactivations for NoDeactivations {
     async fn deactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn reactivate_member(
         &self,
-        _: &identity_service::ActiveSession,
-        _: identity_domain::MembershipId,
+        _: &tenantry_identity_service::ActiveSession,
+        _: tenantry_identity_domain::MembershipId,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }
 
     async fn deactivate_self(
         &self,
-        _: &identity_service::ActiveSession,
+        _: &tenantry_identity_service::ActiveSession,
         _: CorrelationId,
-    ) -> Result<(), identity_service::MembersError> {
-        Err(identity_service::MembersError::Unavailable(
+    ) -> Result<(), tenantry_identity_service::MembersError> {
+        Err(tenantry_identity_service::MembersError::Unavailable(
             "not used by these tests".into(),
         ))
     }

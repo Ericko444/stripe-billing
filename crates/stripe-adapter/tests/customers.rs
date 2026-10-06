@@ -9,8 +9,8 @@ mod common;
 
 use std::error::Error;
 
-use domain::{CreateCustomerParams, TenantId, UpdateCustomerParams};
-use stripe_adapter::StripeBillingProvider;
+use tenantry_domain::{CreateCustomerParams, TenantId, UpdateCustomerParams};
+use tenantry_stripe_adapter::StripeBillingProvider;
 use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};

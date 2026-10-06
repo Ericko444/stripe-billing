@@ -4,10 +4,10 @@ mod common;
 
 use std::error::Error;
 
-use audit::{Action, Actor, AuditEntry, CorrelationId, SubjectId, Target, TargetId};
 use common::{membership, session_for, tenant, user};
-use identity_domain::{SessionRepository, SplitToken};
-use identity_pg::PgSessionRepository;
+use tenantry_audit::{Action, Actor, AuditEntry, CorrelationId, SubjectId, Target, TargetId};
+use tenantry_identity_domain::{SessionRepository, SplitToken};
+use tenantry_identity_pg::PgSessionRepository;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -26,7 +26,7 @@ async fn rotation_replaces_the_old_session_and_audits_in_one_step() -> Result<()
     let new_token = SplitToken::from_bytes([3; 16], [4; 32]);
     let correlation = Uuid::new_v4();
     let entry = AuditEntry::new(
-        audit::TenantId::new(tenant_a.as_uuid()),
+        tenantry_audit::TenantId::new(tenant_a.as_uuid()),
         Actor::User(SubjectId::new(alice.as_uuid())),
         Action::SessionStarted,
         Target::User(TargetId::new(alice.as_uuid())),

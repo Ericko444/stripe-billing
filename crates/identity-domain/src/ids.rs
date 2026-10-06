@@ -28,7 +28,7 @@ id_type!(
 id_type!(
     /// Identifies a tenant, local to the identity module.
     ///
-    /// A parallel type to the billing module's `domain::TenantId`, not a
+    /// A parallel type to the billing module's `tenantry_domain::TenantId`, not a
     /// re-export: this crate may not depend on `domain`. The host converts
     /// between the two through the `Uuid`, in the one place that names both
     /// modules.

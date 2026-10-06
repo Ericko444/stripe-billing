@@ -1,5 +1,5 @@
-use domain::{Customer, CustomerId, CustomerRepository, DomainError, TenantId};
 use sqlx::PgPool;
+use tenantry_domain::{Customer, CustomerId, CustomerRepository, DomainError, TenantId};
 use time::OffsetDateTime;
 use uuid::Uuid;
 

@@ -1,5 +1,5 @@
 //! Proves the claim `run_migrations`'s own rustdoc makes: this crate's
-//! migrator and `persistence::run_migrations` can run against **one**
+//! migrator and `tenantry_persistence::run_migrations` can run against **one**
 //! database without colliding, because this one tracks its state in
 //! `audit._sqlx_migrations` rather than the default `_sqlx_migrations`
 //! `persistence` uses.
@@ -40,10 +40,10 @@ async fn both_migrators_share_one_database_and_are_idempotent() -> Result<(), Bo
     // audit first, then billing -- and each runs twice, proving "safe to
     // call repeatedly" for both, on a database the other has already
     // touched.
-    audit_pg::run_migrations(&pool).await?;
-    persistence::run_migrations(&pool).await?;
-    audit_pg::run_migrations(&pool).await?;
-    persistence::run_migrations(&pool).await?;
+    tenantry_audit_pg::run_migrations(&pool).await?;
+    tenantry_persistence::run_migrations(&pool).await?;
+    tenantry_audit_pg::run_migrations(&pool).await?;
+    tenantry_persistence::run_migrations(&pool).await?;
 
     // Each migrator's own tracking table exists, is distinct, and has rows
     // -- proof neither one's migrations were skipped or misfiled into the
@@ -80,8 +80,8 @@ async fn migrator_order_does_not_matter() -> Result<(), Box<dyn Error>> {
     let (pool, _container) = fresh_pool().await?;
 
     // Reversed order from the test above -- billing first this time.
-    persistence::run_migrations(&pool).await?;
-    audit_pg::run_migrations(&pool).await?;
+    tenantry_persistence::run_migrations(&pool).await?;
+    tenantry_audit_pg::run_migrations(&pool).await?;
 
     sqlx::query("SELECT 1 FROM audit.audit_log LIMIT 0")
         .fetch_optional(&pool)

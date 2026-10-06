@@ -7,12 +7,12 @@ mod common;
 use std::collections::BTreeMap;
 use std::error::Error;
 
-use audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
 use common::{membership, session_for, tenant, user};
-use identity_domain::{
+use tenantry_audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
+use tenantry_identity_domain::{
     AccountEvent, PasswordHash, SessionRepository, SplitToken, UserId, UserRepository,
 };
-use identity_pg::{PgSessionRepository, PgUserRepository};
+use tenantry_identity_pg::{PgSessionRepository, PgUserRepository};
 use time::OffsetDateTime;
 use uuid::Uuid;
 

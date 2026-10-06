@@ -1,5 +1,5 @@
-use audit::{AuditEntry, AuditError, AuditSink};
 use sqlx::PgPool;
+use tenantry_audit::{AuditEntry, AuditError, AuditSink};
 
 use crate::insert;
 

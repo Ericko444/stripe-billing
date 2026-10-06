@@ -1,5 +1,5 @@
-use audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
-use identity_domain::{
+use tenantry_audit::{Action, Actor, CorrelationId, SubjectId, Target, TargetId};
+use tenantry_identity_domain::{
     AccountEvent, Clock, DisplayName, MembershipRepository, PasswordHasher, SessionRepository,
     UserRepository,
 };
@@ -64,7 +64,7 @@ where
 mod tests {
     use std::error::Error;
 
-    use identity_domain::{Email, SessionId, User, UserId};
+    use tenantry_identity_domain::{Email, SessionId, User, UserId};
     use time::Duration;
     use uuid::Uuid;
 

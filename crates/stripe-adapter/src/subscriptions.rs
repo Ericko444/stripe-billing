@@ -1,12 +1,12 @@
-use domain::{
-    CancellationTiming, DomainError, OutboundRequestRepository, SubscriptionSnapshot,
-    SubscriptionStatus, TenantId,
-};
 use stripe::{RequestStrategy, StripeRequest};
 use stripe_billing::subscription::{
     CancelSubscription, CreateSubscription, CreateSubscriptionItems,
     CreateSubscriptionPaymentBehavior, UpdateSubscription, UpdateSubscriptionItems,
     UpdateSubscriptionPaymentBehavior, UpdateSubscriptionProrationBehavior,
+};
+use tenantry_domain::{
+    CancellationTiming, DomainError, OutboundRequestRepository, SubscriptionSnapshot,
+    SubscriptionStatus, TenantId,
 };
 use time::OffsetDateTime;
 

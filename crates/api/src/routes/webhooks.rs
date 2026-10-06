@@ -1,7 +1,7 @@
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use domain::WebhookReceipt;
+use tenantry_domain::WebhookReceipt;
 
 use crate::{ApiError, AppState};
 

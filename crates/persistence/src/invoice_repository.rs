@@ -1,9 +1,9 @@
-use audit::AuditEntry;
-use domain::{
+use sqlx::PgPool;
+use tenantry_audit::AuditEntry;
+use tenantry_domain::{
     CustomerId, DomainError, EventApplication, Invoice, InvoiceCursor, InvoiceId, InvoicePage,
     InvoiceRepository, InvoiceStatus, Money, SubscriptionId, TenantId,
 };
-use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -272,7 +272,7 @@ impl InvoiceRepository for PgInvoiceRepository {
             EventApplication::Applied
         };
 
-        audit_pg::insert(&mut tx, &entry)
+        tenantry_audit_pg::insert(&mut tx, &entry)
             .await
             .map_err(RepositoryError::from)
             .map_err(to_domain_error)?;

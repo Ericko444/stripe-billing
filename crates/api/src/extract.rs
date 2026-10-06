@@ -8,7 +8,7 @@
 //! rather than a 500 in production.
 
 use axum::extract::FromRequestParts;
-use domain::TenantId;
+use tenantry_domain::TenantId;
 
 use crate::{ApiError, AppState};
 

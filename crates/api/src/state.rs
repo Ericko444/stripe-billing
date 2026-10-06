@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use domain::WebhookVerifier;
-use service::{Reads, WebhookHandler, Writes};
+use tenantry_domain::WebhookVerifier;
+use tenantry_service::{Reads, WebhookHandler, Writes};
 
 /// The success/cancel URLs a Checkout Session redirects the customer to.
 ///

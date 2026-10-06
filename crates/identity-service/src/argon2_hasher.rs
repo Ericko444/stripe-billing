@@ -2,10 +2,10 @@ use std::future::Future;
 use std::sync::Arc;
 
 use argon2::{Algorithm, Argon2, Params, PasswordHasher as _, PasswordVerifier as _, Version};
-use identity_domain::{
+use secrecy::{ExposeSecret, SecretString};
+use tenantry_identity_domain::{
     NewPassword, Password, PasswordHash, PasswordHashError, PasswordHasher, Verification,
 };
-use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::Semaphore;
 
 /// Argon2id memory cost, in KiB (19 MiB).
@@ -183,7 +183,7 @@ fn uses_live_parameters(live: &Params, phc: &argon2::PasswordHash) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use identity_domain::{NewPassword, Password};
+    use tenantry_identity_domain::{NewPassword, Password};
 
     use super::*;
 

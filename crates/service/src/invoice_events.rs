@@ -1,9 +1,9 @@
-use audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
-use domain::{
+use serde_json::Value;
+use tenantry_audit::{Action, Actor, AuditEntry, CorrelationId, Target, TargetId};
+use tenantry_domain::{
     BillingEvent, Currency, CustomerRepository, DomainError, EventApplication, InvoiceId,
     InvoiceRepository, InvoiceStatus, Money, SubscriptionRepository, TenantId, VerifiedEvent,
 };
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
@@ -85,7 +85,7 @@ where
     // *before* calling `apply_event`. The customer id is known and stable
     // either way.
     let entry = AuditEntry::new(
-        audit::TenantId::new(tenant_id.as_uuid()),
+        tenantry_audit::TenantId::new(tenant_id.as_uuid()),
         Actor::System,
         kind.action(),
         Target::Customer(TargetId::new(customer.id.as_uuid())),
@@ -131,7 +131,7 @@ fn billing_event(
     kind: Kind,
     tenant_id: TenantId,
     invoice_id: InvoiceId,
-    subscription_id: Option<domain::SubscriptionId>,
+    subscription_id: Option<tenantry_domain::SubscriptionId>,
 ) -> BillingEvent {
     match kind {
         Kind::Paid => BillingEvent::PaymentSucceeded {
@@ -229,11 +229,11 @@ fn currency_from_code(code: &str) -> Result<Currency, DomainError> {
 mod tests {
     use std::error::Error;
 
-    use domain::{
+    use serde_json::json;
+    use tenantry_domain::{
         Customer, CustomerId, Invoice, PlanId, Subscription, SubscriptionId, SubscriptionStatus,
         WebhookEventId,
     };
-    use serde_json::json;
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
@@ -347,11 +347,11 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.tenant_id().as_uuid(), tenant_id.as_uuid());
-        assert_eq!(entry.actor(), audit::Actor::System);
-        assert_eq!(entry.action(), audit::Action::PaymentSucceeded);
+        assert_eq!(entry.actor(), tenantry_audit::Actor::System);
+        assert_eq!(entry.action(), tenantry_audit::Action::PaymentSucceeded);
         assert_eq!(
             entry.target(),
-            audit::Target::Customer(audit::TargetId::new(customer_id.as_uuid()))
+            tenantry_audit::Target::Customer(tenantry_audit::TargetId::new(customer_id.as_uuid()))
         );
         Ok(())
     }

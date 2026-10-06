@@ -1,8 +1,8 @@
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use domain::DomainError;
 use serde::Serialize;
+use tenantry_domain::DomainError;
 use uuid::Uuid;
 
 use crate::correlation::CorrelationId;

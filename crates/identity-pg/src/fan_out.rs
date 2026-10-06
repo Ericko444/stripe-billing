@@ -1,6 +1,6 @@
-use audit::AuditEntry;
-use identity_domain::{AccountEvent, RepositoryError, UserId};
 use sqlx::PgConnection;
+use tenantry_audit::AuditEntry;
+use tenantry_identity_domain::{AccountEvent, RepositoryError, UserId};
 use uuid::Uuid;
 
 use crate::error::repository_error;
@@ -54,14 +54,14 @@ pub(crate) async fn record_for_each_tenant(
 
     for tenant in &tenants {
         let entry = AuditEntry::new(
-            audit::TenantId::new(*tenant),
+            tenantry_audit::TenantId::new(*tenant),
             event.actor,
             event.action,
             event.target,
             event.occurred_at,
             event.correlation_id,
         );
-        audit_pg::insert(&mut *tx, &entry)
+        tenantry_audit_pg::insert(&mut *tx, &entry)
             .await
             .map_err(repository_error)?;
     }

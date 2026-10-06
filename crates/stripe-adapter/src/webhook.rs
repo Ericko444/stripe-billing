@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use domain::{
+use secrecy::ExposeSecret;
+use serde_json::Value;
+use tenantry_domain::{
     DomainError, VerifiedEvent, WebhookEvent, WebhookEventRepository, WebhookReceipt,
     WebhookVerifier,
 };
-use secrecy::ExposeSecret;
-use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::config::WebhookConfig;
@@ -12,7 +12,7 @@ use crate::webhook_error::WebhookError;
 use crate::webhook_signature;
 
 /// Verifies inbound Stripe webhooks and records them in the dedup ledger,
-/// behind `domain::WebhookVerifier`.
+/// behind `tenantry_domain::WebhookVerifier`.
 ///
 /// Holds the signing secret (inside [`WebhookConfig`]) so a caller — `api`,
 /// reaching this through a `dyn WebhookVerifier` — never does, plus a

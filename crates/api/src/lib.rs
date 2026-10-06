@@ -30,7 +30,7 @@
 //!
 //! The contract a host implements is [`TenantExtractor`]: an Axum
 //! `FromRequestParts` extractor that **rejects with [`ApiError`]** and
-//! converts `Into<`[`TenantId`](domain::TenantId)`>`. Pinning the rejection
+//! converts `Into<`[`TenantId`](tenantry_domain::TenantId)`>`. Pinning the rejection
 //! type is what keeps every error out of the router in
 //! `application/problem+json`. Forgetting to supply a `T` is a compile
 //! error, not a runtime 500. [`billing_router`]'s own rustdoc carries a
@@ -102,7 +102,7 @@ pub fn webhook_router(state: AppState) -> Router {
 /// `T` is the host's own type. It is bound by [`TenantExtractor`] -- an Axum
 /// [`FromRequestParts`](axum::extract::FromRequestParts) extractor that
 /// **rejects with [`ApiError`]** and converts [`Into`] a
-/// [`TenantId`](domain::TenantId). Pinning the rejection type is what keeps
+/// [`TenantId`](tenantry_domain::TenantId). Pinning the rejection type is what keeps
 /// every error out of this router in `application/problem+json`. Failing to
 /// supply a `T` is a compile error, not a runtime 500.
 ///
@@ -116,10 +116,10 @@ pub fn webhook_router(state: AppState) -> Router {
 /// writes a newtype and names it as `T`. This compiles as written:
 ///
 /// ```
-/// use api::{ApiError, AppState, billing_router};
+/// use tenantry_api::{ApiError, AppState, billing_router};
 /// use axum::extract::FromRequestParts;
 /// use axum::http::request::Parts;
-/// use domain::TenantId;
+/// use tenantry_domain::TenantId;
 ///
 /// // The host's adapter: pull the `TenantId` its middleware inserted.
 /// struct HostTenant(TenantId);

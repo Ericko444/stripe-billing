@@ -1,5 +1,5 @@
 [package]
-name = "service"
+name = "tenantry-service"
 description = "Use cases orchestrating the domain ports. Performs no I/O of its own."
 version.workspace = true
 edition.workspace = true
@@ -11,11 +11,11 @@ categories.workspace = true
 publish.workspace = true
 
 [dependencies]
-domain.workspace = true
+tenantry-domain.workspace = true
 # Constructs `AuditEntry` values for the audited write paths -- the
 # equivalent of `domain`'s own dependency on `audit` for the ports that take
 # one, one layer up.
-audit.workspace = true
+tenantry-audit.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

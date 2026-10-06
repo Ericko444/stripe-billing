@@ -7,7 +7,7 @@
 //! address stops a targeted attack from many IPs, a limit per IP stops one
 //! source working through many addresses, and neither does the other's job.
 
-use identity_domain::{ClientIp, Email, RateDecision, RateKey, RateLimit, RateLimiter};
+use tenantry_identity_domain::{ClientIp, Email, RateDecision, RateKey, RateLimit, RateLimiter};
 use time::Duration;
 
 use crate::error::{ErrorKind, IdentityError};
@@ -60,7 +60,7 @@ const RESET_COMPLETE: &str = "reset-complete";
 pub fn reset_complete_by_ip(
     limiter: &dyn RateLimiter,
     ip: ClientIp,
-    correlation_id: audit::CorrelationId,
+    correlation_id: tenantry_audit::CorrelationId,
 ) -> Result<(), IdentityError> {
     decide(
         limiter.check(&RateKey::ip(RESET_COMPLETE, ip), RESET_COMPLETE_PER_IP),
@@ -73,7 +73,7 @@ const RESET_REQUEST: &str = "reset-request";
 pub fn reset_request_by_ip(
     limiter: &dyn RateLimiter,
     ip: ClientIp,
-    correlation_id: audit::CorrelationId,
+    correlation_id: tenantry_audit::CorrelationId,
 ) -> Result<(), IdentityError> {
     decide(
         limiter.check(&RateKey::ip(RESET_REQUEST, ip), RESET_REQUEST_PER_IP),
@@ -94,7 +94,7 @@ pub fn reset_request_by_address(limiter: &dyn RateLimiter, email: &Email) -> boo
 pub fn login_by_ip(
     state: &IdentityState,
     ip: ClientIp,
-    correlation_id: audit::CorrelationId,
+    correlation_id: tenantry_audit::CorrelationId,
 ) -> Result<(), IdentityError> {
     enforce(state, &RateKey::ip(LOGIN, ip), LOGIN_PER_IP, correlation_id)
 }
@@ -104,7 +104,7 @@ pub fn login_by_address_and_ip(
     state: &IdentityState,
     email: &Email,
     ip: ClientIp,
-    correlation_id: audit::CorrelationId,
+    correlation_id: tenantry_audit::CorrelationId,
 ) -> Result<(), IdentityError> {
     enforce(
         state,
@@ -118,14 +118,14 @@ fn enforce(
     state: &IdentityState,
     key: &RateKey,
     limit: RateLimit,
-    correlation_id: audit::CorrelationId,
+    correlation_id: tenantry_audit::CorrelationId,
 ) -> Result<(), IdentityError> {
     decide(state.limiter().check(key, limit), correlation_id)
 }
 
 fn decide(
     decision: RateDecision,
-    correlation_id: audit::CorrelationId,
+    correlation_id: tenantry_audit::CorrelationId,
 ) -> Result<(), IdentityError> {
     match decision {
         RateDecision::Allowed => Ok(()),

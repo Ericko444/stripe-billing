@@ -62,9 +62,9 @@ async fn three_migrators_share_one_database_and_are_idempotent() -> Result<(), B
     let (pool, _container) = fresh_pool().await?;
 
     for _ in 0..2 {
-        persistence::run_migrations(&pool).await?;
-        audit_pg::run_migrations(&pool).await?;
-        identity_pg::run_migrations(&pool).await?;
+        tenantry_persistence::run_migrations(&pool).await?;
+        tenantry_audit_pg::run_migrations(&pool).await?;
+        tenantry_identity_pg::run_migrations(&pool).await?;
     }
 
     assert_all_three_present(&pool).await
@@ -74,9 +74,9 @@ async fn three_migrators_share_one_database_and_are_idempotent() -> Result<(), B
 async fn migrator_order_does_not_matter() -> Result<(), Box<dyn Error>> {
     let (pool, _container) = fresh_pool().await?;
 
-    identity_pg::run_migrations(&pool).await?;
-    audit_pg::run_migrations(&pool).await?;
-    persistence::run_migrations(&pool).await?;
+    tenantry_identity_pg::run_migrations(&pool).await?;
+    tenantry_audit_pg::run_migrations(&pool).await?;
+    tenantry_persistence::run_migrations(&pool).await?;
 
     assert_all_three_present(&pool).await
 }

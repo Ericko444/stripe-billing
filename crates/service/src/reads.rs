@@ -6,7 +6,7 @@
 //! layer the architecture is built on.
 
 use async_trait::async_trait;
-use domain::{
+use tenantry_domain::{
     DomainError, Invoice, InvoiceCursor, InvoiceId, InvoicePage, InvoiceRepository, PaymentMethod,
     PaymentMethodRepository, Plan, PlanRepository, Subscription, SubscriptionRepository,
     SubscriptionStatus, TenantId,
@@ -149,7 +149,7 @@ where
 mod tests {
     use std::error::Error;
 
-    use domain::{
+    use tenantry_domain::{
         Currency, CustomerId, Invoice, InvoiceId, InvoiceStatus, Money, PaymentMethod,
         PaymentMethodId, Plan, PlanId, SubscriptionId,
     };

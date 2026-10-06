@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use domain::{
+use tenantry_domain::{
     BillingEvent, BillingEventSink, CustomerRepository, DomainError, InvoiceRepository,
     PaymentMethodRepository, PlanRepository, SubscriptionRepository, VerifiedEvent,
     WebhookEventRepository,
@@ -244,10 +244,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use domain::{
+    use serde_json::{Value, json};
+    use tenantry_domain::{
         Customer, CustomerId, Subscription, SubscriptionId, TenantId, WebhookEvent, WebhookEventId,
     };
-    use serde_json::{Value, json};
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
@@ -399,10 +399,10 @@ mod tests {
             id: SubscriptionId::new(Uuid::new_v4()),
             tenant_id,
             customer_id: customer.id,
-            plan_id: domain::PlanId::new(Uuid::new_v4()),
+            plan_id: tenantry_domain::PlanId::new(Uuid::new_v4()),
             stripe_subscription_id: "sub_applied".to_string(),
             stripe_subscription_item_id: "si_original".to_string(),
-            status: domain::SubscriptionStatus::Incomplete,
+            status: tenantry_domain::SubscriptionStatus::Incomplete,
             current_period_start: now,
             current_period_end: now + Duration::days(30),
             cancel_at_period_end: false,
@@ -512,7 +512,7 @@ mod tests {
             .await;
         assert!(matches!(
             found,
-            Ok(Some(ref s)) if s.status == domain::SubscriptionStatus::Active
+            Ok(Some(ref s)) if s.status == tenantry_domain::SubscriptionStatus::Active
         ));
         // processing did not finish, so processed_at stays NULL -- this is
         // what makes a later recovery sweep able to find it.
@@ -564,7 +564,7 @@ mod tests {
             .await;
         assert!(matches!(
             found,
-            Ok(Some(ref s)) if s.status == domain::SubscriptionStatus::Canceled
+            Ok(Some(ref s)) if s.status == tenantry_domain::SubscriptionStatus::Canceled
         ));
     }
 
@@ -616,13 +616,13 @@ mod tests {
             created_at: OffsetDateTime::now_utc(),
             deleted_at: None,
         });
-        processor.plans.seed(domain::Plan {
-            id: domain::PlanId::new(Uuid::new_v4()),
+        processor.plans.seed(tenantry_domain::Plan {
+            id: tenantry_domain::PlanId::new(Uuid::new_v4()),
             tenant_id,
             stripe_price_id: "price_test".to_string(),
             stripe_product_id: "prod_test".to_string(),
             name: "Boot".to_string(),
-            amount: domain::Money::new(1500, domain::Currency::Usd),
+            amount: tenantry_domain::Money::new(1500, tenantry_domain::Currency::Usd),
             created_at: OffsetDateTime::now_utc(),
             deleted_at: None,
         });
@@ -650,7 +650,7 @@ mod tests {
             rows,
             Ok(ref v) if v.len() == 1
                 && v[0].stripe_subscription_id == "sub_bootstrapped"
-                && v[0].status == domain::SubscriptionStatus::Active
+                && v[0].status == tenantry_domain::SubscriptionStatus::Active
                 && v[0].last_event_created_at.is_some()
         ));
         assert_eq!(processor.sink.received().len(), 1);
@@ -710,7 +710,7 @@ mod tests {
             .await;
         assert!(matches!(
             found,
-            Ok(Some(ref s)) if s.status == domain::SubscriptionStatus::Active
+            Ok(Some(ref s)) if s.status == tenantry_domain::SubscriptionStatus::Active
         ));
     }
 

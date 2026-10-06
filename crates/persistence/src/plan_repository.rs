@@ -1,5 +1,5 @@
-use domain::{DomainError, Money, Plan, PlanId, PlanRepository, TenantId};
 use sqlx::PgPool;
+use tenantry_domain::{DomainError, Money, Plan, PlanId, PlanRepository, TenantId};
 use time::OffsetDateTime;
 use uuid::Uuid;
 

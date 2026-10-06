@@ -5,12 +5,12 @@
 
 use std::error::Error;
 
-use domain::OutboundRequestId;
-use persistence::{PgOutboundRequestRepository, PgWebhookEventRepository};
 use secrecy::SecretString;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use stripe_adapter::{DEFAULT_TOLERANCE, StripeConfig, WebhookConfig};
+use tenantry_domain::OutboundRequestId;
+use tenantry_persistence::{PgOutboundRequestRepository, PgWebhookEventRepository};
+use tenantry_stripe_adapter::{DEFAULT_TOLERANCE, StripeConfig, WebhookConfig};
 use testcontainers::core::wait::LogWaitStrategy;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
@@ -51,7 +51,7 @@ pub struct TestEnv {
     pub webhook_repo: PgWebhookEventRepository,
     /// A `WebhookConfig` whose signing secret is [`WEBHOOK_SIGNING_SECRET`]
     /// -- sign test payloads with that same constant via
-    /// `stripe_adapter::test_support`. Tolerance is `DEFAULT_TOLERANCE`.
+    /// `tenantry_stripe_adapter::test_support`. Tolerance is `DEFAULT_TOLERANCE`.
     pub webhook_config: WebhookConfig,
     _container: ContainerAsync<GenericImage>,
 }
@@ -78,7 +78,7 @@ pub async fn setup() -> Result<TestEnv, Box<dyn Error>> {
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
     let pool = PgPoolOptions::new().connect(&url).await?;
-    persistence::run_migrations(&pool).await?;
+    tenantry_persistence::run_migrations(&pool).await?;
 
     let repo = PgOutboundRequestRepository::new(pool.clone());
     let mock_server = MockServer::start().await;

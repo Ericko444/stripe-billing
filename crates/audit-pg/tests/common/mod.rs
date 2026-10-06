@@ -53,7 +53,7 @@ pub async fn setup() -> Result<TestDb, Box<dyn Error>> {
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
     let pool = PgPoolOptions::new().connect(&url).await?;
-    audit_pg::run_migrations(&pool).await?;
+    tenantry_audit_pg::run_migrations(&pool).await?;
 
     Ok(TestDb {
         pool,

@@ -1,5 +1,5 @@
-use domain::{BillingEvent, CustomerRepository, DomainError, TenantId, VerifiedEvent};
 use serde_json::Value;
+use tenantry_domain::{BillingEvent, CustomerRepository, DomainError, TenantId, VerifiedEvent};
 use uuid::Uuid;
 
 use crate::webhook::{EventOutcome, NotAppliedReason};
@@ -131,8 +131,8 @@ fn read_session(payload: &Value) -> Result<SessionFields, DomainError> {
 mod tests {
     use std::error::Error;
 
-    use domain::{Customer, CustomerId};
     use serde_json::json;
+    use tenantry_domain::{Customer, CustomerId};
     use time::OffsetDateTime;
     use uuid::Uuid;
 
@@ -152,7 +152,7 @@ mod tests {
             object["metadata"] = json!({ "tenant_id": mt });
         }
         VerifiedEvent {
-            id: domain::WebhookEventId::new(Uuid::new_v4()),
+            id: tenantry_domain::WebhookEventId::new(Uuid::new_v4()),
             stripe_event_id: format!("evt_{}", Uuid::new_v4()),
             event_type: "checkout.session.completed".to_string(),
             created: OffsetDateTime::now_utc(),

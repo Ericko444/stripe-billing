@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use audit::CorrelationId;
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, Method, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use tenantry_audit::CorrelationId;
 use uuid::Uuid;
 
 use crate::cookie::session_token;
@@ -49,7 +49,7 @@ impl AllowedOrigins {
 ///
 /// ```
 /// use axum::{Router, middleware};
-/// use identity_api::{AllowedOrigins, origin_check};
+/// use tenantry_identity_api::{AllowedOrigins, origin_check};
 ///
 /// let allowed = AllowedOrigins::new(["http://localhost:5173"]);
 /// let router: Router = Router::new()

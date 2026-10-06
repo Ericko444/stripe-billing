@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
 
-use identity_domain::{Clock, RateDecision, RateKey, RateLimit, RateLimiter};
+use tenantry_identity_domain::{Clock, RateDecision, RateKey, RateLimit, RateLimiter};
 use time::OffsetDateTime;
 
 /// Above this many tracked keys, expired windows are swept on the next
@@ -83,7 +83,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
 
-    use identity_domain::ClientIp;
+    use tenantry_identity_domain::ClientIp;
     use time::Duration;
 
     use super::*;

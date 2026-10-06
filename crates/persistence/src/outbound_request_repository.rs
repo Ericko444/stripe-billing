@@ -1,7 +1,7 @@
-use domain::{
+use sqlx::PgPool;
+use tenantry_domain::{
     DomainError, OutboundRequest, OutboundRequestId, OutboundRequestRepository, TenantId,
 };
-use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
