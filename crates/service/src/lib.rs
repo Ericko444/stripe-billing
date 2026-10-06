@@ -1,6 +1,6 @@
 //! Use cases orchestrating the domain ports.
 //!
-//! Performs **no I/O of its own** -- every effect goes through a `domain`
+//! Performs **no I/O of its own** -- every effect goes through a `tenantry-domain`
 //! port, which is why the whole crate tests with Docker off. Webhook
 //! processing (the `WebhookProcessor`, covering every handled event type)
 //! carries two rules worth stating up front because they are easy to get
@@ -22,10 +22,10 @@
 //! # The write path (`Writes`, `writes.rs`)
 //!
 //! [`Writes`] is the mirror of [`Reads`]: an object-safe façade, held as
-//! `Arc<dyn Writes>` on `api`'s `AppState`, one method per mutating route.
+//! `Arc<dyn Writes>` on `tenantry-api`'s `AppState`, one method per mutating route.
 //! Unlike the read path it holds a `BillingProvider`, so **every method
 //! calls out to Stripe**. Three rules run through all of them (the method
-//! rustdocs in `writes.rs` and on the `domain` port carry the full
+//! rustdocs in `writes.rs` and on the `tenantry-domain` port carry the full
 //! argument):
 //!
 //! - **Ownership before the outbound call.** Every id is resolved against a
@@ -37,7 +37,7 @@
 //! - **Stripe first, then the mirror** for `set_default_payment_method` and
 //!   `remove_payment_method`. A failed Stripe call returns before the
 //!   local row moves, so the mirror never claims a card is the default, or
-//!   is gone, while Stripe disagrees. `service`'s tests pin the order with a
+//!   is gone, while Stripe disagrees. `tenantry-service`'s tests pin the order with a
 //!   double that fails the Stripe call and asserts the local row is
 //!   unchanged -- the assertion a reversed (mirror-first) implementation
 //!   fails.

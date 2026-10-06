@@ -7,7 +7,7 @@ use crate::insert;
 /// join.
 ///
 /// Every audited write elsewhere in this module rides inside the
-/// transaction of the business write it describes (`persistence`'s own
+/// transaction of the business write it describes (`tenantry-persistence`'s own
 /// audited repository methods call [`insert`](crate::insert) directly on
 /// that transaction's connection). The two Stripe-only write routes --
 /// `create_setup_intent`, `start_checkout_session` -- have no local write

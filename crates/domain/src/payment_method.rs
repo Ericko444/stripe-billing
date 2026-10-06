@@ -40,7 +40,7 @@ pub struct PaymentMethod {
     /// The last four digits of the card.
     pub last4: String,
     /// Whether this is the customer's default payment method. Enforcing "at
-    /// most one default per customer" is a `service`-layer concern, not a
+    /// most one default per customer" is a `tenantry-service`-layer concern, not a
     /// schema constraint here.
     pub is_default: bool,
     /// The `created` timestamp of the last webhook event applied to this row
@@ -55,7 +55,7 @@ pub struct PaymentMethod {
 }
 
 /// Port for persisting and querying `PaymentMethod` records. Implemented by an
-/// adapter crate (`persistence`); no I/O here.
+/// adapter crate (`tenantry-persistence`); no I/O here.
 ///
 /// Written as `fn … -> impl Future<Output = …> + Send` rather than bare
 /// `async fn`, matching `SubscriptionRepository` and `InvoiceRepository`: the

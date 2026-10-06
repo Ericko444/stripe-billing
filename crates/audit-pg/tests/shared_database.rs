@@ -2,9 +2,9 @@
 //! migrator and `tenantry_persistence::run_migrations` can run against **one**
 //! database without colliding, because this one tracks its state in
 //! `audit._sqlx_migrations` rather than the default `_sqlx_migrations`
-//! `persistence` uses.
+//! `tenantry-persistence` uses.
 //!
-//! Not exercised anywhere else: `persistence`'s own tests and `audit-pg`'s
+//! Not exercised anywhere else: `tenantry-persistence`'s own tests and `tenantry-audit-pg`'s
 //! `append_only` test each spin up their *own* container and run only their
 //! own migrator, so neither ever puts both migration sets on one database.
 

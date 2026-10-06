@@ -2,8 +2,8 @@
 //! the session extractor, the request correlation id, and the
 //! `application/problem+json` error mapping.
 //!
-//! Like the billing module's `api`, this crate exposes a `Router`, never a
-//! binary: a host mounts it beside whatever else it serves. Unlike `api`, it
+//! Like the billing module's `tenantry-api`, this crate exposes a `Router`, never a
+//! binary: a host mounts it beside whatever else it serves. Unlike `tenantry-api`, it
 //! authenticates -- that is the module's job -- and it names no billing
 //! crate. The host (`demo`) is the one place the two meet: it wraps
 //! [`AuthenticatedSession`] in a newtype satisfying billing's

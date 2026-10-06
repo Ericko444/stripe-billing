@@ -3,7 +3,7 @@ use uuid::Uuid;
 /// Identifies the target of an action -- opaque to this crate, the same
 /// reasoning as [`crate::SubjectId`]: a target's real id type belongs to
 /// whichever module the target lives in (`tenantry_domain::PaymentMethodId`, for
-/// example), and `audit` must not depend on that module to name it.
+/// example), and `tenantry-audit` must not depend on that module to name it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TargetId(Uuid);
 

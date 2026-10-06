@@ -211,7 +211,7 @@ fn read_invoice(payload: &Value) -> Result<InvoiceFields, DomainError> {
 }
 
 /// Maps Stripe's lowercase ISO currency code to the domain [`Currency`].
-/// `service` cannot reach `persistence`'s codec, and only the billable set
+/// `tenantry-service` cannot reach `tenantry-persistence`'s codec, and only the billable set
 /// is supported -- an invoice in any other currency is a
 /// [`DomainError::MalformedEvent`] rather than a silent default.
 fn currency_from_code(code: &str) -> Result<Currency, DomainError> {

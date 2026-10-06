@@ -104,7 +104,7 @@ pub struct Invoice {
 /// `(created_at DESC, id DESC)`. Carries only what the keyset query needs to
 /// resume from: the sort key of the last row of the previous page.
 ///
-/// **Opaque on the wire.** `api` base64-encodes it, so this shape can change
+/// **Opaque on the wire.** `tenantry-api` base64-encodes it, so this shape can change
 /// without a wire break. It is neither encrypted nor authenticated, and does
 /// not need to be: it names a position *within the caller's own tenant*, and
 /// [`InvoiceRepository::list_page`] is tenant-scoped regardless of what the
@@ -112,7 +112,7 @@ pub struct Invoice {
 /// already have.
 ///
 /// No public field: constructed by [`InvoiceRepository::list_page`] for a
-/// page's `next`, or by `api`'s codec via [`InvoiceCursor::new`] when
+/// page's `next`, or by `tenantry-api`'s codec via [`InvoiceCursor::new`] when
 /// decoding one off the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvoiceCursor {
@@ -150,7 +150,7 @@ pub struct InvoicePage {
 }
 
 /// Port for persisting and querying `Invoice` records. Implemented by an
-/// adapter crate (`persistence`); no I/O here.
+/// adapter crate (`tenantry-persistence`); no I/O here.
 ///
 /// Written as `fn … -> impl Future<Output = …> + Send` rather than bare
 /// `async fn`, matching `SubscriptionRepository` and

@@ -14,7 +14,7 @@ use crate::webhook_signature;
 /// Verifies inbound Stripe webhooks and records them in the dedup ledger,
 /// behind `tenantry_domain::WebhookVerifier`.
 ///
-/// Holds the signing secret (inside [`WebhookConfig`]) so a caller — `api`,
+/// Holds the signing secret (inside [`WebhookConfig`]) so a caller — `tenantry-api`,
 /// reaching this through a `dyn WebhookVerifier` — never does, plus a
 /// `WebhookEventRepository` for the single ledger write.
 /// Generic over `R` like `StripeBillingProvider<R>`, for the same reason:
@@ -72,7 +72,7 @@ impl<R: WebhookEventRepository + Send + Sync> WebhookVerifier for StripeWebhookV
         // Insert-and-catch-conflict, not check-then-insert: the duplicate
         // signal is the unique-violation `Conflict` from `create`, which
         // handles concurrent redelivery by construction. `tenant_id` is
-        // None — `service` resolves it from the event after receipt, and
+        // None — `tenantry-service` resolves it from the event after receipt, and
         // `WebhookEvent.tenant_id` is `Option` for exactly this.
         match self
             .repo

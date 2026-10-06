@@ -83,7 +83,7 @@ pub async fn create_customer<R: OutboundRequestRepository>(
 ///
 /// Only the fields present in `params` are sent -- a `None` leaves that
 /// attribute untouched on Stripe's side, matching Stripe's own partial-update
-/// semantics (`UpdateCustomerParams`'s doc comment in `domain`).
+/// semantics (`UpdateCustomerParams`'s doc comment in `tenantry-domain`).
 pub async fn update_customer<R: OutboundRequestRepository>(
     client: &stripe::Client,
     ledger: &Ledger<R>,

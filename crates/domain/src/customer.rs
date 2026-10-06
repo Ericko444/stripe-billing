@@ -38,13 +38,13 @@ pub struct Customer {
 }
 
 /// Port for persisting and querying `Customer` records. Implemented by an
-/// adapter crate (`persistence`); no I/O here.
+/// adapter crate (`tenantry-persistence`); no I/O here.
 ///
 /// This trait is meant to be used generically (`fn new<R: CustomerRepository>
 /// (repo: R)`), never as `dyn CustomerRepository`. Its methods are still
 /// written as `fn … -> impl Future<Output = …> + Send` rather than bare
 /// `async fn`, matching `OutboundRequestRepository` and
-/// `WebhookEventRepository`: `service`'s generic `WebhookProcessor` goes
+/// `WebhookEventRepository`: `tenantry-service`'s generic `WebhookProcessor` goes
 /// behind `#[async_trait]` to implement the object-safe
 /// `WebhookHandler` port, which boxes its futures as `Send`, so every future
 /// it awaits -- including these -- must be `Send` too. A bare `async fn` in a

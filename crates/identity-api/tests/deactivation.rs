@@ -4,7 +4,7 @@
 //! self-deactivation clears.
 //!
 //! The *rule* -- that a tenant may not end an account living elsewhere -- is
-//! the service's, and is pinned by `identity-service`'s own tests. What is
+//! the service's, and is pinned by `tenantry-identity-service`'s own tests. What is
 //! pinned here is the wire: that its refusal is rendered exactly like every
 //! other refusal, so the boundary does not leak what the service was careful
 //! not to say.

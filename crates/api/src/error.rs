@@ -10,8 +10,8 @@ use crate::correlation::CorrelationId;
 /// Errors this crate's route handlers can produce, mapped to
 /// `application/problem+json` (RFC 9457) by `IntoResponse` below.
 ///
-/// Three variants: a `domain` failure, the one error this crate itself can
-/// produce before ever reaching `domain` -- a request missing a header a
+/// Three variants: a `tenantry-domain` failure, the one error this crate itself can
+/// produce before ever reaching `tenantry-domain` -- a request missing a header a
 /// route requires -- and `Unauthorized`, for a host's tenant extractor to
 /// reject with. All three map to a status; none leaks internals to the
 /// caller.
@@ -27,7 +27,7 @@ use crate::correlation::CorrelationId;
 /// per-request id -- ever runs.
 #[derive(Debug)]
 pub enum ApiError {
-    /// A failure surfaced by `domain` or a use case built on it.
+    /// A failure surfaced by `tenantry-domain` or a use case built on it.
     Domain(DomainError, Option<CorrelationId>),
     /// The `Stripe-Signature` header was absent from the request.
     MissingSignatureHeader,

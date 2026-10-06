@@ -204,7 +204,7 @@ fn billing_event_for(
 /// rather than deriving one from the other: `BillingEvent` is a host-facing
 /// notification with tenant/id fields the audit log does not need, and
 /// tying the two together would make an unrelated change to one type
-/// (adding a field to `BillingEvent`, say) a compile break in `audit`.
+/// (adding a field to `BillingEvent`, say) a compile break in `tenantry-audit`.
 fn action_for(status: SubscriptionStatus) -> Action {
     match status {
         SubscriptionStatus::Active => Action::SubscriptionActivated,

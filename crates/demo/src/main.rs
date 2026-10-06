@@ -176,7 +176,7 @@ impl BillingEventSink for LoggingSink {
 async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let pool = PgPoolOptions::new().connect(&config.database_url).await?;
     run_migrations(&pool).await?;
-    // `audit-pg`'s and `identity-pg`'s own migrators, against the same
+    // `tenantry-audit-pg`'s and `tenantry-identity-pg`'s own migrators, against the same
     // database -- safe beside the one above because each tracks its state in
     // its own schema's `_sqlx_migrations`, not the default table.
     tenantry_audit_pg::run_migrations(&pool).await?;

@@ -136,11 +136,11 @@ pub struct Subscription {
 }
 
 /// Port for persisting and querying `Subscription` records. Implemented by an
-/// adapter crate (`persistence`); no I/O here.
+/// adapter crate (`tenantry-persistence`); no I/O here.
 ///
 /// Written as `fn … -> impl Future<Output = …> + Send` rather than bare
 /// `async fn`, matching `OutboundRequestRepository` and
-/// `WebhookEventRepository`: `service`'s generic `WebhookProcessor` goes
+/// `WebhookEventRepository`: `tenantry-service`'s generic `WebhookProcessor` goes
 /// behind `#[async_trait]` to implement the object-safe
 /// `WebhookHandler` port, which boxes its futures as `Send`, so every future
 /// it awaits -- including these -- must be `Send` too. A bare `async fn` in a
@@ -289,7 +289,7 @@ pub trait SubscriptionRepository {
     /// webhook racing this call still cannot be regressed by it. Returns
     /// the row's state **after** both writes, re-read within the same
     /// transaction -- the same "return whatever is authoritative regardless
-    /// of Applied vs. Stale" contract `service`'s `apply_subscription_snapshot`
+    /// of Applied vs. Stale" contract `tenantry-service`'s `apply_subscription_snapshot`
     /// helper already relied on when this was two separate calls.
     ///
     /// **Precondition:** the row identified by `(tenant_id, id)` exists and

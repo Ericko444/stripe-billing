@@ -3,7 +3,7 @@ use uuid::Uuid;
 /// Identifies a tenant, local to this crate.
 ///
 /// A parallel type to a host module's own tenant id, not a re-export of
-/// one -- `audit` must not depend on `domain` or any other workspace crate
+/// one -- `tenantry-audit` must not depend on `tenantry-domain` or any other workspace crate
 /// (that dependency list is the checkable proof of its neutrality), so
 /// each module converts its own tenant id to this one at the boundary
 /// where it constructs an [`AuditEntry`](crate::AuditEntry).

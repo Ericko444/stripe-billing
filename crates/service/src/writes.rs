@@ -26,7 +26,7 @@ use crate::RequestContext;
 
 /// Object-safe façade over the write use cases.
 ///
-/// `api`'s `AppState` holds this as `Arc<dyn Writes>`, next to
+/// `tenantry-api`'s `AppState` holds this as `Arc<dyn Writes>`, next to
 /// `Arc<dyn Reads>` -- so `billing_router` still carries exactly one type
 /// parameter, the host's tenant extractor.
 /// `#[async_trait]` for the same reason [`Reads`](crate::Reads) uses it: the
@@ -49,7 +49,7 @@ pub trait Writes: Send + Sync {
     /// called. `CustomerRepository` has no update, so a row with
     /// `stripe_customer_id = None` cannot be upgraded in place -- nothing
     /// creates such a row today, and changing that
-    /// is a `domain` port change rather than a tweak here.
+    /// is a `tenantry-domain` port change rather than a tweak here.
     async fn ensure_customer(&self, tenant: TenantId) -> Result<String, DomainError>;
 
     /// Creates a Stripe SetupIntent for the calling tenant, resolving (or
@@ -184,8 +184,8 @@ pub trait Writes: Send + Sync {
 /// method instead (D1(h)) and never touches this field.
 ///
 /// Generic over each port, matching [`ReadService`](crate::ReadService) and
-/// `WebhookProcessor`: `demo` monomorphises the concrete `stripe-adapter`,
-/// `persistence` and `audit-pg` types, and nothing is boxed on the write
+/// `WebhookProcessor`: `demo` monomorphises the concrete `tenantry-stripe-adapter`,
+/// `tenantry-persistence` and `tenantry-audit-pg` types, and nothing is boxed on the write
 /// path. The `dyn` boundary is `Arc<dyn Writes>` on `AppState`, and nowhere
 /// else.
 ///

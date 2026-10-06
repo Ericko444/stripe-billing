@@ -27,7 +27,7 @@ pub enum EventOutcome {
 /// verified and been recorded.
 ///
 /// **None of these are errors.** Every one still returns 200 at the route
-/// in `api`: collapsing them into `Ok(())` would make the
+/// in `tenantry-api`: collapsing them into `Ok(())` would make the
 /// first production question -- "why isn't my subscription updating?" --
 /// unanswerable from logs. `UnknownCustomer` in particular is not a failure:
 /// it means the event concerns a Stripe customer this module does not own,
@@ -58,7 +58,7 @@ pub enum NotAppliedReason {
 
 /// Object-safe handler for one verified, deduplicated webhook event.
 ///
-/// `api`'s `AppState` holds this as `Arc<dyn WebhookHandler>` rather
+/// `tenantry-api`'s `AppState` holds this as `Arc<dyn WebhookHandler>` rather
 /// than the generic [`WebhookProcessor`] directly, so the router factory
 /// does not have to carry its port type parameters through its signature --
 /// the same trade `BillingProvider` and `WebhookVerifier` made.
@@ -75,9 +75,9 @@ pub trait WebhookHandler: Send + Sync {
 ///
 /// Generic over every port, matching `StripeBillingProvider<R>`: the compiler
 /// monomorphises the real wiring `demo` picks, and nothing is boxed on the
-/// hot path. Implements the object-safe [`WebhookHandler`] below so `api`'s
+/// hot path. Implements the object-safe [`WebhookHandler`] below so `tenantry-api`'s
 /// `AppState` can hold it as `Arc<dyn WebhookHandler>` instead -- so
-/// the parameter count stays between `demo` and `new`, never reaching `api`.
+/// the parameter count stays between `demo` and `new`, never reaching `tenantry-api`.
 pub struct WebhookProcessor<C, S, I, P, L, W, K> {
     customers: C,
     subscriptions: S,

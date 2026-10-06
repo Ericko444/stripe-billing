@@ -1,8 +1,8 @@
 //! The read use cases behind the five `GET` routes.
 //!
 //! Each is a thin pass-through to one repository today. They exist as their
-//! own layer anyway because `api` depends on `service`, not on
-//! `persistence`: a route reaching a repository directly would skip the
+//! own layer anyway because `tenantry-api` depends on `tenantry-service`, not on
+//! `tenantry-persistence`: a route reaching a repository directly would skip the
 //! layer the architecture is built on.
 
 use async_trait::async_trait;
@@ -14,7 +14,7 @@ use tenantry_domain::{
 
 /// Object-safe façade over the read use cases.
 ///
-/// `api`'s `AppState` holds this as `Arc<dyn Reads>`, never the generic
+/// `tenantry-api`'s `AppState` holds this as `Arc<dyn Reads>`, never the generic
 /// [`ReadService`] directly -- the same trade [`WebhookHandler`] made, so the
 /// router factory does not carry four repository type parameters through its
 /// signature.
@@ -52,7 +52,7 @@ pub trait Reads: Send + Sync {
 
     /// One keyset-paginated page of the tenant's invoices, newest first.
     /// `after` is the previous page's cursor; `limit` is already clamped by
-    /// the caller (`api`'s `PageParams`).
+    /// the caller (`tenantry-api`'s `PageParams`).
     async fn list_invoices(
         &self,
         tenant: TenantId,
@@ -70,7 +70,7 @@ pub trait Reads: Send + Sync {
 /// Holds the four read repositories a host wires in.
 ///
 /// Generic over each port, matching [`WebhookProcessor`]: `demo` monomorphises
-/// the concrete `persistence` types, and nothing is boxed on the read path.
+/// the concrete `tenantry-persistence` types, and nothing is boxed on the read path.
 /// All four repositories were taken from the start, so `AppState` and every
 /// host's wiring stayed fixed as the trait filled in.
 ///

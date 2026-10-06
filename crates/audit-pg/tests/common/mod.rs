@@ -13,12 +13,12 @@ use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 
-/// A disposable Postgres container with `audit-pg`'s migrations already
+/// A disposable Postgres container with `tenantry-audit-pg`'s migrations already
 /// applied.
 ///
 /// Keep this alive for the duration of the test: the container is torn
 /// down (via `Drop`) as soon as it goes out of scope. Mirrors
-/// `persistence`'s own `tests/common/mod.rs` harness.
+/// `tenantry-persistence`'s own `tests/common/mod.rs` harness.
 pub struct TestDb {
     pub pool: PgPool,
     port: u16,
@@ -37,7 +37,7 @@ impl TestDb {
 }
 
 /// Starts a fresh Postgres container, connects as the superuser, and
-/// applies `audit-pg`'s migrations.
+/// applies `tenantry-audit-pg`'s migrations.
 pub async fn setup() -> Result<TestDb, Box<dyn Error>> {
     let container = GenericImage::new("postgres", "16-alpine")
         .with_wait_for(WaitFor::log(

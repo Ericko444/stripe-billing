@@ -13,7 +13,7 @@ use uuid::Uuid;
 /// reachable unauthenticated -- login and password reset exist for callers
 /// with no session -- so trusting a caller-supplied id would let anyone plant
 /// a chosen value in our logs and audit rows. `tenantry_audit::CorrelationId` is used
-/// directly: this crate already depends on `audit`, and a third newtype over
+/// directly: this crate already depends on `tenantry-audit`, and a third newtype over
 /// the same `Uuid` would only add a conversion.
 pub async fn layer(mut request: Request, next: Next) -> Response {
     request

@@ -8,7 +8,7 @@ use tenantry_service::{Reads, WebhookHandler, Writes};
 /// **Host config, never a request field.** Stripe requires both. Taking
 /// them from the request body would let a caller redirect a customer
 /// anywhere after payment -- an open redirect in the one flow where the
-/// user is most primed to trust the destination -- so `api` reads them only
+/// user is most primed to trust the destination -- so `tenantry-api` reads them only
 /// from here, set once when the host builds [`AppState`].
 #[derive(Clone, Debug)]
 pub struct CheckoutUrls {

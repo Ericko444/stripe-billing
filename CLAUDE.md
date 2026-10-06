@@ -29,16 +29,16 @@ tenant selection and password reset; members are API-only.
 ```bash
 cargo build --workspace
 cargo test --workspace
-cargo test -p domain            # one crate
-cargo test -p domain money::    # one test or module by name
-cargo test -p domain -- --nocapture
+cargo test -p tenantry-domain          # one crate
+cargo test -p tenantry-domain money::  # one test or module by name
+cargo test -p tenantry-domain -- --nocapture
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
 
-`persistence`, `stripe-adapter`, `audit-pg`, `identity-pg` and `demo` tests
-bring up a disposable Postgres via `testcontainers` and need a running Docker
-daemon. Webhook work uses
+`tenantry-persistence`, `tenantry-stripe-adapter`, `tenantry-audit-pg`,
+`tenantry-identity-pg` and `demo` tests bring up a disposable Postgres via
+`testcontainers` and need a running Docker daemon. Webhook work uses
 `stripe listen --forward-to localhost:PORT/api/v1/webhooks/stripe`.
 
 Running the demo: `cargo run -p demo -- seed` once (needs `SEED_USER_PASSWORD`
@@ -64,23 +64,32 @@ demo ──> api ──> service ──> domain <── persistence
   └────> stripe-adapter ─────────────────────┘
 ```
 
-- `domain` — models, value objects, ports (traits), error taxonomy. Declarative, no I/O.
-- `service` — use cases orchestrating the ports. No I/O of its own.
-- `persistence` — sqlx adapters implementing the domain ports.
-- `stripe-adapter` — Stripe adapter, idempotency ledger, webhook verification/parsing.
-  Named `stripe-adapter`, not `stripe`, because `async-stripe`'s lib name *is*
-  `stripe` — this keeps `stripe::` meaning the SDK inside the adapter.
-- `api` — Axum **router factory**, wire DTOs, error → HTTP mapping.
+The boxes are the directory names under `crates/`, which the publication
+prefix did not change. The packages are `tenantry-api`, `tenantry-service`
+and so on; `demo` alone is unprefixed, because it is never published.
+
+- `tenantry-domain` — models, value objects, ports (traits), error taxonomy.
+  Declarative, no I/O.
+- `tenantry-service` — use cases orchestrating the ports. No I/O of its own.
+- `tenantry-persistence` — sqlx adapters implementing the domain ports.
+- `tenantry-stripe-adapter` — Stripe adapter, idempotency ledger, webhook
+  verification/parsing.
+  Its lib path is `tenantry_stripe_adapter`, never `stripe`, because
+  `async-stripe`'s own lib name *is* `stripe` — that is what keeps `stripe::`
+  meaning the SDK inside the adapter.
+- `tenantry-api` — Axum **router factory**, wire DTOs, error → HTTP mapping.
 - `demo` — the only crate that picks concrete implementations and owns a `main`.
 
 Two are the audit journal (Phase 7; argued in README §5, "Audit trail —
 append-only, and why soft delete does not apply here"), free-standing and
 outside that chain on purpose:
 
-- `audit` — typed, append-only event model and the `AuditSink` port. No I/O,
-  and no dependency on `domain` or any other workspace crate: the identity
-  module depends on it too, without either module depending on the other.
-- `audit-pg` — Postgres adapter for `audit`: its own schema (`audit`), its own
+- `tenantry-audit` — typed, append-only event model and the `AuditSink` port.
+  No I/O, and no dependency on `tenantry-domain` or any other workspace crate:
+  the identity module depends on it too, without either module depending on
+  the other.
+- `tenantry-audit-pg` — Postgres adapter for `tenantry-audit`: its own schema
+  (`audit`), its own
   migrator (tracked in `audit._sqlx_migrations`, not the billing module's
   `_sqlx_migrations`, so the two migration sets can run against one database
   without colliding), and the append-only grant.
@@ -92,18 +101,20 @@ identity module"), the same inward shape beside billing:
 demo ──> identity-api ──> identity-service ──> identity-domain <── identity-pg
 ```
 
-- `identity-domain` — users, memberships, `Role`, sessions, `SplitToken`,
-  password types, ports. No I/O.
-- `identity-service` — use cases (login, sessions, tenant selection, password
-  change and reset, members), plus the Argon2id hasher, OS-random tokens, the
-  clock, the in-memory rate limiter and the reset worker.
-- `identity-pg` — its own schema (`identity`) and migrator
+Directory names again; the packages are `tenantry-identity-api` and so on.
+
+- `tenantry-identity-domain` — users, memberships, `Role`, sessions,
+  `SplitToken`, password types, ports. No I/O.
+- `tenantry-identity-service` — use cases (login, sessions, tenant selection,
+  password change and reset, members), plus the Argon2id hasher, OS-random
+  tokens, the clock, the in-memory rate limiter and the reset worker.
+- `tenantry-identity-pg` — its own schema (`identity`) and migrator
   (`identity._sqlx_migrations`); repositories write audit rows with
-  `audit_pg::insert` in the same transaction, fanning account-level events out
+  `tenantry_audit_pg::insert` in the same transaction, fanning account-level events out
   to one row per active membership.
-- `identity-api` — Axum router factory, the `__Host-session` cookie, the
-  `AuthenticatedSession` extractor (generic over any router state), the CSRF
-  origin check, problem+json.
+- `tenantry-identity-api` — Axum router factory, the `__Host-session` cookie,
+  the `AuthenticatedSession` extractor (generic over any router state), the
+  CSRF origin check, problem+json.
 
 The modules meet only in `demo/src/identity_tenant.rs`: `IdentityTenant` wraps
 `AuthenticatedSession` to satisfy billing's `TenantExtractor`. `crates/api` did
@@ -111,21 +122,23 @@ not change for it, and should not.
 
 These boundaries carry the whole design; all are load-bearing in the defense:
 
-- **`domain/Cargo.toml` must never gain `sqlx`, a Stripe client, or `axum`.**
-  That dependency list is the checkable proof of the separation.
-- **`api` exposes a `Router`, never a binary.** If it owned `main`,
+- **`crates/domain/Cargo.toml` must never gain `sqlx`, a Stripe client, or
+  `axum`.** That dependency list is the checkable proof of the separation.
+- **`tenantry-api` exposes a `Router`, never a binary.** If it owned `main`,
   `tokio::main` or config loading it would not be pluggable into a host that
   already has them.
-- **`audit/Cargo.toml` must never gain `domain`, `service`, `persistence`,
-  `stripe-adapter`, `api`, `axum`, a Stripe client, or `sqlx`.** That
-  dependency list is the checkable proof that two modules can share this
-  crate without depending on each other. `audit-pg` is exempt — it is
-  expected to depend on `audit` and on `sqlx`.
-- **No `identity-*` crate names a billing crate (`domain`, `service`,
-  `persistence`, `stripe-adapter`, `api`), and no billing crate names an
-  `identity-*` crate.** Only `demo` names both. Checked in CI in both
-  directions, by manifest grep and by `cargo tree`.
-- **`identity-domain/Cargo.toml` must never gain `sqlx`, `axum` or `argon2`.**
-  The identity module's equivalent of the `domain` rule.
+- **`crates/audit/Cargo.toml` must never gain `tenantry-domain`,
+  `tenantry-service`, `tenantry-persistence`, `tenantry-stripe-adapter`,
+  `tenantry-api`, `axum`, a Stripe client, or `sqlx`.** That dependency list
+  is the checkable proof that two modules can share this crate without
+  depending on each other. `tenantry-audit-pg` is exempt — it is
+  expected to depend on `tenantry-audit` and on `sqlx`.
+- **No crate under `crates/identity-*/` names a billing crate
+  (`tenantry-domain`, `tenantry-service`, `tenantry-persistence`,
+  `tenantry-stripe-adapter`, `tenantry-api`), and no billing crate names a
+  `tenantry-identity-*` crate.** Only `demo` names both. Checked in CI in
+  both directions, by manifest grep and by `cargo tree`.
+- **`crates/identity-domain/Cargo.toml` must never gain `sqlx`, `axum` or
+  `argon2`.** The identity module's equivalent of the `tenantry-domain` rule.
 - **`frontend/src/identity` and `frontend/src/billing` never import each
   other.** `host/` composes them. Checked in CI.

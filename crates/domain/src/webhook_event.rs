@@ -27,7 +27,7 @@ impl WebhookEventId {
 ///
 /// This is an append-only ledger: no soft delete, no tenant-scoped index,
 /// no `list`. `tenant_id` is optional because the tenant is resolved *from*
-/// the event by `service` code sometime after receipt, not known at insert
+/// the event by `tenantry-service` code sometime after receipt, not known at insert
 /// time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebhookEvent {
@@ -52,14 +52,14 @@ pub struct WebhookEvent {
 }
 
 /// Port for persisting and looking up `WebhookEvent` records. Implemented by
-/// an adapter crate (`persistence`); no I/O here.
+/// an adapter crate (`tenantry-persistence`); no I/O here.
 ///
 /// Ledger-shaped: `create` plus a single lookup by Stripe's event id (the
 /// dedup anchor). No `list`, no `find` by internal id — nothing needs them.
 ///
 /// Like `OutboundRequestRepository`, this port's methods are written as
 /// `fn … -> impl Future<Output = …> + Send` rather than bare `async fn`.
-/// `stripe-adapter`'s `StripeWebhookVerifier<R>` implements the
+/// `tenantry-stripe-adapter`'s `StripeWebhookVerifier<R>` implements the
 /// `#[async_trait]` `WebhookVerifier` port by awaiting these methods;
 /// `#[async_trait]` boxes its futures as `Send`, so the futures it awaits
 /// must be `Send` too — which a bare `async fn` in a trait does not promise

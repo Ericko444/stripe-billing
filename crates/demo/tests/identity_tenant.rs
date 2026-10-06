@@ -1,9 +1,9 @@
 //! The boundary proof: billing's `TenantExtractor`, satisfied by a
 //! session from the identity module, with no change to `crates/api`.
 //!
-//! Runs the real pieces end to end -- `identity-pg` on a real Postgres,
+//! Runs the real pieces end to end -- `tenantry-identity-pg` on a real Postgres,
 //! `AuthService` with the real Argon2id hasher and system clock,
-//! `identity-api`'s extractor -- behind `IdentityTenant`, on a route whose
+//! `tenantry-identity-api`'s extractor -- behind `IdentityTenant`, on a route whose
 //! state is billing's `AppState`.
 
 mod common;

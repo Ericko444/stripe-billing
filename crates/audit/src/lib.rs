@@ -3,7 +3,7 @@
 //! Consumable by two or more modules without either depending on the
 //! other -- this crate's own `Cargo.toml` names none of them, which is the
 //! checkable proof of that claim, mirroring the billing module's own
-//! `domain` boundary check. No I/O here: an adapter crate (`audit-pg`, or
+//! `tenantry-domain` boundary check. No I/O here: an adapter crate (`tenantry-audit-pg`, or
 //! whatever storage a host chooses) implements [`AuditSink`] against this
 //! crate's types.
 //!
@@ -41,7 +41,7 @@
 //! granting the one privilege -- write access to an existing row -- that
 //! would let a tampered-with entry look identical to a real one. The value
 //! of an audit log is exactly that this cannot happen, so the Postgres role
-//! the application writes as (`audit_writer`, granted in `audit-pg`'s
+//! the application writes as (`audit_writer`, granted in `tenantry-audit-pg`'s
 //! `migrations/0001_audit_log.sql`) is given `INSERT` and `SELECT` only. No
 //! `UPDATE`, no `DELETE`, on the table or the role.
 //!

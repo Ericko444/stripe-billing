@@ -1,6 +1,6 @@
 //! Wire types. Owned by this crate and built by hand from service types --
-//! the billing module's rule: nothing in `identity-domain` or
-//! `identity-service` is `Serialize`, so a field added there cannot silently
+//! the billing module's rule: nothing in `tenantry-identity-domain` or
+//! `tenantry-identity-service` is `Serialize`, so a field added there cannot silently
 //! become a field on the wire.
 
 use serde::{Deserialize, Serialize};
@@ -114,7 +114,7 @@ pub struct MeDto {
 }
 
 /// RFC 3339 UTC with second precision, built from the datetime's fields --
-/// the same approach as the billing `api` crate, rather than enabling
+/// the same approach as the billing `tenantry-api` crate, rather than enabling
 /// `time`'s `formatting` feature for one call site.
 pub fn rfc3339_utc(datetime: OffsetDateTime) -> String {
     let datetime = datetime.to_offset(UtcOffset::UTC);

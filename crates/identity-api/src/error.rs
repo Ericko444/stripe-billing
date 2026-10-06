@@ -69,9 +69,9 @@ impl IdentityError {
 }
 
 /// RFC 9457 problem details -- the same five members as the billing module's
-/// `api` crate (`crates/api/src/error.rs`, `ProblemDetails`), so the frontend
+/// `tenantry-api` crate (`crates/api/src/error.rs`, `ProblemDetails`), so the frontend
 /// parses both modules' errors with one function. This crate may not depend
-/// on `api` to share the type; `the_body_has_exactly_apis_members` pins the
+/// on `tenantry-api` to share the type; `the_body_has_exactly_apis_members` pins the
 /// shape instead.
 #[derive(Debug, Serialize)]
 struct ProblemDetails {

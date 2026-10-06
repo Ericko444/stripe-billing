@@ -44,7 +44,7 @@ pub struct Plan {
 }
 
 /// Port for persisting and querying `Plan` records. Implemented by an
-/// adapter crate (`persistence`); no I/O here.
+/// adapter crate (`tenantry-persistence`); no I/O here.
 ///
 /// Written as `fn … -> impl Future<Output = …> + Send` rather than bare
 /// `async fn`, matching the other repositories the webhook path touches: the

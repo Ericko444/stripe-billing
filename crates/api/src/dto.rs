@@ -337,7 +337,7 @@ fn malformed(detail: &str) -> DomainError {
 }
 
 /// ISO 4217 code for a [`Currency`]. A `match`, not a `Display` impl on the
-/// domain enum: the wire spelling is `api`'s concern, not `domain`'s.
+/// domain enum: the wire spelling is `tenantry-api`'s concern, not `tenantry-domain`'s.
 fn currency_code(currency: Currency) -> &'static str {
     match currency {
         Currency::Usd => "USD",

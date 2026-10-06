@@ -52,7 +52,7 @@ pub struct OutboundRequest {
 }
 
 /// Port for persisting and looking up `OutboundRequest` records. Implemented
-/// by an adapter crate (`persistence`); no I/O here.
+/// by an adapter crate (`tenantry-persistence`); no I/O here.
 ///
 /// Ledger-shaped: `create`, two lookups, and `mark_complete`. Still no
 /// `list`, no `find` by internal id — nothing here reads the ledger for
@@ -60,7 +60,7 @@ pub struct OutboundRequest {
 ///
 /// Unlike the other repository ports, this one's methods are written as
 /// `fn … -> impl Future<Output = …> + Send` rather than bare `async fn`.
-/// `stripe-adapter`'s `StripeBillingProvider<R>` implements the
+/// `tenantry-stripe-adapter`'s `StripeBillingProvider<R>` implements the
 /// `#[async_trait]` `BillingProvider` port by delegating through a
 /// `Ledger<R>` that awaits these methods; `#[async_trait]` boxes its
 /// futures as `Send`, so the futures it awaits must be `Send` too — which a

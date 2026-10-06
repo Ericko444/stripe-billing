@@ -1,7 +1,7 @@
 //! The identity module's domain: users belonging to several tenants, one
 //! role per membership, password authentication and password reset.
 //!
-//! Declarative, no I/O -- the same rule `domain` follows for the billing
+//! Declarative, no I/O -- the same rule `tenantry-domain` follows for the billing
 //! module. This crate names no crate from the billing module either, and no
 //! billing crate names it: the host composes the two, and neither module
 //! learns the other exists. Both checks run in CI.

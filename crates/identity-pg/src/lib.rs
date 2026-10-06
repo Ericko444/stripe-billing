@@ -1,10 +1,10 @@
 //! Postgres adapter for the identity module: the `identity` schema, its
-//! migrator, and the repositories implementing `identity-domain`'s ports.
+//! migrator, and the repositories implementing `tenantry-identity-domain`'s ports.
 //!
 //! Runs against the same database as the billing module and the audit
 //! journal. Each of the three owns a schema and tracks its migrations in
 //! its own table, so none of them has to know the others exist -- the
-//! pattern `audit-pg` established.
+//! pattern `tenantry-audit-pg` established.
 //!
 //! Every write that has an audit entry writes it with `tenantry_audit_pg::insert` on
 //! the same transaction, so the business change and the record of it commit
@@ -29,7 +29,7 @@ use sqlx::PgPool;
 /// migrations in `identity._sqlx_migrations`.
 ///
 /// The billing module's migrator uses the default `_sqlx_migrations` and
-/// `audit-pg`'s uses `audit._sqlx_migrations`. A third migrator sharing
+/// `tenantry-audit-pg`'s uses `audit._sqlx_migrations`. A third migrator sharing
 /// either table would collide with it on version numbers; schema- and
 /// table-qualifying this one is what lets all three run against one
 /// database, in any order, repeatedly.

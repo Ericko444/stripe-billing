@@ -13,16 +13,16 @@ use uuid::Uuid;
 /// `AuditEntry` sets that constant itself rather than reading it from here.
 ///
 /// `correlation_id` is a raw `Uuid`, not `tenantry_audit::CorrelationId`: this crate
-/// does not depend on `audit` (nothing here constructs an `AuditEntry`
-/// yet), and `Uuid` is the neutral type both `api` and `audit` already
+/// does not depend on `tenantry-audit` (nothing here constructs an `AuditEntry`
+/// yet), and `Uuid` is the neutral type both `tenantry-api` and `tenantry-audit` already
 /// wrap in their own newtypes. Each converts at its own boundary -- the
 /// same pattern already used for tenant and subject ids between this
-/// module and `audit`.
+/// module and `tenantry-audit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestContext {
     /// The tenant the call is scoped to.
     pub tenant_id: TenantId,
-    /// This request's correlation id, minted once by `api`'s middleware.
+    /// This request's correlation id, minted once by `tenantry-api`'s middleware.
     pub correlation_id: Uuid,
 }
 

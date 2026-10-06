@@ -4,7 +4,7 @@ use time::OffsetDateTime;
 use crate::{DomainError, SubscriptionStatus, TenantId};
 
 /// Inputs for creating a Stripe customer. Every field here varies the Stripe
-/// request body, which is why the set is kept minimal: `stripe-adapter`
+/// request body, which is why the set is kept minimal: `tenantry-stripe-adapter`
 /// derives the idempotency fingerprint from exactly these fields, so an
 /// input added here without also reaching the fingerprint would let two
 /// different requests share a key.
@@ -87,7 +87,7 @@ pub struct SetupIntentSnapshot {
 /// Inputs for creating a Stripe Checkout Session in `subscription` mode.
 ///
 /// The two URLs are **not** caller-supplied -- the host sets them once when
-/// it constructs `api`'s `AppState`. A caller that could set `success_url`
+/// it constructs `tenantry-api`'s `AppState`. A caller that could set `success_url`
 /// would have an open redirect in the one flow where the customer is most
 /// primed to trust the destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,12 +119,12 @@ pub struct CheckoutSessionSnapshot {
 }
 
 /// Port for mutating Stripe's customer, subscription and payment-method
-/// state. Implemented by the `stripe-adapter` crate; no I/O here.
+/// state. Implemented by the `tenantry-stripe-adapter` crate; no I/O here.
 ///
 /// Unlike the repository ports, this trait uses `#[async_trait]` rather than
 /// native `async fn`, because it needs to be dyn-compatible: it is held by
 /// shared application state that a host wires at runtime (a
-/// `dyn BillingProvider` in `api`'s `AppState`), not by exactly one
+/// `dyn BillingProvider` in `tenantry-api`'s `AppState`), not by exactly one
 /// adapter the way each repository port is.
 ///
 /// Grown method-by-method as use cases needed it, not toward a speculative
@@ -182,7 +182,7 @@ pub trait BillingProvider: Send + Sync {
     ///
     /// The returned [`SetupIntentSnapshot`] carries only the
     /// `client_secret`, which is browser-destined and **must never be
-    /// logged** -- see that type's docs. The caller (`service`) resolves the
+    /// logged** -- see that type's docs. The caller (`tenantry-service`) resolves the
     /// tenant to a `stripe_customer_id` first (via `ensure_customer`); this
     /// method never creates a customer of its own.
     async fn create_setup_intent(
@@ -195,11 +195,11 @@ pub trait BillingProvider: Send + Sync {
     /// invoices and subscriptions
     /// (`invoice_settings.default_payment_method` on the customer). Returns
     /// nothing -- the caller already knows which method it asked for, and the
-    /// local mirror is reconciled by `service`, not from a snapshot here.
+    /// local mirror is reconciled by `tenantry-service`, not from a snapshot here.
     ///
     /// **Ordering: the caller runs this *before* touching the mirror.**
     /// Reversed, a failure here would leave the local `is_default` flags
-    /// disagreeing with Stripe. `service`'s test suite
+    /// disagreeing with Stripe. `tenantry-service`'s test suite
     /// pins the order with a double that fails this call and asserts the
     /// flags did not move.
     async fn set_default_payment_method(
@@ -211,7 +211,7 @@ pub trait BillingProvider: Send + Sync {
 
     /// Detaches a payment method from its customer
     /// (`POST /v1/payment_methods/{id}/detach`). Permanent and irreversible
-    /// at Stripe; the local mirror is *soft*-deleted by `service`
+    /// at Stripe; the local mirror is *soft*-deleted by `tenantry-service`
     /// afterwards.
     ///
     /// **Ordering: Stripe first, then the mirror.**
@@ -232,7 +232,7 @@ pub trait BillingProvider: Send + Sync {
     /// Creates a Stripe Checkout Session in `subscription` mode for the
     /// customer and price in `params`, and returns its hosted-page `url`.
     ///
-    /// The caller (`service`) resolves the tenant to a `stripe_customer_id`
+    /// The caller (`tenantry-service`) resolves the tenant to a `stripe_customer_id`
     /// (via `ensure_customer`) and the local plan to a `stripe_price_id`
     /// first; the two URLs come from host config, never the request. The
     /// returned [`CheckoutSessionSnapshot`]'s `url` is browser-destined and

@@ -16,14 +16,14 @@ pub enum DomainError {
     NotFound,
 
     /// A persistence-layer operation failed. The message is opaque by
-    /// design: `domain` must not depend on `sqlx` or any adapter's error
+    /// design: `tenantry-domain` must not depend on `sqlx` or any adapter's error
     /// type, so adapters map their errors to this variant's `String`.
     #[error("repository error: {0}")]
     Repository(String),
 
     /// A `BillingProvider` operation failed. The message is opaque for the
-    /// same reason as `Repository`: `domain` must not depend on the Stripe
-    /// client's error type, so `stripe-adapter` maps its errors to this
+    /// same reason as `Repository`: `tenantry-domain` must not depend on the Stripe
+    /// client's error type, so `tenantry-stripe-adapter` maps its errors to this
     /// variant's `String`.
     #[error("provider error: {0}")]
     Provider(String),

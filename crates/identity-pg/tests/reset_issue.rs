@@ -146,7 +146,7 @@ async fn issuing_records_the_request_once_per_tenant_as_anonymous() -> Result<()
     Ok(())
 }
 
-/// A token built from fixed, distinctive bytes -- `identity-pg` does not
+/// A token built from fixed, distinctive bytes -- `tenantry-identity-pg` does not
 /// depend on the service crate's generator, and does not need to.
 fn identity_service_free_token() -> SplitToken {
     SplitToken::from_bytes([0x5e; 16], [0xa7; 32])

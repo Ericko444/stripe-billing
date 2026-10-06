@@ -1,7 +1,7 @@
 //! Proves the append-only grant, not just that some connection can write.
 //!
 //! `common::setup` connects as the Postgres superuser, the same as
-//! `persistence`'s test harness -- which is exactly why the assertions
+//! `tenantry-persistence`'s test harness -- which is exactly why the assertions
 //! below connect as a *different*, deliberately restricted role instead.
 //! A superuser can always `UPDATE` or `DELETE`; asserting that would prove
 //! nothing about `0001_audit_log.sql`'s grant. This test creates a

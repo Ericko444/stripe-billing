@@ -1,5 +1,5 @@
 //! Proves `PgAuditSink` actually writes, against a real Postgres -- the
-//! part `service`'s own tests (`StubAuditSink`) cannot cover, since they
+//! part `tenantry-service`'s own tests (`StubAuditSink`) cannot cover, since they
 //! never touch a database at all.
 
 mod common;

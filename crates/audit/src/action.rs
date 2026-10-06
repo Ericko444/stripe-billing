@@ -1,5 +1,5 @@
 /// What happened -- a closed enum that grows one variant at a time, the
-/// same discipline `service`'s `Reads` and `Writes` façades already follow
+/// same discipline `tenantry-service`'s `Reads` and `Writes` façades already follow
 /// in the billing module: grow one method (there, variant, here) at a
 /// time, never arrive complete.
 ///

@@ -1,4 +1,4 @@
-//! Postgres adapter for `audit`: its own schema, migrator, append-only
+//! Postgres adapter for `tenantry-audit`: its own schema, migrator, append-only
 //! grant, [`insert`], and [`PgAuditSink`].
 //!
 //! Owns `audit.audit_log` and its migration -- see `migrations/` for the
@@ -6,7 +6,7 @@
 //! grant layer rather than trusted to the application.
 //!
 //! Two ways to write, for two different callers: [`insert`] is the
-//! primitive a caller composes into its own transaction (`persistence`
+//! primitive a caller composes into its own transaction (`tenantry-persistence`
 //! does exactly this for every audited write that has a local business
 //! write to be atomic with); [`PgAuditSink`] is for the two write routes
 //! that don't -- it implements `tenantry_audit::AuditSink` over a `PgPool`,
@@ -30,7 +30,7 @@ use sqlx::PgPool;
 /// same database and tracks its state in the default table name -- the two
 /// migrators would collide on version numbers if both used it. Schema- and
 /// table-qualifying this one is what makes running both against one
-/// database safe, and is the reason `audit` and the billing module can
+/// database safe, and is the reason `tenantry-audit` and the billing module can
 /// share a database at all without either coordinating with the other.
 ///
 /// The SQL is embedded at compile time by `sqlx::migrate!` rather than read

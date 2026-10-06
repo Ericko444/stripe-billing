@@ -15,7 +15,7 @@ use crate::AuditEntry;
 /// buried in one adapter's SQL.
 ///
 /// Written as `fn … -> impl Future<Output = …> + Send` rather than a bare
-/// `async fn`, the same reasoning `domain`'s repository ports use in the
+/// `async fn`, the same reasoning `tenantry-domain`'s repository ports use in the
 /// module this crate is written alongside: a caller that erases this
 /// behind a `dyn`-safe façade needs the `Send` bound stated on the trait
 /// itself, not left to whichever type happens to implement it.

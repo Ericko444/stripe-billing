@@ -14,10 +14,10 @@
 //!
 //! Ordering against the local mirror (Stripe first for detach and
 //! set-default; the returned `SubscriptionSnapshot` applied through the
-//! webhook ordering guard for change-plan/cancel) is a `service` concern,
+//! webhook ordering guard for change-plan/cancel) is a `tenantry-service` concern,
 //! not this crate's: each method here just makes the call and returns a
-//! `domain` snapshot. Its rustdoc says so, so an implementer reading the
-//! adapter is pointed back to `service` for the sequence.
+//! `tenantry-domain` snapshot. Its rustdoc says so, so an implementer reading the
+//! adapter is pointed back to `tenantry-service` for the sequence.
 //!
 //! **Inbound** — verified, deduplicated webhook receipt behind
 //! `tenantry_domain::WebhookVerifier`: hand-rolled signature verification

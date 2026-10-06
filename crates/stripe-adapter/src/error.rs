@@ -6,7 +6,7 @@ use thiserror::Error;
 /// configuration errors.
 ///
 /// Deliberately distinct from the SDK's own `stripe::StripeError` (this
-/// crate is named `stripe-adapter`, not `stripe`, precisely so `stripe::`
+/// crate is named `tenantry-stripe-adapter`, not `stripe`, precisely so `stripe::`
 /// unambiguously means the SDK, whose lib name *is* `stripe`). Everything
 /// in this crate and its tests is written against `StripeError`, so a
 /// future SDK version reshaping its own error type only requires updating
@@ -72,9 +72,9 @@ impl From<stripe::StripeError> for StripeError {
 }
 
 /// Flattens a `StripeError` into `DomainError::Provider`. The rich type
-/// (`status`, `request_log_url`) stays inside `stripe-adapter` for logs;
-/// `domain` only ever sees the coarse string `StripeError`'s own `Display`
-/// produces (`domain` must not depend on this crate's error type any more
+/// (`status`, `request_log_url`) stays inside `tenantry-stripe-adapter` for logs;
+/// `tenantry-domain` only ever sees the coarse string `StripeError`'s own `Display`
+/// produces (`tenantry-domain` must not depend on this crate's error type any more
 /// than it depends on `stripe` itself).
 ///
 /// Deliberately coarse, and deliberately routed through `Display` rather

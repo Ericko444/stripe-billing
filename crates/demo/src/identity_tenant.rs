@@ -2,18 +2,18 @@
 //! wrapped so it satisfies the billing module's `TenantExtractor`.
 //!
 //! **This file is the proof that billing's boundary was right.** Billing's
-//! `api` crate defines `TenantExtractor` and has never heard of the identity
-//! module; the identity module's `identity-api` defines
+//! `tenantry-api` crate defines `TenantExtractor` and has never heard of the identity
+//! module; the identity module's `tenantry-identity-api` defines
 //! `AuthenticatedSession` and has never heard of billing. Neither crate
 //! changed to make them meet -- the host writes these few lines, in the one
 //! crate allowed to name both.
 //!
-//! It has to live here, not in `identity-api`: `TenantExtractor` requires
+//! It has to live here, not in `tenantry-identity-api`: `TenantExtractor` requires
 //! `FromRequestParts<tenantry_api::AppState, Rejection = tenantry_api::ApiError>`, and naming
 //! either type would make the identity module depend on billing.
 //!
 //! The claim is checkable: `git diff --stat` over `crates/api` (and
-//! `domain`, `service`, `persistence`, `stripe-adapter`) across the whole
+//! `tenantry-domain`, `tenantry-service`, `tenantry-persistence`, `tenantry-stripe-adapter`) across the whole
 //! identity phase prints nothing.
 //!
 //! # What holding the boundary costs
@@ -24,7 +24,7 @@
 //!
 //! - **No role-based billing authorization.** Any active membership may use
 //!   billing's routes -- a Member can cancel the tenant's subscription. A role
-//!   check would need billing to receive a role, which is the `api` change
+//!   check would need billing to receive a role, which is the `tenantry-api` change
 //!   this seam exists to avoid.
 //! - **No `403` from billing.** This newtype cannot see which route it is
 //!   extracting for, and billing's `ApiError` has one refusal, `401`.
@@ -35,7 +35,7 @@
 //!   carries a tenant and a correlation id, not a user; naming the user would
 //!   again mean widening billing's contract.
 //!
-//! Each is a follow-up that starts with a deliberate change to `api`, not a
+//! Each is a follow-up that starts with a deliberate change to `tenantry-api`, not a
 //! workaround in the host.
 
 use axum::extract::FromRequestParts;

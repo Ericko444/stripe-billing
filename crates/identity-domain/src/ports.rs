@@ -2,7 +2,7 @@
 //! opinion on how it is provided.
 //!
 //! Methods are written `fn … -> impl Future<Output = …> + Send` rather than
-//! bare `async fn`, for the reason `domain`'s repository ports give: a use
+//! bare `async fn`, for the reason `tenantry-domain`'s repository ports give: a use
 //! case generic over a port is later erased behind a `dyn`-safe façade for
 //! the router, and that needs `Send` promised on the trait itself.
 
@@ -172,7 +172,7 @@ pub trait MemberRepository: Send + Sync {
 
 /// Stores sessions.
 pub trait SessionRepository: Send + Sync {
-    /// Stores `session`. When `audit` is given, it is written in the same
+    /// Stores `session`. When `tenantry-audit` is given, it is written in the same
     /// transaction, so a session and the record of it starting commit or
     /// fail together -- the pattern the billing module's repositories use.
     fn create(
@@ -193,7 +193,7 @@ pub trait SessionRepository: Send + Sync {
         selector: Selector,
     ) -> impl Future<Output = Result<Option<StoredSession>, RepositoryError>> + Send;
 
-    /// Replaces session `old` with `new`, and writes `audit`, in one
+    /// Replaces session `old` with `new`, and writes `tenantry-audit`, in one
     /// transaction. Returns `None` -- and changes nothing -- if `old` no
     /// longer exists, so two concurrent rotations of one token cannot both
     /// succeed and leave two live sessions behind.
@@ -283,7 +283,7 @@ pub trait Clock: Send + Sync {
 pub struct RepositoryError(pub String);
 
 /// Hashes and verifies passwords. Implemented with Argon2id in
-/// `identity-service`; use-case tests use a fast fake.
+/// `tenantry-identity-service`; use-case tests use a fast fake.
 pub trait PasswordHasher: Send + Sync {
     /// Hashes a password that has passed the policy. Taking
     /// [`NewPassword`] rather than [`Password`] is what makes "stored a

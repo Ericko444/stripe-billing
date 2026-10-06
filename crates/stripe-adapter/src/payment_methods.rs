@@ -15,7 +15,7 @@ use crate::{StripeError, fingerprint};
 ///
 /// The fingerprint covers the customer id and the payment method id -- the
 /// two values that vary the request. Returns `()`: the caller already knows
-/// which method it asked for, and `service` reconciles the local mirror
+/// which method it asked for, and `tenantry-service` reconciles the local mirror
 /// itself rather than reading it back from the customer object here.
 pub async fn set_default_payment_method<R: OutboundRequestRepository>(
     client: &stripe::Client,
@@ -58,7 +58,7 @@ pub async fn set_default_payment_method<R: OutboundRequestRepository>(
 
 /// `BillingProvider::detach_payment_method`'s real implementation.
 ///
-/// `POST /v1/payment_methods/{id}/detach`. Permanent at Stripe; `service`
+/// `POST /v1/payment_methods/{id}/detach`. Permanent at Stripe; `tenantry-service`
 /// soft-deletes the mirror row *after* this returns `Ok`.
 ///
 /// **The fingerprint is tenant + payment method id only -- no timestamp.**

@@ -3,8 +3,8 @@
 //! the identity module's (`identity._sqlx_migrations`).
 //!
 //! Lives in `demo` because `demo` is the one crate allowed to name every
-//! module -- `identity-pg` may not depend on `persistence`, even for a test,
-//! and `persistence` may not depend on `identity-pg`.
+//! module -- `tenantry-identity-pg` may not depend on `tenantry-persistence`, even for a test,
+//! and `tenantry-persistence` may not depend on `tenantry-identity-pg`.
 
 use std::error::Error;
 

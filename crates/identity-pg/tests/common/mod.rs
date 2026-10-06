@@ -12,8 +12,8 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 
 /// A disposable Postgres container. Keep it alive for the whole test: the
-/// container is torn down when this is dropped. Mirrors `audit-pg`'s and
-/// `persistence`'s own harnesses.
+/// container is torn down when this is dropped. Mirrors `tenantry-audit-pg`'s and
+/// `tenantry-persistence`'s own harnesses.
 pub struct TestDb {
     pub pool: PgPool,
     _container: ContainerAsync<GenericImage>,
@@ -40,7 +40,7 @@ pub async fn fresh() -> Result<TestDb, Box<dyn Error>> {
     })
 }
 
-/// A fresh Postgres with `identity-pg`'s and `audit-pg`'s migrations
+/// A fresh Postgres with `tenantry-identity-pg`'s and `tenantry-audit-pg`'s migrations
 /// applied -- the two schemas this crate's repositories write to.
 pub async fn setup() -> Result<TestDb, Box<dyn Error>> {
     let db = fresh().await?;

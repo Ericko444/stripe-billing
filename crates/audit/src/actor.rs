@@ -4,8 +4,8 @@ use uuid::Uuid;
 ///
 /// A raw `Uuid`, not a re-export of a host module's own user id: the
 /// identity module's user id type is that module's own decision, made
-/// later, and `audit` must not depend on it any more than it depends on
-/// `domain`'s `TenantId`. A host converts its own id to a `SubjectId` at
+/// later, and `tenantry-audit` must not depend on it any more than it depends on
+/// `tenantry-domain`'s `TenantId`. A host converts its own id to a `SubjectId` at
 /// the boundary where it constructs an entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SubjectId(Uuid);

@@ -98,7 +98,7 @@ pub enum BillingEvent {
 
 /// The host's error type for a failed [`BillingEventSink::handle`] call.
 ///
-/// Deliberately a single opaque variant: by the time this reaches `service`,
+/// Deliberately a single opaque variant: by the time this reaches `tenantry-service`,
 /// the mirror write has already succeeded and does not roll back -- the
 /// failure is logged against the correlation id, not interpreted. The host
 /// is free to wrap whatever it wants in the message.

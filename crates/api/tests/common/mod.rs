@@ -72,7 +72,7 @@ pub struct StubReads {
 
 /// The keyset page `list_page` would return: newest first, seek past
 /// `after`, `limit` rows, `next` only if a further row exists. Mirrors
-/// `persistence`'s query and `InMemoryInvoices` so the router tests exercise
+/// `tenantry-persistence`'s query and `InMemoryInvoices` so the router tests exercise
 /// the same contract without a database.
 fn keyset_page(mut rows: Vec<Invoice>, after: Option<InvoiceCursor>, limit: u16) -> InvoicePage {
     rows.sort_by(|a, b| {

@@ -5,7 +5,7 @@ use thiserror::Error;
 /// What a user may do within one tenant. One role per membership, not per
 /// user: the same person can own one tenant and be a member of another.
 ///
-/// A closed enum, for the reason `audit`'s `Action` is one: a role a caller
+/// A closed enum, for the reason `tenantry-audit`'s `Action` is one: a role a caller
 /// could name freely is a role nothing can reason about exhaustively.
 /// Granting and suspension rules live with the members use cases, which
 /// match on this enum and are forced to decide every variant.

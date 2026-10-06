@@ -10,7 +10,7 @@
 //!   extractor consuming and re-encoding the body breaks verification
 //!   irrecoverably. `Bytes` is the last extractor so `HeaderMap` is
 //!   available first.
-//! - **DTOs are `api`-owned; domain types are never `Serialize`.** Every
+//! - **DTOs are `tenantry-api`-owned; domain types are never `Serialize`.** Every
 //!   response body is a type in `dto.rs` with a hand-written `From` impl. The
 //!   moment a domain struct is serializable, adding a field to it becomes a
 //!   wire-breaking change made by someone not thinking about the wire.

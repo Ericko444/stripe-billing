@@ -7,7 +7,7 @@ Rust workspace (Axum), plus a React/TypeScript demo host that composes them.
 authentication, no user management, no UI shell; it receives a tenant from
 whatever host mounts it. Identity owns users, tenant memberships, sessions and
 password reset, and has never heard of billing. Neither module's crates name
-the other's; the host (`demo`) is the one place they meet, and billing's `api`
+the other's; the host (`demo`) is the one place they meet, and billing's `tenantry-api`
 crate did not change for it (§6).
 
 ---
@@ -56,50 +56,50 @@ frontend/          React + TypeScript + Vite (the demo host)
 
 | crate | depends on | kind |
 |---|---|---|
-| `domain` | *nothing* | pure library |
-| `service` | `domain`, `audit` | pure library |
-| `persistence` | `domain`, `audit`, `audit-pg` | adapter |
-| `stripe-adapter` | `domain` | adapter |
-| `api` | `domain`, `service` | library — a `Router` factory |
+| `tenantry-domain` | *nothing* | pure library |
+| `tenantry-service` | `tenantry-domain`, `tenantry-audit` | pure library |
+| `tenantry-persistence` | `tenantry-domain`, `tenantry-audit`, `tenantry-audit-pg` | adapter |
+| `tenantry-stripe-adapter` | `tenantry-domain` | adapter |
+| `tenantry-api` | `tenantry-domain`, `tenantry-service` | library — a `Router` factory |
 | `demo` | all of the above | **the only binary** |
-| `audit` | *nothing* | pure library, free-standing |
-| `audit-pg` | `audit` | adapter, free-standing |
-| `identity-domain` | `audit` | pure library |
-| `identity-service` | `identity-domain`, `audit` | library + computational adapters |
-| `identity-pg` | `identity-domain`, `audit`, `audit-pg` | adapter |
-| `identity-api` | `identity-domain`, `identity-service`, `audit` | library — a `Router` factory |
+| `tenantry-audit` | *nothing* | pure library, free-standing |
+| `tenantry-audit-pg` | `tenantry-audit` | adapter, free-standing |
+| `tenantry-identity-domain` | `tenantry-audit` | pure library |
+| `tenantry-identity-service` | `tenantry-identity-domain`, `tenantry-audit` | library + computational adapters |
+| `tenantry-identity-pg` | `tenantry-identity-domain`, `tenantry-audit`, `tenantry-audit-pg` | adapter |
+| `tenantry-identity-api` | `tenantry-identity-domain`, `tenantry-identity-service`, `tenantry-audit` | library — a `Router` factory |
 
-**Dependency direction is strictly inward.** `domain` declares the ports —
+**Dependency direction is strictly inward.** `tenantry-domain` declares the ports —
 `SubscriptionRepository`, `BillingProvider`, `WebhookVerifier`,
-`BillingEventSink`. `persistence` and `stripe-adapter` implement them.
-`service` orchestrates them without knowing which adapter is behind them.
+`BillingEventSink`. `tenantry-persistence` and `tenantry-stripe-adapter` implement them.
+`tenantry-service` orchestrates them without knowing which adapter is behind them.
 
 Two absences carry the design:
 
-- **`api` depends on neither `persistence` nor `stripe-adapter`** — it holds
+- **`tenantry-api` depends on neither `tenantry-persistence` nor `tenantry-stripe-adapter`** — it holds
   `Arc<dyn Reads>`, `Arc<dyn Writes>` and friends, supplied by a host.
-- **`service` does not either**, which is why its use cases — including the
+- **`tenantry-service` does not either**, which is why its use cases — including the
   whole webhook processor — test with Docker off against in-memory doubles.
 
-One edge breaks the picture, worth naming before it is found: `stripe-adapter`
-lists `persistence` as a **dev-dependency**, because the ledger tests run the
+One edge breaks the picture, worth naming before it is found: `tenantry-stripe-adapter`
+lists `tenantry-persistence` as a **dev-dependency**, because the ledger tests run the
 real adapter against a real Postgres. It never appears in a production build.
 
-**`audit` and `audit-pg` sit outside this chain entirely.** They are a
+**`tenantry-audit` and `tenantry-audit-pg` sit outside this chain entirely.** They are a
 separate, typed audit journal, laid out so a second, not-yet-built module can
 write to the same table without either module depending on the other.
-`audit/Cargo.toml` must never gain `domain`, `service`, `persistence`,
-`stripe-adapter`, `api`, `axum`, or a Stripe client — checked in CI beside the
-`domain` boundary job, and it is the checkable proof that neutrality claim
-rests on rather than a docstring. `audit-pg` is exempt: it exists to depend on
-`audit` and `sqlx`.
+`audit/Cargo.toml` must never gain `tenantry-domain`, `tenantry-service`, `tenantry-persistence`,
+`tenantry-stripe-adapter`, `tenantry-api`, `axum`, or a Stripe client — checked in CI beside the
+`tenantry-domain` boundary job, and it is the checkable proof that neutrality claim
+rests on rather than a docstring. `tenantry-audit-pg` is exempt: it exists to depend on
+`tenantry-audit` and `sqlx`.
 
 **The identity crates are that second module**, with the same inward shape
 (`identity-api → identity-service → identity-domain ← identity-pg`) and both
-of its writers — identity and billing — sharing `audit` without naming each
+of its writers — identity and billing — sharing `tenantry-audit` without naming each
 other. CI checks it in both directions: no `identity-*` manifest or dependency
 tree contains a billing crate, no billing crate's contains an `identity-*`
-crate, and `identity-domain` gains neither `sqlx`, `axum` nor `argon2`. The
+crate, and `tenantry-identity-domain` gains neither `sqlx`, `axum` nor `argon2`. The
 frontend mirrors it: `src/identity/` and `src/billing/` never import each
 other, and `host/` composes both.
 
@@ -280,7 +280,7 @@ API.
 
 ```bash
 cargo test --workspace          # cargo fmt --all / clippy --workspace --all-targets
-cargo test -p domain money::    # one test or module by name
+cargo test -p tenantry-domain money::  # one test or module by name
 cargo doc --workspace --no-deps --open
 ```
 
@@ -292,8 +292,8 @@ npm run build
 ```
 
 Integration tests bring up a disposable Postgres via `testcontainers` and need
-Docker. The unit tests in the library crates do not — `service` and
-`identity-service` test every use case, the webhook processor included,
+Docker. The unit tests in the library crates do not — `tenantry-service` and
+`tenantry-identity-service` test every use case, the webhook processor included,
 against in-memory doubles.
 
 ---
@@ -454,12 +454,13 @@ the crate's own rustdoc includes a `compile_fail` doctest proving
 file, the same standard the module holds its own `Money` and tenant-isolation
 guarantees to.
 
-**One shared database, two independent migrators.** `audit-pg` runs its own
+**One shared database, two independent migrators.** `tenantry-audit-pg` runs its own
 migrations against its own schema (`audit`), tracked in
 `audit._sqlx_migrations` rather than the billing module's own
 `_sqlx_migrations` — the two migrators run against one Postgres instance
 without colliding, in either order, idempotently. A host wires both:
-`persistence::run_migrations` and `audit_pg::run_migrations`, as `demo`'s
+`tenantry_persistence::run_migrations` and
+`tenantry_audit_pg::run_migrations`, as `demo`'s
 composition root does. The connecting application role is not `audit_writer`
 itself — that role is `NOLOGIN` and carries no password, deliberately kept
 out of anything checked into git — a host grants its own role membership at
@@ -505,17 +506,17 @@ suspend members. Every account-level change is written to the same audit
 journal billing uses. Seven decisions carry it. Each is argued in full in the
 rustdoc where the code that implements it lives; these are the short forms.
 
-**1. The boundary held — and what that costs.** Billing's `api` defines
+**1. The boundary held — and what that costs.** Billing's `tenantry-api` defines
 `TenantExtractor` and nothing else about who the caller is. The identity
 module's `AuthenticatedSession` extractor is generic over any router state and
 reads its service from a request extension, so the host wraps it in a
 ten-line newtype, `IdentityTenant`, and billing's routes accept it.
-`git diff --stat` over `crates/api`, `domain`, `service`, `persistence` and
-`stripe-adapter` across the whole phase prints nothing. Holding it has three
+`git diff --stat` over `crates/api`, `tenantry-domain`, `tenantry-service`, `tenantry-persistence` and
+`tenantry-stripe-adapter` across the whole phase prints nothing. Holding it has three
 prices: no role-based authorization on billing routes (a Member can cancel the
 subscription), no `403` from billing (its one refusal is `401`, which the
 frontend reads as logged out), and billing's audit rows still say
-`Actor::System`. Each is a deliberate `api` change later, not a host
+`Actor::System`. Each is a deliberate `tenantry-api` change later, not a host
 workaround. → [`crates/demo/src/identity_tenant.rs`](crates/demo/src/identity_tenant.rs)
 
 **2. Argon2id, justified by a memory budget — and not used for tokens.**

@@ -4,7 +4,7 @@ use uuid::Uuid;
 ///
 /// Minted exactly once per request, by the host's own middleware -- never
 /// accepted from an inbound header, and never re-minted by this crate.
-/// `audit` only carries the id it is handed; it has no opinion on how a
+/// `tenantry-audit` only carries the id it is handed; it has no opinion on how a
 /// caller obtains one, which is what keeps this crate free of an HTTP
 /// dependency of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
