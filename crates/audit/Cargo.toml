@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+# Not inherited from the workspace on purpose: a workspace-level `readme`
+# resolves against the workspace root, which would point every crate at the
+# repository README instead of its own.
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 publish.workspace = true

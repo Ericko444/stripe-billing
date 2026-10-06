@@ -8,6 +8,72 @@
 //! crate. The host (`demo`) is the one place the two meet: it wraps
 //! [`AuthenticatedSession`] in a newtype satisfying billing's
 //! `TenantExtractor`, and nothing in billing changes for it.
+//!
+//! # Composing this module in front of billing
+//!
+//! The whole seam is the newtype below. It is the best illustration of how
+//! the two modules plug together, so it is reproduced here rather than left
+//! only in a crate that is never published.
+//!
+//! It is `ignore`d rather than compiled, and that is the point: billing's
+//! `TenantExtractor` requires
+//! `FromRequestParts<tenantry_api::AppState, Rejection = tenantry_api::ApiError>`,
+//! so a version of this that compiled *here* would mean this crate depended
+//! on the billing module -- the one thing CI forbids in both directions. It
+//! belongs in your crate, which is allowed to name both. The compiled,
+//! tested copy lives at `crates/demo/src/identity_tenant.rs` in the
+//! repository.
+//!
+//! ```ignore
+//! use axum::extract::FromRequestParts;
+//! use axum::http::request::Parts;
+//! use tenantry_api::{ApiError, AppState};
+//! use tenantry_domain::TenantId;
+//! use tenantry_identity_api::AuthenticatedSession;
+//!
+//! /// The tenant an identity session is scoped to, as billing's `TenantId`.
+//! /// Satisfies `TenantExtractor` by blanket impl -- there is no trait to
+//! /// implement by hand.
+//! #[derive(Debug, Clone, Copy)]
+//! pub struct IdentityTenant(TenantId);
+//!
+//! impl From<IdentityTenant> for TenantId {
+//!     fn from(tenant: IdentityTenant) -> Self {
+//!         tenant.0
+//!     }
+//! }
+//!
+//! impl FromRequestParts<AppState> for IdentityTenant {
+//!     type Rejection = ApiError;
+//!
+//!     async fn from_request_parts(
+//!         parts: &mut Parts,
+//!         state: &AppState,
+//!     ) -> Result<Self, Self::Rejection> {
+//!         // Every failure -- no cookie, a refused or expired session, a
+//!         // suspended membership, a deactivated user, a session with no
+//!         // tenant picked yet -- becomes billing's one `Unauthorized`.
+//!         // The response must not say which.
+//!         let session = AuthenticatedSession::from_request_parts(parts, state)
+//!             .await
+//!             .map_err(|_| ApiError::Unauthorized)?;
+//!         let tenant = session.tenant_id().ok_or(ApiError::Unauthorized)?;
+//!
+//!         // The two modules' tenant ids are distinct types over the same
+//!         // uuid; this is the one place both are named.
+//!         Ok(IdentityTenant(TenantId::new(tenant.as_uuid())))
+//!     }
+//! }
+//! ```
+//!
+//! Then mount both routers in your own server:
+//!
+//! ```ignore
+//! let app = axum::Router::new()
+//!     .nest("/api/v1", tenantry_identity_api::identity_router(identity_state))
+//!     .nest("/api/v1", tenantry_api::billing_router::<IdentityTenant>(billing_state))
+//!     .nest("/api/v1", tenantry_api::webhook_router(billing_state));
+//! ```
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Extension};
