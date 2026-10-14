@@ -19,8 +19,7 @@ tenantry-api.workspace = true
 # PgAuditSink the two standalone-audit write routes use.
 tenantry-audit-pg.workspace = true
 tenantry-domain.workspace = true
-# The identity module: `identity_tenant.rs` wraps its session extractor for
-# billing, and `main` mounts its router and wires its adapters.
+# The identity module: `main` mounts its router and wires its adapters.
 tenantry-identity-api.workspace = true
 tenantry-identity-domain.workspace = true
 tenantry-identity-pg.workspace = true
@@ -28,6 +27,11 @@ tenantry-identity-service.workspace = true
 tenantry-persistence.workspace = true
 tenantry-service.workspace = true
 tenantry-stripe-adapter.workspace = true
+# The facade, for `IdentityTenant` only -- the seam ships there, so the copy
+# demo's tests exercise is the one consumers get. Everything else is named
+# through the eleven crates directly, which keeps demo an independent proof
+# that they compose without the facade.
+tenantry = { workspace = true, features = ["billing", "identity"] }
 async-trait.workspace = true
 axum.workspace = true
 dotenvy.workspace = true

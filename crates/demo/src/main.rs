@@ -9,7 +9,7 @@
 //!
 //! - `billing_router::<IdentityTenant>` -- billing's tenant-scoped routes,
 //!   behind a session from the identity module
-//!   ([`IdentityTenant`](demo::identity_tenant::IdentityTenant));
+//!   ([`IdentityTenant`](tenantry::IdentityTenant), from the facade);
 //! - `webhook_router` -- Stripe's webhook, authenticated by its signature;
 //! - `identity_router` -- login, the session, tenant selection, password
 //!   change, password reset, and the members routes.
@@ -34,10 +34,10 @@ use async_trait::async_trait;
 use axum::Router;
 use axum::extract::Extension;
 use axum::middleware;
-use demo::identity_tenant::IdentityTenant;
 use demo::log_mailer::LogMailer;
 use secrecy::SecretString;
 use sqlx::postgres::PgPoolOptions;
+use tenantry::IdentityTenant;
 use tenantry_api::{AppState, CheckoutUrls, billing_router, webhook_router};
 use tenantry_domain::{BillingEvent, BillingEventSink, SinkError, WebhookVerifier};
 use tenantry_identity_api::{AllowedOrigins, IdentityState, identity_router, origin_check};

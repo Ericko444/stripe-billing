@@ -19,11 +19,11 @@ use axum::http::{Request, Response, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use common::unused_state;
-use demo::identity_tenant::IdentityTenant;
 use secrecy::ExposeSecret;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use tenantry::IdentityTenant;
 use tenantry_identity_api::{IdentityState, identity_router};
 use tenantry_identity_domain::{
     MailError, MailPurpose, Mailer, NewPassword, OutgoingMail, Password, PasswordHasher,

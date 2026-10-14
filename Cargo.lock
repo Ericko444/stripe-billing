@@ -659,6 +659,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "tenantry",
  "tenantry-api",
  "tenantry-audit",
  "tenantry-audit-pg",
