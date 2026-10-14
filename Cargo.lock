@@ -2554,6 +2554,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tenantry"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "tenantry-api",
+ "tenantry-audit",
+ "tenantry-audit-pg",
+ "tenantry-domain",
+ "tenantry-identity-api",
+ "tenantry-identity-domain",
+ "tenantry-identity-pg",
+ "tenantry-identity-service",
+ "tenantry-persistence",
+ "tenantry-service",
+ "tenantry-stripe-adapter",
+]
+
+[[package]]
 name = "tenantry-api"
 version = "0.1.0"
 dependencies = [

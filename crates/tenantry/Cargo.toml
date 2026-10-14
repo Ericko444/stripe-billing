@@ -1,0 +1,70 @@
+[package]
+name = "tenantry"
+description = "Multi-tenant billing (Stripe) and identity modules for Axum, behind one dependency and Cargo features."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+# Not inherited from the workspace on purpose: a workspace-level `readme`
+# resolves against the workspace root, which would point every crate at the
+# repository README instead of its own.
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+# Every dependency is optional and nothing is on by default: a default that
+# dragged in Stripe and sqlx would be paid by the consumer who wants only the
+# audit journal, and removing a default feature later is a breaking change
+# while adding one is not.
+[features]
+default = []
+
+audit = ["dep:tenantry-audit"]
+billing = [
+    "audit",
+    "dep:axum",
+    "dep:tenantry-domain",
+    "dep:tenantry-service",
+    "dep:tenantry-api",
+]
+identity = [
+    "audit",
+    "dep:axum",
+    "dep:tenantry-identity-domain",
+    "dep:tenantry-identity-service",
+    "dep:tenantry-identity-api",
+]
+stripe = ["billing", "dep:tenantry-stripe-adapter"]
+
+# One Postgres feature per module, never a bare `postgres`: a feature can only
+# turn dependencies on unconditionally, so `postgres` would have to enable
+# both modules' adapters, and `["billing", "postgres"]` would silently compile
+# identity. An alias can be added later without breaking anyone; it could
+# never be removed.
+audit-postgres = ["audit", "dep:tenantry-audit-pg"]
+billing-postgres = ["billing", "audit-postgres", "dep:tenantry-persistence"]
+identity-postgres = ["identity", "audit-postgres", "dep:tenantry-identity-pg"]
+
+full = ["stripe", "billing-postgres", "identity-postgres"]
+
+[dependencies]
+tenantry-audit = { workspace = true, optional = true }
+tenantry-audit-pg = { workspace = true, optional = true }
+tenantry-domain = { workspace = true, optional = true }
+tenantry-service = { workspace = true, optional = true }
+tenantry-api = { workspace = true, optional = true }
+tenantry-stripe-adapter = { workspace = true, optional = true }
+tenantry-persistence = { workspace = true, optional = true }
+tenantry-identity-domain = { workspace = true, optional = true }
+tenantry-identity-service = { workspace = true, optional = true }
+tenantry-identity-api = { workspace = true, optional = true }
+tenantry-identity-pg = { workspace = true, optional = true }
+# For `IdentityTenant`'s `FromRequestParts` impl. Named by both `billing` and
+# `identity`; either `-api` crate already has it in the tree, so it adds
+# nothing to a build.
+axum = { workspace = true, optional = true }
+
+[lints]
+workspace = true

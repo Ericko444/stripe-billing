@@ -61,6 +61,10 @@ tenantry-identity-domain = { path = "crates/identity-domain", version = "0.1.0" 
 tenantry-identity-pg = { path = "crates/identity-pg", version = "0.1.0" }
 tenantry-identity-service = { path = "crates/identity-service", version = "0.1.0" }
 tenantry-identity-api = { path = "crates/identity-api", version = "0.1.0" }
+# The facade: one dependency line that re-exports the eleven crates above
+# behind features, and ships `IdentityTenant`, the seam between the modules.
+# Only `demo` names it; none of the eleven may.
+tenantry = { path = "crates/tenantry", version = "0.1.0" }
 
 # Stripe client, modular line. A release candidate over the stale 0.41 stable
 # line. These were pinned exactly (`=1.0.0-rc.8`) while this was an
