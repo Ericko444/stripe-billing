@@ -68,3 +68,7 @@ axum = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "seam"
+required-features = ["billing", "identity"]

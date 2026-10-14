@@ -19,6 +19,11 @@
 //! The underlying crates stay published and usable directly; this crate only
 //! adds a front door.
 
+#[cfg(all(feature = "billing", feature = "identity"))]
+mod identity_tenant;
+#[cfg(all(feature = "billing", feature = "identity"))]
+pub use identity_tenant::IdentityTenant;
+
 /// The audit journal: the typed, append-only event model and the
 /// `AuditSink` port. Shared by both modules, depending on neither.
 #[cfg(feature = "audit")]
