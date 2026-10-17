@@ -5,24 +5,25 @@
 //! Like the billing module's `tenantry-api`, this crate exposes a `Router`, never a
 //! binary: a host mounts it beside whatever else it serves. Unlike `tenantry-api`, it
 //! authenticates -- that is the module's job -- and it names no billing
-//! crate. The host (`demo`) is the one place the two meet: it wraps
+//! crate. The two meet only in a crate allowed to name both -- the
+//! `tenantry` facade, as `tenantry::IdentityTenant` -- which wraps
 //! [`AuthenticatedSession`] in a newtype satisfying billing's
 //! `TenantExtractor`, and nothing in billing changes for it.
 //!
 //! # Composing this module in front of billing
 //!
 //! The whole seam is the newtype below. It is the best illustration of how
-//! the two modules plug together, so it is reproduced here rather than left
-//! only in a crate that is never published.
+//! the two modules plug together, so it is reproduced here as well as
+//! shipped in the facade.
 //!
 //! It is `ignore`d rather than compiled, and that is the point: billing's
 //! `TenantExtractor` requires
 //! `FromRequestParts<tenantry_api::AppState, Rejection = tenantry_api::ApiError>`,
 //! so a version of this that compiled *here* would mean this crate depended
 //! on the billing module -- the one thing CI forbids in both directions. It
-//! belongs in your crate, which is allowed to name both. The compiled,
-//! tested copy lives at `crates/demo/src/identity_tenant.rs` in the
-//! repository.
+//! belongs in a crate that is allowed to name both. The compiled, tested
+//! copy ships as `tenantry::IdentityTenant`, with the `billing` and
+//! `identity` features of the `tenantry` crate.
 //!
 //! ```ignore
 //! use axum::extract::FromRequestParts;

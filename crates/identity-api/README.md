@@ -28,8 +28,9 @@ crate. The session itself is an `HttpOnly` `__Host-session` cookie.
 
 This crate names no billing crate. The seam is one newtype in the host:
 wrap `AuthenticatedSession` in a type that satisfies billing's
-`TenantExtractor`, and `tenantry-api` needs no change at all. The worked
-example is in the repository at `crates/demo/src/identity_tenant.rs`.
+`TenantExtractor`, and `tenantry-api` needs no change at all. That newtype
+ships as `tenantry::IdentityTenant`, in the `tenantry` crate with its
+`billing` and `identity` features on.
 
 Part of [stripe-billing](https://github.com/Ericko444/stripe-billing).
 Dual-licensed under MIT or Apache-2.0.

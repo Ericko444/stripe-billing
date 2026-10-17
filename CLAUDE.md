@@ -28,7 +28,11 @@ Current state:
   own README. All three migrators embed their SQL with `sqlx::migrate!`
   instead of reading a path at runtime, and billing's thirteen migrations
   moved to `crates/persistence/migrations/` because the macro cannot reach
-  outside its own crate. `cargo publish --workspace --dry-run` is green.
+  outside its own crate. A twelfth library crate, the `tenantry` facade,
+  re-exports the eleven behind additive Cargo features (`default = []`) and
+  ships `IdentityTenant`, which moved there from `demo`; its
+  `examples/host.rs` is the full composition, compiled under `full`.
+  `cargo publish --workspace --dry-run` is green.
   **Nothing has been uploaded**, and `cargo publish` is a one-way door: a
   version can never be replaced and a name is held forever.
 
@@ -68,7 +72,7 @@ an append-only check on `migrations/`, `crates/audit-pg/migrations/` and
 
 ## Architecture
 
-Twelve crates under `crates/`. Six form the billing module, with **strictly
+Thirteen crates under `crates/`. Six form the billing module, with **strictly
 inward** dependencies:
 
 ```
@@ -128,9 +132,17 @@ Directory names again; the packages are `tenantry-identity-api` and so on.
   the `AuthenticatedSession` extractor (generic over any router state), the
   CSRF origin check, problem+json.
 
-The modules meet only in `demo/src/identity_tenant.rs`: `IdentityTenant` wraps
-`AuthenticatedSession` to satisfy billing's `TenantExtractor`. `crates/api` did
-not change for it, and should not.
+One more is the facade, outside both chains and depended on by neither:
+
+- `tenantry` — one dependency line for the other eleven: each re-exported
+  whole as a module (`tenantry::billing::domain`, `tenantry::identity::api`,
+  ...) behind Cargo features, `default = []`. No logic but `IdentityTenant`.
+  `demo` uses it only for that type and names the eleven directly for
+  everything else.
+
+The modules meet only in `crates/tenantry/src/identity_tenant.rs`, used by
+`demo`: `IdentityTenant` wraps `AuthenticatedSession` to satisfy billing's
+`TenantExtractor`. `crates/api` did not change for it, and should not.
 
 These boundaries carry the whole design; all are load-bearing in the defense:
 
@@ -148,8 +160,8 @@ These boundaries carry the whole design; all are load-bearing in the defense:
 - **No crate under `crates/identity-*/` names a billing crate
   (`tenantry-domain`, `tenantry-service`, `tenantry-persistence`,
   `tenantry-stripe-adapter`, `tenantry-api`), and no billing crate names a
-  `tenantry-identity-*` crate.** Only `demo` names both. Checked in CI in
-  both directions, by manifest grep and by `cargo tree`.
+  `tenantry-identity-*` crate.** Only `demo` and `tenantry` name both.
+  Checked in CI in both directions, by manifest grep and by `cargo tree`.
 - **`crates/identity-domain/Cargo.toml` must never gain `sqlx`, `axum` or
   `argon2`.** The identity module's equivalent of the `tenantry-domain` rule.
 - **`frontend/src/identity` and `frontend/src/billing` never import each

@@ -517,7 +517,7 @@ prices: no role-based authorization on billing routes (a Member can cancel the
 subscription), no `403` from billing (its one refusal is `401`, which the
 frontend reads as logged out), and billing's audit rows still say
 `Actor::System`. Each is a deliberate `tenantry-api` change later, not a host
-workaround. → [`crates/demo/src/identity_tenant.rs`](crates/demo/src/identity_tenant.rs)
+workaround. → [`tenantry::IdentityTenant`](crates/tenantry/src/identity_tenant.rs), shipped in the facade and used by `demo`
 
 **2. Argon2id, justified by a memory budget — and not used for tokens.**
 `m = 19456 KiB, t = 2, p = 1`, 32-byte output: OWASP's baseline. Every hash
