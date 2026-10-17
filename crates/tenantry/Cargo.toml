@@ -66,9 +66,27 @@ tenantry-identity-pg = { workspace = true, optional = true }
 # nothing to a build.
 axum = { workspace = true, optional = true }
 
+# For `examples/host.rs` only. A consumer names these in their own manifest
+# too: the facade re-exports no third-party crate. `async-trait` is for the
+# `BillingEventSink` impl; `Mailer` uses a native `async fn` and needs nothing.
+# `tracing-subscriber` is there so the example's logging mailer is seen.
+[dev-dependencies]
+async-trait.workspace = true
+secrecy.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
 [lints]
 workspace = true
 
 [[test]]
 name = "seam"
 required-features = ["billing", "identity"]
+
+# The whole composition, as a consumer writes it. Compiled in CI, never run
+# there: running needs Postgres and Stripe keys.
+[[example]]
+name = "host"
+required-features = ["full"]

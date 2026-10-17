@@ -2558,7 +2558,10 @@ dependencies = [
 name = "tenantry"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
+ "secrecy",
+ "sqlx",
  "tenantry-api",
  "tenantry-audit",
  "tenantry-audit-pg",
@@ -2570,6 +2573,9 @@ dependencies = [
  "tenantry-persistence",
  "tenantry-service",
  "tenantry-stripe-adapter",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
