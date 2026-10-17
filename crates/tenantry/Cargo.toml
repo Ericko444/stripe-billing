@@ -10,9 +10,17 @@ repository.workspace = true
 # resolves against the workspace root, which would point every crate at the
 # repository README instead of its own.
 readme = "README.md"
-keywords.workspace = true
-categories.workspace = true
+# Its own, not the workspace's: this is the crate a search should find, and
+# it is the one that carries identity as well as billing.
+keywords = ["billing", "stripe", "identity", "multi-tenant", "axum"]
+categories = ["web-programming::http-server", "authentication", "database"]
 publish.workspace = true
+
+# docs.rs documents every feature, and the `docsrs` cfg turns on the
+# per-item feature badges in `src/lib.rs`.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 # Every dependency is optional and nothing is on by default: a default that
 # dragged in Stripe and sqlx would be paid by the consumer who wants only the

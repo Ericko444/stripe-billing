@@ -18,6 +18,31 @@
 //!
 //! The underlying crates stay published and usable directly; this crate only
 //! adds a front door.
+//!
+//! # Features
+//!
+//! `audit`, `billing`, `identity` and `stripe`, plus one Postgres feature per
+//! module (`audit-postgres`, `billing-postgres`, `identity-postgres`) and
+//! `full` for all of them. `billing` compiles no identity crate and no
+//! `sqlx`; `identity` compiles no billing crate and no Stripe client. With
+//! both `billing` and `identity` on, [`IdentityTenant`] joins them.
+//!
+//! # What you bring yourself
+//!
+//! - A `Mailer`. None that sends mail ships here, and without one password
+//!   reset and invitations do not deliver.
+//! - A shared `RateLimiter` if you run more than one process: the shipped
+//!   `InMemoryRateLimiter` counts per process.
+//! - `axum` 0.8 and `sqlx` 0.9 in your own manifest. No third-party crate is
+//!   re-exported.
+//!
+//! `examples/host.rs` in this crate's package is the whole composition,
+//! compiled under `full`. What the seam between the modules costs is on
+//! [`IdentityTenant`].
+
+// Feature badges on docs.rs, which builds on nightly with `--cfg docsrs`.
+// Stable never sets `docsrs`, so it never sees the nightly feature.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(all(feature = "billing", feature = "identity"))]
 mod identity_tenant;
