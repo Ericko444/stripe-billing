@@ -111,6 +111,42 @@ jobs:
             exit 1
           fi
 
+      # The facade's features keep the modules apart: `billing` compiles no
+      # identity crate and no sqlx, `identity` no billing crate and no Stripe
+      # client, and `audit` nothing of either module. A feature that turned
+      # on a dependency it should not would show up here, not in a review.
+      - name: Facade isolation
+        run: |
+          if cargo tree -p tenantry --no-default-features -F billing -e normal --prefix none --locked \
+              | grep -E "^(tenantry-identity-[a-z-]+|sqlx[a-z-]*) v"; then
+            echo "::error file=crates/tenantry/Cargo.toml::tenantry -F billing pulls in an identity crate or sqlx"
+            exit 1
+          fi
+          if cargo tree -p tenantry --no-default-features -F identity -e normal --prefix none --locked \
+              | grep -E "^(tenantry-(domain|service|persistence|stripe-adapter|api)|async-stripe[a-z-]*) v"; then
+            echo "::error file=crates/tenantry/Cargo.toml::tenantry -F identity pulls in a billing crate or a Stripe client"
+            exit 1
+          fi
+          if cargo tree -p tenantry --no-default-features -F audit -e normal --prefix none --locked \
+              | grep -E "^(tenantry-[a-z-]+|axum|sqlx[a-z-]*|async-stripe[a-z-]*) v" \
+              | grep -v "^tenantry-audit v"; then
+            echo "::error file=crates/tenantry/Cargo.toml::tenantry -F audit pulls in another workspace crate, axum, sqlx or a Stripe client"
+            exit 1
+          fi
+
+      # Each facade feature must compile on its own, not only as part of
+      # `--workspace`, where feature unification hides a missing `#[cfg]`.
+      - name: Facade feature matrix
+        run: |
+          cargo check -p tenantry --no-default-features --locked
+          for f in audit billing identity stripe audit-postgres \
+                   billing-postgres identity-postgres full billing,identity; do
+            if ! cargo check -p tenantry --no-default-features --features "$f" --locked; then
+              echo "::error file=crates/tenantry/Cargo.toml::tenantry does not compile with --features $f"
+              exit 1
+            fi
+          done
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -119,6 +155,15 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked
+
+      # `examples/host.rs` needs `full`, so the workspace clippy and test
+      # above skip it. Compiled, never run: running needs Postgres and
+      # Stripe keys. The docs build the way docs.rs reads them, all features.
+      - name: Facade example and docs
+        run: |
+          cargo build -p tenantry --examples --all-features --locked
+          cargo clippy -p tenantry --all-features --all-targets --locked -- -D warnings
+          RUSTDOCFLAGS="-D warnings" cargo doc -p tenantry --all-features --no-deps --locked
 
   msrv:
     name: MSRV
